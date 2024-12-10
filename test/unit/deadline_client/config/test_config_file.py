@@ -263,7 +263,7 @@ def test_str2bool():
 
 
 def test_default_log_level():
-    # As a security precaution, the log level should not be DEBUG by default.
+    # To avoid excessive logging, the log level should not be DEBUG by default.
     assert config.get_setting("settings.log_level") != "DEBUG"
     # Verify the default log level exists and is less verbose than DEBUG
     assert config.get_setting("settings.log_level") == "WARNING"
