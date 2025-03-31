@@ -33,6 +33,47 @@ RootPrefix/
 
 [ja-security]: https://docs.aws.amazon.com/deadline-cloud/latest/userguide/security-best-practices.html#job-attachment-queues
 
+### S3 Key Format
+
+#### Data Files
+
+Data files in the job attachments system are stored using a content-addressable approach. The S3 key format for data files is:
+
+```
+RootPrefix/Data/<file_hash>.<hash_algorithm>
+```
+
+For example:
+```
+my-deadline-prefix/Data/a1b2c3d4e5f6g7h8i9j0.xxh128
+```
+
+Where:
+- `<file_hash>` is the hash of the file contents
+- `<hash_algorithm>` is the algorithm used to generate the hash (currently "xxh128")
+
+This content-addressable approach ensures that identical files are only stored once, regardless of their original filenames or paths.
+
+#### Manifest Files
+
+Manifests are stored for both job inputs and task outputs. The S3 key for the input manifest for a job can be found by [calling GetJob](https://docs.aws.amazon.com/deadline-cloud/latest/APIReference/API_GetJob.html#API_GetJob_ResponseSyntax) and looking in the response under `attachments.manifests.rootPath`. See the [developer guide on job attachments](https://docs.aws.amazon.com/deadline-cloud/latest/developerguide/run-jobs-job-attachments.html#job-attachments-in-depth) for more info. While the input manifest location is not formally defined, in the current job attachments implementation it follows the pattern:
+```
+RootPrefix/Manifests/<farm_id>/<queue_id>/Inputs/<guid>/<manifest_hash>_input
+```
+
+Output manifests for tasks are stored under:
+```
+RootPrefix/Manifests/<farm_id>/<queue_id>/<job_id>/<step_id>/<task_id>/<timestamp>_<session_action_id>/<manifest_hash>_output
+```
+
+Where:
+- `<farm_id>`, `<queue_id>`, `<job_id>`, `<step_id>`, `<task_id>`, and `<session_action_id>` are the respective identifiers (e.g., farm-1234567890abcdefg)
+- `<guid>` is a randomly generated identifier for the input manifest
+- `<manifest_hash>` is a hash derived from the source root path
+- `<timestamp>` is an ISO8601 timestamp
+
+Each manifest file contains metadata in its S3 object properties, including the "asset-root" that specifies the local root path where files should be placed when downloaded.
+
 ## Asset Manifests
 
 When making a job submission, the job attachments library makes a snapshot of all of the files included in the submission. The contents of each file are hashed, and the files are uploaded to the S3 bucket associated with the queue you are submitting to. This way, if the files haven't changed since a previous submission, the hash will be the same and the files will not be re-uploaded. 
@@ -44,6 +85,49 @@ When starting work, the worker downloads the manifest associated with your job, 
 Manifest files are written to a `manifests` directory within each job bundle that is added to the job history if submitted through the GUI (default: `~/.deadline/job_history`). A corresponding `manifest_s3_mapping` file is created alongside manifests, which specifies each local manifest file with the S3 manifest path in the submitted job's job attachments metadata.
 
 [vfs]: https://docs.aws.amazon.com/deadline-cloud/latest/userguide/storage-virtual.html
+
+### Manifest Format
+
+Asset manifests are JSON documents that follow a specific schema. The current manifest version is `2023-03-03` and has the following structure:
+
+```json
+{
+    "manifestVersion": "2023-03-03",
+    "hashAlg": "xxh128",
+    "totalSize": 12345,
+    "paths": [
+        {
+            "path": "relative/path/to/file1.txt",
+            "hash": "abcdef1234567890",
+            "size": 1024,
+            "mtime": 1678012345000000
+        },
+        {
+            "path": "relative/path/to/file2.png",
+            "hash": "0987654321fedcba",
+            "size": 11321,
+            "mtime": 1678012346000000
+        }
+    ]
+}
+```
+
+The components of the manifest are:
+
+- `manifestVersion`: The version of the manifest schema (currently "2023-03-03")
+- `hashAlg`: The algorithm used to hash the files (currently only "xxh128" is supported)
+- `totalSize`: The sum of all file sizes in bytes
+- `paths`: An array of file entries, each containing:
+  - `path`: The relative path to the file from the root directory
+  - `hash`: The hash of the file contents using the specified algorithm
+  - `size`: The file size in bytes
+  - `mtime`: The file's last modified time as epoch time in microseconds
+
+The manifest is canonicalized (with paths sorted) before being converted to a JSON string, which ensures consistent hashing and comparison of manifests.
+
+### Manifest Aggregation for Job Downloads
+
+When downloading job outputs, the system aggregates manifests across task outputs. Manifests are aggregated by keeping only the latest version of each file. Keeping the latest file allows task outputs to override job inputs and later tasks to overwrite output of earlier tasks.
 
 ## Local Cache Files
 
