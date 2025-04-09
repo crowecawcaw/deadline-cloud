@@ -56,10 +56,7 @@ This content-addressable approach ensures that identical files are only stored o
 
 #### Manifest Files
 
-Manifests are stored for both job inputs and task outputs. The S3 key for the input manifest for a job can be found by [calling GetJob](https://docs.aws.amazon.com/deadline-cloud/latest/APIReference/API_GetJob.html#API_GetJob_ResponseSyntax) and looking in the response under `attachments.manifests.rootPath`. See the [developer guide on job attachments](https://docs.aws.amazon.com/deadline-cloud/latest/developerguide/run-jobs-job-attachments.html#job-attachments-in-depth) for more info. While the input manifest location is not formally defined, in the current job attachments implementation it follows the pattern:
-```
-RootPrefix/Manifests/<farm_id>/<queue_id>/Inputs/<guid>/<manifest_hash>_input
-```
+Manifests are stored for both job inputs and task outputs. The S3 key for the input manifest for a job can be found by [calling GetJob](https://docs.aws.amazon.com/deadline-cloud/latest/APIReference/API_GetJob.html#API_GetJob_ResponseSyntax) and looking in the response under `attachments.manifests.rootPath`. See the [developer guide on job attachments](https://docs.aws.amazon.com/deadline-cloud/latest/developerguide/run-jobs-job-attachments.html#job-attachments-in-depth) for more info.
 
 Output manifests for tasks are stored under:
 ```
@@ -68,11 +65,10 @@ RootPrefix/Manifests/<farm_id>/<queue_id>/<job_id>/<step_id>/<task_id>/<timestam
 
 Where:
 - `<farm_id>`, `<queue_id>`, `<job_id>`, `<step_id>`, `<task_id>`, and `<session_action_id>` are the respective identifiers (e.g., farm-1234567890abcdefg)
-- `<guid>` is a randomly generated identifier for the input manifest
 - `<manifest_hash>` is a hash derived from the source root path
-- `<timestamp>` is an ISO8601 timestamp
+- `<timestamp>` is an ISO8601 timestamp with microsecond precision and in the UTC timezone (e.g. `2025-04-01T17:27:28.044179Z`)
 
-Each manifest file contains metadata in its S3 object properties, including the "asset-root" that specifies the local root path where files should be placed when downloaded.
+Each manifest file also has an asset root which defines the local root path where files should be placed when downloaded. The asset root is stored in the user-defined metadata of the manifest S3 object. If the asset root can be encoded in ASCII, it is stored directly under the `asset-root` userdata property. If not, it is stored as a JSON-encoded string under `asset-root-json`.
 
 ## Asset Manifests
 
