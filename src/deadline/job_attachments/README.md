@@ -40,7 +40,7 @@ RootPrefix/
 Data files in the job attachments system are stored using a content-addressable approach. The S3 key format for data files is:
 
 ```
-RootPrefix/Data/<file_hash>.<hash_algorithm>
+<root_prefix>/Data/<file_hash>.<hash_algorithm>
 ```
 
 For example:
@@ -49,6 +49,7 @@ my-deadline-prefix/Data/a1b2c3d4e5f6g7h8i9j0.xxh128
 ```
 
 Where:
+- `<root_prefix>` is the prefix configured in the queue's job attachment settings
 - `<file_hash>` is the hash of the file contents
 - `<hash_algorithm>` is the algorithm used to generate the hash (currently "xxh128")
 
@@ -60,13 +61,14 @@ Manifests are stored for both job inputs and task outputs. The S3 key for the in
 
 Output manifests for tasks are stored under:
 ```
-RootPrefix/Manifests/<farm_id>/<queue_id>/<job_id>/<step_id>/<task_id>/<timestamp>_<session_action_id>/<manifest_hash>_output
+<root_prefix>/Manifests/<farm_id>/<queue_id>/<job_id>/<step_id>/<task_id>/<timestamp>_<session_action_id>/<manifest_hash>_output
 ```
 
 Where:
+- `<root_prefix>` is the prefix configured in the queue's job attachment settings
 - `<farm_id>`, `<queue_id>`, `<job_id>`, `<step_id>`, `<task_id>`, and `<session_action_id>` are the respective identifiers (e.g., farm-1234567890abcdefg)
 - `<manifest_hash>` is a hash derived from the source root path
-- `<timestamp>` is an ISO8601 timestamp with microsecond precision and in the UTC timezone (e.g. `2025-04-01T17:27:28.044179Z`)
+- `<timestamp>` is the time that the task started. It is formatted as an ISO8601 timestamp with microsecond precision and in the UTC timezone (e.g. `2025-04-01T17:27:28.044179Z`)
 
 Each manifest file also has an asset root which defines the local root path where files should be placed when downloaded. The asset root is stored in the user-defined metadata of the manifest S3 object. If the asset root can be encoded in ASCII, it is stored directly under the `asset-root` userdata property. If not, it is stored as a JSON-encoded string under `asset-root-json`.
 
