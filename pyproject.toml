@@ -38,7 +38,7 @@ dependencies = [
   "click >= 8.1.7",
   "pyyaml >= 6.0",
   # Job Attachments
-  "typing_extensions >= 4.7,< 4.12; python_version == '3.7'",
+  "typing_extensions >= 4.7,< 4.14; python_version == '3.7'",
   "typing_extensions >= 4.8; python_version > '3.7'",
   # Pinning due to 3.4 not being available upstream
   "xxhash >= 3.4,< 3.6",
@@ -55,7 +55,7 @@ Source = "https://github.com/aws-deadline/deadline-cloud"
 [project.optional-dependencies]
 gui = [
   # If the version changes, update the version in deadline/client/ui/__init__.py
-  "PySide6-essentials >= 6.6,< 6.9",
+  "PySide6-essentials >= 6.6,< 6.10",
 ]
 
 [project.scripts]
