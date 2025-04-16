@@ -8,7 +8,7 @@ You can then easily download your outputs with the [deadline cli](../client/) `d
 
 Job attachments also works as an auxiliary storage when used with [AWS Deadline Cloud storage profiles][shared-storage], allowing you to flexibly upload files to your Amazon S3 bucket that aren't on your configured shared storage.
 
-See the [`examples`](../../../examples/) directory for some simple examples on how to use job attachments.
+See the [`examples`](../../../examples/) directory for some simple examples on how to use job attachments. See the [developer guide][developer-guide] for a demonstration of how the CLI works with job attachments.
 
 [job-attachments]: https://docs.aws.amazon.com/deadline-cloud/latest/userguide/storage-job-attachments.html
 [deadline-cloud]: https://docs.aws.amazon.com/deadline-cloud/latest/userguide/what-is-deadline-cloud.html
@@ -16,6 +16,7 @@ See the [`examples`](../../../examples/) directory for some simple examples on h
 [monitor]: https://docs.aws.amazon.com/deadline-cloud/latest/userguide/working-with-deadline-monitor.html
 [shared-storage]: https://docs.aws.amazon.com/deadline-cloud/latest/userguide/storage-shared.html
 [worker-agent]: https://github.com/aws-deadline/deadline-cloud-worker-agent/blob/release/docs/
+[developer-guide]: https://docs.aws.amazon.com/deadline-cloud/latest/developerguide/what-job-attachments-uploads-to-amazon-s3.html
 
 ## Job Attachments Bucket Structure
 
