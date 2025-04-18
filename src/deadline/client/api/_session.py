@@ -12,6 +12,7 @@ from configparser import ConfigParser
 from contextlib import contextmanager
 from enum import Enum
 from functools import lru_cache
+import os
 from typing import Optional
 
 import boto3  # type: ignore[import]
@@ -129,6 +130,18 @@ def get_boto3_client(service_name: str, config: Optional[ConfigParser] = None) -
     """
 
     session = get_boto3_session(config=config)
+
+    # If the deadline_endpoint is set as a property of the AWS profile, use it by setting
+    # the AWS_ENDPOINT_URL_DEADLINE env variable. Useful for setting a non-standard endpoint
+    # in use cases where it's not easy to set an environment variable like using a submitter.
+    if service_name == "deadline":
+        profile_config = session._session.get_scoped_config()
+        if (
+            "deadline_endpoint" in profile_config
+            and os.environ.get("AWS_ENDPOINT_URL_DEADLINE") is None
+        ):
+            os.environ["AWS_ENDPOINT_URL_DEADLINE"] = profile_config["deadline_endpoint"]
+
     return session.client(service_name, config=get_default_client_config())
 
 

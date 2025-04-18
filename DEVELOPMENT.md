@@ -179,8 +179,20 @@ Notes:
   3. `export INTEG_TEST_JA_CROSS_ACCOUNT_BUCKET=<your-bucket-name-in-the-second-account>`
   4. Run the integration tests.
 * AWS Developers note: If testing with a non-production deployment of AWS Deadline Cloud then you will have to
-define the `AWS_ENDPOINT_URL_DEADLINE` environment variable to the non-production endpoint URL. For example,
-production endpoints look like: `export AWS_ENDPOINT_URL_DEADLINE="https://deadline.$AWS_DEFAULT_REGION.amazonaws.com"`
+define the endpoint. There are two options:
+   * Set the `AWS_ENDPOINT_URL_DEADLINE` environment variable to the non-production endpoint URL. For example,
+production endpoints look like: `export AWS_ENDPOINT_URL_DEADLINE="https://deadline.$AWS_DEFAULT_REGION.amazonaws.com"`.
+   * Set the `deaadline_endpoint` property in your profile in `~/.aws/config`. For example, your profile might look like:
+      ```
+      [profile my-farm]
+      region=us-west-2
+      credential_process="/Applications/Deadline Cloud Monitor.app/Contents/MacOS/Deadline Cloud Monitor" get-credentials --profile my-farm
+      user_id=00000000-0000-0000-0000-000000000000
+      identity_store_id=d-0000000000
+      monitor_id=monitor-00000000000000000000000000000000
+      deadline_endpoint=https://deadline.us-west-2.amazonaws.com
+      ```
+
 
 ### Squish GUI Submitter Tests
 
