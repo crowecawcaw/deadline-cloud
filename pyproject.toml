@@ -35,6 +35,7 @@ classifiers = [
 # limiting dependencies if they want/need to.
 dependencies = [
   "boto3 >= 1.36.8",
+  # Click 8.2 dropped python 3.8/3.9 support
   "click >= 8.1.7",
   "pyyaml >= 6.0",
   # Job Attachments
@@ -46,6 +47,7 @@ dependencies = [
   "jsonschema == 4.17.*",
   "pywin32 >= 307,< 311; sys_platform == 'win32'",
   "QtPy == 2.4.*",
+  "psutil >= 7.0.0"
 ]
 
 [project.urls]
@@ -145,6 +147,7 @@ markers = [
   "no_setup: mark that test shouldn't use default setups",
   "integ: tests that run against AWS resources",
   "docker: marks tests to be run only in a Docker environment",
+  "cross_account: tests that run against other aws accounts",
 ]
 # looponfailroots is deprecated, this removes the deprecation from the test output
 filterwarnings = ["ignore::DeprecationWarning"]
