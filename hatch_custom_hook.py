@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import glob
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from typing import Any
@@ -24,8 +26,18 @@ class HatchCustomBuildHook(BuildHookInterface):
                 + f" Received:\n{self.config}"
             )
 
+    def _compile_translations(self):
+        translations_dir = os.path.join(
+            self.root, "src", "deadline", "client", "ui", "translations"
+        )
+
+        for ts_path in glob.glob(os.path.join(translations_dir, "*.ts")):
+            qm_path = ts_path.replace(".ts", ".qm")
+            subprocess.run(["pyside6-lrelease", ts_path, "-qm", qm_path], check=True)
+
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         self._validate_config()
+        self._compile_translations()
 
         for destination in self.config["copy_version_py"]["destinations"]:
             print(f"Copying _version.py to {destination}")

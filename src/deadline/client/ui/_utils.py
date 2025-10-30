@@ -4,6 +4,40 @@ from typing import Any
 
 from ..exceptions import DeadlineOperationError
 
+_translator = None
+
+
+def tr(text: str) -> str:
+    """Translate text using QCoreApplication.translate with 'ui' context."""
+    return _translator.translate("ui", text)
+
+
+def load_translations() -> None:
+    """Load UI translations. Called automatically when GUI components are used."""
+    global _translator
+
+    if _translator is not None:
+        return
+
+    from qtpy.QtCore import QCoreApplication, QTranslator, QLocale
+    from pathlib import Path
+
+    app = QCoreApplication.instance()
+    if not app:
+        return
+
+    _translator = QTranslator(app)
+    translations_dir = Path(__file__).parent / "translations"
+
+    # Get system locale (e.g., "en_US", "ja_JP")
+    locale = QLocale.system().name()
+
+    # Try loading translation file: deadline_<locale>.qm
+    qm_file = translations_dir / f"deadline_{locale}.qm"
+
+    if qm_file.exists() and _translator.load(str(qm_file)):
+        app.installTranslator(_translator)
+
 
 @contextmanager
 def block_signals(element):
@@ -149,6 +183,8 @@ def gui_context_for_cli(automatically_install_dependencies: bool):
         app.setApplicationName("AWS Deadline Cloud")
         icon = QIcon(str(Path(__file__).parent.parent / "ui" / "resources" / "deadline_logo.svg"))
         app.setWindowIcon(icon)
+
+        load_translations()
 
         yield app
     except DeadlineOperationError as e:

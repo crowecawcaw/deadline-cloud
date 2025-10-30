@@ -18,6 +18,9 @@ __pycache__/
 /site/
 installer/components
 
+# Compiled translations
+*.qm
+
 # Misc extensions
 *.run
 *.exe
