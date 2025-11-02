@@ -96,10 +96,10 @@ def _validate_and_warn_about_parameters(
 
     unrecognized_list = "\n".join(f"  • {name}" for name in unrecognized_names)
     message = tr(
-        "The following parameters are not recognized by the job template or queue:\n\n%1\n\n"
+        "The following parameters are not recognized by the job template or queue:\n\n{params}\n\n"
         "These parameters will be ignored during job submission.\n\n"
         "Do you want to continue?"
-    ).replace("%1", unrecognized_list)
+    ).format(params=unrecognized_list)
 
     reply = QMessageBox.question(
         parent_widget,

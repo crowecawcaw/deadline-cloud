@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs", "PySide6-essentials >= 6.6,< 6.11"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -90,7 +90,7 @@ include = ["src/*", "hatch_custom_hook.py", "THIRD_PARTY_LICENSES"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deadline"]
-artifacts = ["*_version.py", "src/deadline/client/ui/translations/*.qm"]
+artifacts = ["*_version.py", "src/deadline/client/ui/translations/locales/*.json"]
 
 [tool.mypy]
 # Enables the type-checker on the interior of functions without type annotations.

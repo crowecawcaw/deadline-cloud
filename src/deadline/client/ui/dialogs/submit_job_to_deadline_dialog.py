@@ -260,7 +260,7 @@ class SubmitJobToDeadlineDialog(QDialog):
                 )
 
             self.submit_button.setToolTip(
-                tr("Cannot submit job:\n\n• %1").replace("%1", "\n\n• ".join(issues))
+                tr("Cannot submit job:\n\n• {issues}").format(issues="\n\n• ".join(issues))
             )
         else:
             self.submit_button.setToolTip("")
@@ -437,9 +437,9 @@ class SubmitJobToDeadlineDialog(QDialog):
                 os.startfile(self.job_history_bundle_dir)
             QMessageBox.information(
                 self,
-                tr("%1 job submission").replace("%1", self.submitter_name),
-                tr("Saved the submission as a job bundle:\n%1").replace(
-                    "%1", self.job_history_bundle_dir
+                tr("{submitter} job submission").format(submitter=self.submitter_name),
+                tr("Saved the submission as a job bundle:\n{path}").format(
+                    path=self.job_history_bundle_dir
                 ),
             )
             # Close the submitter window to signal the submission is done
@@ -452,7 +452,9 @@ class SubmitJobToDeadlineDialog(QDialog):
             logger.exception("Error saving bundle")
             message = str(exc)
             QMessageBox.critical(
-                self, tr("%1 job submission").replace("%1", self.submitter_name), message
+                self,
+                tr("{submitter} job submission").format(submitter=self.submitter_name),
+                message,
             )  # type: ignore[call-arg]
 
     def save_job_parameters_to_job_bundle(
@@ -555,7 +557,9 @@ class SubmitJobToDeadlineDialog(QDialog):
         except UserInitiatedCancel as uic:
             logger.info("Canceling submission.")
             QMessageBox.information(
-                self, tr("%1 job submission").replace("%1", self.submitter_name), str(uic)
+                self,
+                tr("{submitter} job submission").format(submitter=self.submitter_name),
+                str(uic),
             )
             job_progress_dialog.close()
         except NonValidInputError as nvie:
@@ -569,6 +573,8 @@ class SubmitJobToDeadlineDialog(QDialog):
                 from_gui=True,
             )
             QMessageBox.critical(
-                self, tr("%1 job submission").replace("%1", self.submitter_name), str(exc)
+                self,
+                tr("{submitter} job submission").format(submitter=self.submitter_name),
+                str(exc),
             )  # type: ignore[call-arg]
             job_progress_dialog.close()

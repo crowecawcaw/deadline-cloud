@@ -146,8 +146,8 @@ class DeadlineLoginDialog(QMessageBox):
         self.setStandardButtons(QMessageBox.Close)
         self.setIcon(QMessageBox.Warning)
         self.setText(
-            tr("Failed to log in to AWS Deadline Cloud:<br/><br/>%1").replace(
-                "%1", html.escape(str(e))
+            tr("Failed to log in to AWS Deadline Cloud:<br/><br/>{error}").format(
+                error=html.escape(str(e))
             )
         )
 
@@ -170,8 +170,8 @@ class DeadlineLoginDialog(QMessageBox):
             self.setStandardButtons(QMessageBox.Ok)
             self.setIcon(QMessageBox.Information)
             self.setText(
-                tr("Successfully logged into: <br/><br/>%1").replace(
-                    "%1", html.escape(success_message)
+                tr("Successfully logged into: <br/><br/>{profile}").format(
+                    profile=html.escape(success_message)
                 )
             )
 

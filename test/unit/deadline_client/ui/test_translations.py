@@ -1,26 +1,32 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
+import json
 import os
 import pytest
-import xml.etree.ElementTree as ET
-
-pytest.importorskip("PySide6")
-
-from qtpy.QtWidgets import QApplication  # type: ignore
-from qtpy.QtCore import QCoreApplication, QTranslator  # type: ignore
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent / "src"))
+import deadline.client.ui._utils as utils
+
+
+@pytest.fixture(autouse=True)
+def clear_translation_cache():
+    utils.get_translations.cache_clear()
+    yield
 
 
 @pytest.mark.skip(reason="Skip until we've added translations")
-def test_translation_loading():
-    """Test that Japanese translations load and work correctly."""
-    app = QApplication.instance() or QApplication([])
-
-    # Set locale to Japanese
+def test_japanese_translation_loading():
+    # Force Japanese locale
     os.environ["LANG"] = "ja_JP.UTF-8"
 
-    # Load Japanese translation
-    translator = QTranslator(app)
+    # Test a known translation
+    result = utils.tr("Submit to AWS Deadline Cloud")
+    assert result == "AWS Deadline Cloudに送信", f"Expected Japanese translation, got: {result}"
+
+
+def test_all_locales_have_same_keys():
     translations_dir = (
         Path(__file__).parent.parent.parent.parent.parent
         / "src"
@@ -28,56 +34,41 @@ def test_translation_loading():
         / "client"
         / "ui"
         / "translations"
-    )
-    qm_file = translations_dir / "deadline_ja_JP.qm"
-
-    assert qm_file.exists(), f"Japanese translation file not found: {qm_file}"
-    assert translator.load(str(qm_file)), "Failed to load Japanese translation"
-
-    app.installTranslator(translator)
-
-    # Test translation
-    translated = QCoreApplication.translate("ui", "Log in to AWS Deadline Cloud")
-    assert translated == "AWS Deadline Cloudにログイン", (
-        f"Expected Japanese translation, got: {translated}"
+        / "locales"
     )
 
+    # Load English as reference
+    with open(translations_dir / "en_US.json") as f:
+        en_keys = set(json.load(f).keys())
 
-@pytest.mark.skip(reason="Skip until we've added translations")
-def test_translation_keys_match_english():
-    """Verify all translation files have the same keys as the English translation."""
-    translations_dir = (
-        Path(__file__).parent.parent.parent.parent.parent
-        / "src"
-        / "deadline"
-        / "client"
-        / "ui"
-        / "translations"
-    )
-    en_file = translations_dir / "deadline_en_US.ts"
-
-    # Parse English translation to get all keys
-    en_tree = ET.parse(en_file)
-    en_keys = {
-        msg.find("source").text  # type: ignore[union-attr]
-        for msg in en_tree.findall(".//message")
-        if msg.find("source") is not None
-    }
-
-    # Check all other .ts files
-    for ts_file in translations_dir.glob("deadline_*.ts"):
-        if ts_file.name == "deadline_en_US.ts":
+    # Check all other locale files
+    for locale_file in translations_dir.glob("*.json"):
+        if locale_file.name == "en_US.json":
             continue
 
-        tree = ET.parse(ts_file)
-        keys = {
-            msg.find("source").text  # type: ignore[union-attr]
-            for msg in tree.findall(".//message")
-            if msg.find("source") is not None
-        }
+        with open(locale_file) as f:
+            locale_keys = set(json.load(f).keys())
 
-        missing = en_keys - keys
-        extra = keys - en_keys
+        missing = en_keys - locale_keys
+        extra = locale_keys - en_keys
 
-        assert not missing, f"{ts_file.name} missing keys: {missing}"
-        assert not extra, f"{ts_file.name} has extra keys: {extra}"
+        assert not missing, f"{locale_file.name} missing keys: {missing}"
+        assert not extra, f"{locale_file.name} has extra keys: {extra}"
+
+
+def test_type_hints_generated():
+    """Ensure type hints file is generated from translations."""
+    type_file = (
+        Path(__file__).parent.parent.parent.parent.parent
+        / "src"
+        / "deadline"
+        / "client"
+        / "ui"
+        / "_translation_keys.py"
+    )
+
+    assert type_file.exists(), "Type hints file not generated"
+
+    content = type_file.read_text()
+    assert "TranslationKey" in content
+    assert "Literal[" in content

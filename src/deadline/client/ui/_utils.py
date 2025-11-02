@@ -1,42 +1,45 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 from contextlib import contextmanager
-from typing import Any
+from functools import lru_cache
+from typing import Any, Dict, TYPE_CHECKING
+import json
+import locale as locale_module
+from pathlib import Path
 
 from ..exceptions import DeadlineOperationError
 
-_translator = None
+# Import TranslationKey type only during type checking to avoid runtime errors
+# if _translation_keys.py doesn't exist (it's generated during build)
+if TYPE_CHECKING:
+    from ._translation_keys import TranslationKey
+else:
+    TranslationKey = str
 
 
-def tr(text: str) -> str:
-    """Translate text using QCoreApplication.translate with 'ui' context."""
-    return _translator.translate("ui", text)
+@lru_cache(maxsize=1)
+def get_translations() -> Dict[str, str]:
+    """Load UI translations from locale-specific JSON."""
+    # Get system locale
+    current_locale, _ = locale_module.getdefaultlocale()
+    if not current_locale:
+        current_locale = "en_US"
+
+    # Try locale-specific file, fallback to en_US
+    translations_dir = Path(__file__).parent / "translations" / "locales"
+    locale_file = translations_dir / f"{current_locale}.json"
+    if not locale_file.exists():
+        locale_file = translations_dir / "en_US.json"
+
+    try:
+        with open(locale_file) as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
-def load_translations() -> None:
-    """Load UI translations. Called automatically when GUI components are used."""
-    global _translator
-
-    if _translator is not None:
-        return
-
-    from qtpy.QtCore import QCoreApplication, QTranslator, QLocale
-    from pathlib import Path
-
-    app = QCoreApplication.instance()
-    if not app:
-        return
-
-    _translator = QTranslator(app)
-    translations_dir = Path(__file__).parent / "translations"
-
-    # Get system locale (e.g., "en_US", "ja_JP")
-    locale = QLocale.system().name()
-
-    # Try loading translation file: deadline_<locale>.qm
-    qm_file = translations_dir / f"deadline_{locale}.qm"
-
-    if qm_file.exists() and _translator.load(str(qm_file)):
-        app.installTranslator(_translator)
+def tr(text: TranslationKey) -> str:
+    """Translate text using JSON translations."""
+    return get_translations().get(text, text)
 
 
 @contextmanager
@@ -183,8 +186,6 @@ def gui_context_for_cli(automatically_install_dependencies: bool):
         app.setApplicationName("AWS Deadline Cloud")
         icon = QIcon(str(Path(__file__).parent.parent / "ui" / "resources" / "deadline_logo.svg"))
         app.setWindowIcon(icon)
-
-        load_translations()
 
         yield app
     except DeadlineOperationError as e:

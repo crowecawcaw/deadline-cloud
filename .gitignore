@@ -19,7 +19,7 @@ __pycache__/
 installer/components
 
 # Compiled translations
-*.qm
+src/deadline/client/ui/_translation_keys.py
 
 # Misc extensions
 *.run
