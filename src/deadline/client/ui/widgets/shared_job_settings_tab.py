@@ -254,7 +254,7 @@ class SharedJobPropertiesWidget(QGroupBox):  # pylint: disable=too-few-public-me
     """
 
     def __init__(self, *, initial_settings, parent: Optional[QWidget] = None):
-        super().__init__("Job Properties", parent=parent)
+        super().__init__(tr("Job Properties"), parent=parent)
 
         self._build_ui()
         self.refresh_ui(initial_settings)
@@ -477,7 +477,7 @@ class DeadlineCloudSettingsWidget(QGroupBox):
     """
 
     def __init__(self, *, parent: Optional[QWidget] = None):
-        super().__init__("Deadline Cloud settings", parent=parent)
+        super().__init__(tr("Deadline Cloud settings"), parent=parent)
         self.deadline_settings: Dict[str, Any] = {"counter": -1}
         self.layout = QFormLayout(self)
         self.layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)

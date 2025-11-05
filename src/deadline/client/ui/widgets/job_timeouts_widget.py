@@ -214,7 +214,7 @@ class TimeoutTableWidget(QGroupBox):
     """
 
     def __init__(self, *, timeouts: TimeoutTableEntries, parent: Optional[QWidget] = None):
-        super().__init__("Timeouts", parent=parent)
+        super().__init__(tr("Timeouts"), parent=parent)
         self.timeout_rows: Dict[str, TimeoutEntryWidget] = {}
         self._build_ui(timeouts)
         self.refresh_ui(timeouts)
