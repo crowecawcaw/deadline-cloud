@@ -17,7 +17,7 @@ else:
 
 
 @lru_cache(maxsize=1)
-def get_translations() -> Dict[str, str]:
+def _get_translations() -> Dict[str, str]:
     """Load UI translations from locale-specific JSON."""
     # Get system locale
     current_locale, _ = locale_module.getdefaultlocale()
@@ -39,7 +39,7 @@ def get_translations() -> Dict[str, str]:
 
 def tr(text: TranslationKey) -> str:
     """Translate text using JSON translations."""
-    return get_translations().get(text, text)
+    return _get_translations().get(text, text)
 
 
 @contextmanager

@@ -10,7 +10,7 @@ import deadline.client.ui._utils as utils
 
 @pytest.fixture(autouse=True)
 def clear_translation_cache():
-    utils.get_translations.cache_clear()
+    utils._get_translations.cache_clear()
     yield
 
 
