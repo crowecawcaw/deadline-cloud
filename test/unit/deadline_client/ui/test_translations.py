@@ -4,9 +4,7 @@ import json
 import os
 import pytest
 from pathlib import Path
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent / "src"))
 import deadline.client.ui._utils as utils
 
 
