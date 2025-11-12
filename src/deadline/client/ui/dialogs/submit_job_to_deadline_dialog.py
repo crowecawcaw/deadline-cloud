@@ -261,7 +261,9 @@ class SubmitJobToDeadlineDialog(QDialog):
                 )
 
             self.submit_button.setToolTip(
-                tr("Cannot submit job:\n\n• {issues}").format(issues="\n\n• ".join(issues))
+                tr("Cannot submit job:\n\n\u2022 {issues}").format(
+                    issues="\n\n\u2022 ".join(issues)
+                )
             )
         else:
             self.submit_button.setToolTip("")
