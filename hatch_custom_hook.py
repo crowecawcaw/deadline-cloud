@@ -51,6 +51,7 @@ class HatchCustomBuildHook(BuildHookInterface):
         )
 
         with open(type_file, "w", encoding="utf-8") as f:
+            f.write("# coding: utf-8\n")
             f.write("# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.\n")
             f.write("# Auto-generated from locales/en_US.json - DO NOT EDIT\n\n")
             f.write("from typing import Literal\n\n")
