@@ -1,3 +1,4 @@
+# coding: utf-8
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 from __future__ import annotations
 import copy
