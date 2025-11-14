@@ -88,11 +88,11 @@ We'll generate translations of UI strings with an AI agent. We'll use the existi
 Sample prompt:
 
 ```
-Geneate translations for UI strings. See the list of translations we support by listing files in `./src/deadline/client/ui/translations/locales`. We'll use Deadline's official documentation and its translations as both background context and a translation guide.
+Generate translations for UI strings. See the list of translations we support by listing files in `./src/deadline/client/ui/translations/locales`. We'll use Deadline's official documentation and its translations as both background context and a translation guide.
 
 To translate the strings:
 1. Read the official AWS Deadline Cloud documentation on [concepts and terminology](https://docs.aws.amazon.com/deadline-cloud/latest/userguide/concepts-terminology.html). Also discover other docs pages that relate to the strings that are being translated. These pages will give you background context for the service, the feature, and the official language used with it.
-2. For each lanuage we're translating in to:
+2. For each language we're translating in to:
   a. Read the same AWS docs pages you found to be relevant in step 1 but in the language we're relating in to. For example, see [this Spanish translation of the concepts and terminology page](https://docs.aws.amazon.com/es_es/deadline-cloud/latest/userguide/concepts-terminology.html)
   b. For strings where you need additional context for a high quality translation, ask me for input. I will not know the target langauge, but I can provide additional context to inform how you translate it. STOP HERE AND WAIT FOR MY INPUT.
   c. Translate the English strings I've provided into the target langauge. The strings will be used in an interface for submitting jobs to Deadline.
