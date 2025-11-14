@@ -1,6 +1,6 @@
 # UI Translations
 
-Translation files for displaying the Deadline Cloud submitter UI in multiple langauges. During development, type checkers (mypy, pyright) validate translation keys at development time using auto-generated `_translation_keys.py`. At runtime, the `tr()` function automatically loads the appropriate locale file based on system locale, falling back to `en_US.json`.
+Translation files for displaying the Deadline Cloud submitter UI in multiple languages. During development, type checkers (mypy, pyright) validate translation keys at development time using auto-generated `_translation_keys.py`. At runtime, the `tr()` function automatically loads the appropriate locale file based on system locale, falling back to `en_US.json`.
 
 Do translate:
 - Buttons, labels, UI elements, and help text
@@ -94,11 +94,11 @@ To translate the strings:
 1. Read the official AWS Deadline Cloud documentation on [concepts and terminology](https://docs.aws.amazon.com/deadline-cloud/latest/userguide/concepts-terminology.html). Also discover other docs pages that relate to the strings that are being translated. These pages will give you background context for the service, the feature, and the official language used with it.
 2. For each language we're translating in to:
   a. Read the same AWS docs pages you found to be relevant in step 1 but in the language we're relating in to. For example, see [this Spanish translation of the concepts and terminology page](https://docs.aws.amazon.com/es_es/deadline-cloud/latest/userguide/concepts-terminology.html)
-  b. For strings where you need additional context for a high quality translation, ask me for input. I will not know the target langauge, but I can provide additional context to inform how you translate it. STOP HERE AND WAIT FOR MY INPUT.
-  c. Translate the English strings I've provided into the target langauge. The strings will be used in an interface for submitting jobs to Deadline.
+  b. For strings where you need additional context for a high quality translation, ask me for input. I will not know the target language, but I can provide additional context to inform how you translate it. STOP HERE AND WAIT FOR MY INPUT.
+  c. Translate the English strings I've provided into the target language. The strings will be used in an interface for submitting jobs to Deadline.
     a. The language should be precise, technical, and professional.
     b. Mirror the language from the AWS docs where possible.
-    c. ALWAYS use the same langauge as the AWS docs translation for specific concepts, resource types, or features such as "farm", "fleet", "queue", "worker", "job attachments", or "required capabilities". 
+    c. ALWAYS use the same language as the AWS docs translation for specific concepts, resource types, or features such as "farm", "fleet", "queue", "worker", "job attachments", or "required capabilities". 
 
 <note: adapt these instructions as needed to match your workflow>
   Run git diff on `./src/deadline/client/ui/translations/locales/en_US.json` to see the strings to be translated.
