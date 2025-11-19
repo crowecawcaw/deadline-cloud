@@ -21,6 +21,7 @@ import boto3
 from boto3.s3.transfer import ProgressCallbackInvoker
 from botocore.client import BaseClient
 from botocore.exceptions import BotoCoreError, ClientError
+from s3transfer.subscribers import BaseSubscriber
 
 from .asset_manifests.base_manifest import BaseAssetManifest, BaseManifestPath as RelativeFilePath
 from .asset_manifests.hash_algorithms import HashAlgorithm
@@ -76,6 +77,22 @@ from ._utils import (
 from threading import Lock
 
 download_logger = getLogger("deadline.job_attachments.download")
+
+
+class _FileSizeSubscriber(BaseSubscriber):
+    """Subscriber that provides file size to skip HEAD requests."""
+
+    def __init__(self, size):
+        self._size = size
+
+    def on_queued(self, future, **kwargs):
+        future.meta.provide_transfer_size(self._size)
+        # Provide a dummy etag to skip HEAD request if the method exists (added in s3transfer 0.6.0).
+        # For downloads from CAS, we don't need etag validation since files are content-addressed.
+        # Older s3transfer versions don't have this method, so we check before calling.
+        if hasattr(future.meta, "provide_object_etag"):
+            future.meta.provide_object_etag("dummy-etag")
+
 
 S3_DOWNLOAD_MAX_CONCURRENCY = 10
 WINDOWS_MAX_PATH_LENGTH = 260
@@ -549,7 +566,7 @@ def download_file(
             if not should_continue:
                 future.cancel()
 
-    subscribers = [ProgressCallbackInvoker(handler)]
+    subscribers = [_FileSizeSubscriber(file_bytes), ProgressCallbackInvoker(handler)]
 
     future = transfer_manager.download(
         bucket=s3_bucket,

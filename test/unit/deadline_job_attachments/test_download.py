@@ -1782,7 +1782,7 @@ class TestFullDownload:
         s3_client = boto3.client("s3")
         stubber = Stubber(s3_client)
         stubber.add_client_error(
-            "head_object",
+            "get_object",
             service_error_code="AccessDenied",
             service_message="Access Denied",
             http_status_code=403,
@@ -1868,6 +1868,58 @@ class TestFullDownload:
             ) in str(exc.value)
             mock_lock.assert_not_called()
             mock_collision_dict.assert_not_called()
+
+    def test_download_file_does_not_make_head_request_when_size_known(self):
+        """
+        Test that download_file does not make a HEAD request when file size is known from manifest.
+        """
+        mock_s3_client = MagicMock()
+        mock_transfer_manager = MagicMock()
+        mock_lock = MagicMock()
+        mock_collision_dict = MagicMock()
+
+        file_size = 12345
+        file_path = ManifestPathv2023_03_03(
+            path="inputs/input1.txt", hash="input1", size=file_size, mtime=1234000000
+        )
+
+        with patch(
+            f"{deadline.__package__}.job_attachments.download.get_s3_client",
+            return_value=mock_s3_client,
+        ), patch(
+            f"{deadline.__package__}.job_attachments.download.get_s3_transfer_manager",
+            return_value=mock_transfer_manager,
+        ), patch(f"{deadline.__package__}.job_attachments.download.Path.mkdir"), patch(
+            f"{deadline.__package__}.job_attachments.download.os.utime"
+        ):
+            download_file(
+                file_path,
+                HashAlgorithm.XXH128,
+                "/home/username/assets",
+                mock_lock,
+                mock_collision_dict,
+                "test-bucket",
+                "rootPrefix/Data",
+                mock_s3_client,
+            )
+            mock_s3_client.head_object.assert_not_called()
+
+    def test_file_size_subscriber_without_provide_object_etag(self):
+        """
+        Test that _FileSizeSubscriber works with older s3transfer versions
+        that don't have provide_object_etag method.
+        """
+        from deadline.job_attachments.download import _FileSizeSubscriber
+
+        mock_future = MagicMock()
+        mock_future.meta.provide_transfer_size = MagicMock()
+        # Simulate older s3transfer where provide_object_etag doesn't exist
+        del mock_future.meta.provide_object_etag
+
+        subscriber = _FileSizeSubscriber(12345)
+        subscriber.on_queued(mock_future)
+
+        mock_future.meta.provide_transfer_size.assert_called_once_with(12345)
 
     @pytest.mark.skipif(
         sys.platform == "win32",
