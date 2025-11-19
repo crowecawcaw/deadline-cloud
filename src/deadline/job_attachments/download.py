@@ -21,7 +21,7 @@ import boto3
 from boto3.s3.transfer import ProgressCallbackInvoker
 from botocore.client import BaseClient
 from botocore.exceptions import BotoCoreError, ClientError
-from s3transfer.subscribers import BaseSubscriber
+from s3transfer.subscribers import BaseSubscriber as _BaseSubscriber
 
 from .asset_manifests.base_manifest import BaseAssetManifest, BaseManifestPath as RelativeFilePath
 from .asset_manifests.hash_algorithms import HashAlgorithm
@@ -79,7 +79,7 @@ from threading import Lock
 download_logger = getLogger("deadline.job_attachments.download")
 
 
-class _FileSizeSubscriber(BaseSubscriber):
+class _FileSizeSubscriber(_BaseSubscriber):
     """Subscriber that provides file size to skip HEAD requests."""
 
     def __init__(self, size):
