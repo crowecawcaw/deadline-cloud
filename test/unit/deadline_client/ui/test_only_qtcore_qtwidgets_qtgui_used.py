@@ -8,8 +8,14 @@ This ensures we can distribute a minimal Qt build without unnecessary modules.
 
 import subprocess
 import sys
+from typing import Set
 
 import pytest
+
+try:
+    from deadline.client.ui.dialogs import deadline_config_dialog  # noqa: F401
+except ImportError:
+    pytest.importorskip("deadline.client.ui.dialogs.deadline_config_dialog")
 
 ALLOWED_QT_MODULES = {"QtCore", "QtGui", "QtWidgets", "QtOpenGL", "QtOpenGLWidgets"}
 
@@ -24,7 +30,7 @@ print(','.join(sorted(qt_modules)) if qt_modules else '')
 """
 
 
-def _get_imported_qt_modules(module_path: str) -> set[str]:
+def _get_imported_qt_modules(module_path: str) -> Set[str]:
     """Run import in subprocess and return set of Qt modules that were loaded."""
     result = subprocess.run(
         [sys.executable, "-c", _TEST_SCRIPT, module_path],
@@ -37,7 +43,7 @@ def _get_imported_qt_modules(module_path: str) -> set[str]:
     return set(output.split(",")) if output else set()
 
 
-def _assert_only_allowed_qt_modules(imported: set[str]):
+def _assert_only_allowed_qt_modules(imported: Set[str]):
     """Assert that only allowed Qt modules were imported."""
     disallowed = imported - ALLOWED_QT_MODULES
     assert not disallowed, f"Disallowed Qt modules imported: {disallowed}"
