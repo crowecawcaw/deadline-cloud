@@ -24,17 +24,3 @@ jobs:
       os: ${{ matrix.os }}
       python-version: ${{ matrix.python-version }}
       ref: ${{inputs.tag}}
-
-  TestPy38:
-    name: Python
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.8']
-    uses: ./.github/workflows/reusable_python_build_coverage_override.yml
-    with:
-      os: ${{ matrix.os }}
-      python-version: ${{ matrix.python-version }}
-      ref: ${{inputs.tag}}
-      # The incremental output download and mcp feature doesn't run on Python 3.8, so test coverage is lower
-      cov-fail-under: "74"
