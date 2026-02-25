@@ -325,19 +325,23 @@ class _ProgressBarCallbackManager:
         if self._bar_status == self.BAR_CLOSED:
             # from multithreaded execution this can be called after completion somtimes.
             return sigint_handler.continue_operation
-        elif self._bar_status == self.BAR_NOT_CREATED:
+        
+        bar_just_created = False
+        if self._bar_status == self.BAR_NOT_CREATED:
             # Note: click doesn't export the return type of progressbar(), so we suppress mypy warnings for
             # not annotating the type of hashing_progress.
             self._upload_progress = click.progressbar(length=self._length, label=self._label)  # type: ignore[var-annotated]
             self._exit_stack.enter_context(self._upload_progress)
             self._bar_status = self.BAR_CREATED
+            bar_just_created = True
 
         total_progress = int(upload_metadata.progress)
         new_progress = total_progress - self._upload_progress.pos
         if new_progress > 0:
             self._upload_progress.update(new_progress)
 
-        if total_progress == self._length or not sigint_handler.continue_operation:
+        # Close the bar if we've reached the end OR if progress is 0 and bar was just created (no files case)
+        if total_progress == self._length or not sigint_handler.continue_operation or (total_progress == 0 and bar_just_created):
             self._bar_status = self.BAR_CLOSED
             self._exit_stack.close()
 

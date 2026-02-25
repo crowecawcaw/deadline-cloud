@@ -2,11 +2,13 @@
 
 import json
 import pytest
+from unittest.mock import Mock, patch
 
 import click
 import yaml
 
-from deadline.client.cli._common import _parse_file_parameter, _parse_multi_format_parameters
+from deadline.client.cli._common import _parse_file_parameter, _parse_multi_format_parameters, _ProgressBarCallbackManager
+from deadline.job_attachments.progress_tracker import ProgressReportMetadata, ProgressStatus
 
 
 class TestParseFileParameter:
@@ -234,3 +236,79 @@ class TestParseMultiFormatParameters:
 
         with pytest.raises(click.BadParameter, match="not formatted correctly"):
             _parse_multi_format_parameters(params)
+
+
+class TestProgressBarCallbackManager:
+    """Test the _ProgressBarCallbackManager class."""
+
+    @patch('click.progressbar')
+    def test_zero_length_progress_bar_closes_immediately(self, mock_progressbar):
+        """Test that progress bar with zero length closes immediately when called with progress=0."""
+        # Setup mock progress bar
+        mock_bar = Mock()
+        mock_bar.pos = 0
+        mock_progressbar.return_value = mock_bar
+        
+        # Create manager with length=100 (as used in CLI), but no files to upload
+        manager = _ProgressBarCallbackManager(length=100, label="Uploading Attachments")
+        
+        # Create metadata with progress=0 (no files case)
+        metadata = ProgressReportMetadata(
+            status=ProgressStatus.UPLOAD_IN_PROGRESS,
+            progress=0,
+            transferRate=0,
+            progressMessage="No files to upload",
+            processedFiles=0,
+        )
+        
+        # Call callback once with progress=0
+        result = manager.callback(metadata)
+        
+        # Verify the callback succeeded
+        assert result is True
+        
+        # Verify progress bar was created
+        mock_progressbar.assert_called_once_with(length=100, label="Uploading Attachments")
+        
+        # The bug: bar should be closed when progress=0 on first call, but it's not
+        # This test will fail until we fix the bug
+        assert manager._bar_status == _ProgressBarCallbackManager.BAR_CLOSED
+
+    @patch('click.progressbar')
+    def test_normal_progress_bar_behavior(self, mock_progressbar):
+        """Test that normal progress bar behavior still works correctly."""
+        # Setup mock progress bar
+        mock_bar = Mock()
+        mock_bar.pos = 0
+        mock_progressbar.return_value = mock_bar
+        
+        # Create manager with length=100
+        manager = _ProgressBarCallbackManager(length=100, label="Uploading Attachments")
+        
+        # First call with progress=50
+        metadata1 = ProgressReportMetadata(
+            status=ProgressStatus.UPLOAD_IN_PROGRESS,
+            progress=50,
+            transferRate=1000,
+            progressMessage="Uploading...",
+            processedFiles=5,
+        )
+        
+        result1 = manager.callback(metadata1)
+        assert result1 is True
+        assert manager._bar_status == _ProgressBarCallbackManager.BAR_CREATED
+        mock_bar.update.assert_called_once_with(50)
+        
+        # Second call with progress=100 (completion)
+        mock_bar.pos = 50  # Simulate the bar position after first update
+        metadata2 = ProgressReportMetadata(
+            status=ProgressStatus.UPLOAD_IN_PROGRESS,
+            progress=100,
+            transferRate=1000,
+            progressMessage="Upload complete",
+            processedFiles=10,
+        )
+        
+        result2 = manager.callback(metadata2)
+        assert result2 is True
+        assert manager._bar_status == _ProgressBarCallbackManager.BAR_CLOSED
