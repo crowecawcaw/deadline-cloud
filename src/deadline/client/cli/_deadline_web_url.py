@@ -184,10 +184,13 @@ def install_deadline_web_url_handler(all_users: bool) -> None:
                 f"Failed to install the handler for {DEADLINE_URL_SCHEME_NAME} URLs: update-desktop-database is not installed."
             )
 
-        # Get the CLI program path. Use shutil.which to resolve the full path when
-        # invoked via PATH (e.g. bare "deadline"), falling back to os.path.abspath
-        # for relative or absolute paths (e.g. "./deadline" or "/opt/bin/deadline").
-        deadline_cli_program = shutil.which(sys.argv[0]) or os.path.abspath(sys.argv[0])
+        # Resolve the full path to the CLI program via PATH lookup.
+        deadline_cli_program = shutil.which(sys.argv[0])
+        if not deadline_cli_program:
+            raise DeadlineOperationError(
+                f"Failed to install the handler for {DEADLINE_URL_SCHEME_NAME} URLs: "
+                f"could not find '{sys.argv[0]}' on PATH."
+            )
 
         if all_users:
             entry_dir = "/usr/share/applications"

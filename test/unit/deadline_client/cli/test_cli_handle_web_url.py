@@ -695,9 +695,7 @@ def test_linux_install_generates_valid_desktop_file(fresh_deadline_config, tmp_p
 
     with patch.object(sys, "platform", "linux"), patch.object(
         sys, "argv", ["/usr/bin/deadline"]
-    ), patch.object(
-        shutil, "which", side_effect=lambda cmd: cmd if "/" in cmd else "/usr/bin/" + cmd
-    ), patch.object(
+    ), patch.object(shutil, "which", return_value="/usr/bin/deadline"), patch.object(
         os.path,
         "expanduser",
         side_effect=lambda p: p.replace("~/.local/share", str(tmp_path)).replace(
@@ -720,10 +718,10 @@ def test_linux_install_generates_valid_desktop_file(fresh_deadline_config, tmp_p
     )
 
 
-def test_linux_install_resolves_binary_path_via_shutil_which(fresh_deadline_config, tmp_path):
+def test_linux_install_resolves_bare_command_via_shutil_which(fresh_deadline_config, tmp_path):
     """
     Tests that on Linux, when sys.argv[0] is a bare command name (e.g. 'deadline'),
-    the install resolves the full path using shutil.which rather than os.path.abspath.
+    the install resolves the full path using shutil.which.
     """
     entry_dir = tmp_path / "applications"
     entry_dir.mkdir()
@@ -732,14 +730,15 @@ def test_linux_install_resolves_binary_path_via_shutil_which(fresh_deadline_conf
 
     desktop_file_path = str(entry_dir / "deadline.desktop")
 
-    def mock_which(cmd):
-        if cmd == "deadline":
-            return "/opt/deadline/bin/deadline"
-        return "/usr/bin/" + cmd
-
     with patch.object(sys, "platform", "linux"), patch.object(
         sys, "argv", ["deadline"]
-    ), patch.object(shutil, "which", side_effect=mock_which), patch.object(
+    ), patch.object(
+        shutil,
+        "which",
+        side_effect=lambda cmd: "/opt/deadline/bin/deadline"
+        if cmd == "deadline"
+        else "/usr/bin/" + cmd,
+    ), patch.object(
         os.path,
         "expanduser",
         side_effect=lambda p: p.replace("~/.local/share", str(tmp_path)).replace(
@@ -752,6 +751,21 @@ def test_linux_install_resolves_binary_path_via_shutil_which(fresh_deadline_conf
 
     with open(desktop_file_path) as f:
         desktop_content = f.read()
-    assert "/opt/deadline/bin/deadline" in desktop_content, (
-        f"Expected resolved path in Exec line, got:\n{desktop_content}"
-    )
+    assert "Exec=/opt/deadline/bin/deadline handle-web-url %u" in desktop_content
+
+
+def test_linux_install_raises_when_command_not_found(fresh_deadline_config, tmp_path):
+    """
+    Tests that on Linux, when shutil.which cannot find the command,
+    the install raises a DeadlineOperationError.
+    """
+    with patch.object(sys, "platform", "linux"), patch.object(
+        sys, "argv", ["deadline"]
+    ), patch.object(
+        shutil, "which", side_effect=lambda cmd: None if cmd == "deadline" else "/usr/bin/" + cmd
+    ):
+        from deadline.client.cli._deadline_web_url import install_deadline_web_url_handler
+        from deadline.client.exceptions import DeadlineOperationError
+
+        with pytest.raises(DeadlineOperationError, match="could not find 'deadline' on PATH"):
+            install_deadline_web_url_handler(all_users=False)
