@@ -491,6 +491,34 @@ def test_handle_web_url_require_url_or_install_option(fresh_deadline_config):
     assert result.exit_code != 0
 
 
+def test_cli_handle_web_url_install_frozen_exe(fresh_deadline_config, monkeypatch):
+    """
+    When running as a PyInstaller frozen binary, sys.frozen is True and
+    sys.executable is the .exe path. The handler should use it directly
+    without appending .exe.
+    """
+    winreg_mock = MagicMock()
+    monkeypatch.setitem(sys.modules, "winreg", winreg_mock)
+
+    exe_path = r"C:\Program Files\DeadlineClient\deadline.exe"
+
+    with patch.object(sys, "platform", "win32"), patch.object(
+        sys, "frozen", True, create=True
+    ), patch.object(sys, "executable", exe_path), patch.object(
+        os.path, "isfile", return_value=True
+    ):
+        winreg_mock.HKEY_CURRENT_USER = "HKEY_CURRENT_USER"
+        winreg_mock.REG_SZ = "REG_SZ"
+        winreg_mock.CreateKeyEx.side_effect = ["FIRST_CREATED_KEY", "SECOND_CREATED_KEY"]
+
+        from deadline.client.cli._deadline_web_url import install_deadline_web_url_handler
+
+        install_deadline_web_url_handler(all_users=False)
+
+    # Should use sys.executable directly, no .exe.exe
+    os.path.isfile.assert_called_once_with(exe_path)
+
+
 @pytest.mark.parametrize("install_command", ["install", "uninstall"])
 @pytest.mark.parametrize("all_users", [True, False])
 def test_cli_handle_web_url_install(fresh_deadline_config, install_command, all_users):

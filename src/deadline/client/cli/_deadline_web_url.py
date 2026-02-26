@@ -124,13 +124,18 @@ def install_deadline_web_url_handler(all_users: bool) -> None:
     if sys.platform == "win32":
         import winreg
 
-        # Get the CLI program path, either an .exe or a .py with the Python interpreter
-        deadline_cli_program = os.path.abspath(sys.argv[0])
-        if deadline_cli_program.endswith(".py"):
-            deadline_cli_prefix = f'"{sys.executable}" "{deadline_cli_program}"'
-        else:
-            deadline_cli_program = deadline_cli_program + ".exe"
+        # Get the CLI program path
+        if getattr(sys, "frozen", False):
+            # PyInstaller frozen binary: sys.executable is the .exe itself
+            deadline_cli_program = sys.executable
             deadline_cli_prefix = f'"{deadline_cli_program}"'
+        else:
+            deadline_cli_program = os.path.abspath(sys.argv[0])
+            if deadline_cli_program.endswith(".py"):
+                deadline_cli_prefix = f'"{sys.executable}" "{deadline_cli_program}"'
+            else:
+                deadline_cli_program = deadline_cli_program + ".exe"
+                deadline_cli_prefix = f'"{deadline_cli_program}"'
 
         if not os.path.isfile(deadline_cli_program):
             raise DeadlineOperationError(
