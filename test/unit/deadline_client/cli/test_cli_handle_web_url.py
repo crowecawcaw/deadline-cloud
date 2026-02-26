@@ -696,7 +696,7 @@ def test_linux_install_generates_valid_desktop_file(fresh_deadline_config, tmp_p
     with patch.object(sys, "platform", "linux"), patch.object(
         sys, "argv", ["/usr/bin/deadline"]
     ), patch.object(
-        shutil, "which", side_effect=lambda cmd: cmd if os.sep in cmd else "/usr/bin/" + cmd
+        shutil, "which", side_effect=lambda cmd: cmd if "/" in cmd else "/usr/bin/" + cmd
     ), patch.object(
         os.path,
         "expanduser",
