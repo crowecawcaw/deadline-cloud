@@ -735,9 +735,9 @@ def test_linux_install_resolves_bare_command_via_shutil_which(fresh_deadline_con
     ), patch.object(
         shutil,
         "which",
-        side_effect=lambda cmd: "/opt/deadline/bin/deadline"
-        if cmd == "deadline"
-        else "/usr/bin/" + cmd,
+        side_effect=lambda cmd: (
+            "/opt/deadline/bin/deadline" if cmd == "deadline" else "/usr/bin/" + cmd
+        ),
     ), patch.object(
         os.path,
         "expanduser",
