@@ -515,8 +515,8 @@ def test_cli_handle_web_url_install_frozen_exe(fresh_deadline_config, monkeypatc
 
         install_deadline_web_url_handler(all_users=False)
 
-    # Should use sys.executable directly, no .exe.exe
-    os.path.isfile.assert_called_once_with(exe_path)
+        # Should use sys.executable directly, no .exe.exe
+        os.path.isfile.assert_called_once_with(exe_path)
 
 
 @pytest.mark.parametrize("install_command", ["install", "uninstall"])
