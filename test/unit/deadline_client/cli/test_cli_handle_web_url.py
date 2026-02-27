@@ -493,9 +493,8 @@ def test_handle_web_url_require_url_or_install_option(fresh_deadline_config):
 
 def test_cli_handle_web_url_install_frozen_exe(fresh_deadline_config, monkeypatch):
     """
-    When running as a PyInstaller frozen binary, sys.frozen is True and
-    sys.executable is the .exe path. The handler should use it directly
-    without appending .exe.
+    When running as a PyInstaller frozen binary, sys.argv[0] is already
+    "deadline.exe". with_suffix(".exe") should be a no-op.
     """
     winreg_mock = MagicMock()
     monkeypatch.setitem(sys.modules, "winreg", winreg_mock)
@@ -503,9 +502,34 @@ def test_cli_handle_web_url_install_frozen_exe(fresh_deadline_config, monkeypatc
     exe_path = r"C:\Program Files\DeadlineClient\deadline.exe"
 
     with patch.object(sys, "platform", "win32"), patch.object(
-        sys, "frozen", True, create=True
-    ), patch.object(sys, "executable", exe_path), patch.object(
-        os.path, "isfile", return_value=True
+        sys, "argv", [exe_path]
+    ), patch.object(os.path, "isfile", return_value=True):
+        winreg_mock.HKEY_CURRENT_USER = "HKEY_CURRENT_USER"
+        winreg_mock.REG_SZ = "REG_SZ"
+        winreg_mock.CreateKeyEx.side_effect = ["FIRST_CREATED_KEY", "SECOND_CREATED_KEY"]
+
+        from deadline.client.cli._deadline_web_url import install_deadline_web_url_handler
+
+        install_deadline_web_url_handler(all_users=False)
+
+        # with_suffix(".exe") is a no-op when already .exe
+        os.path.isfile.assert_called_once_with(exe_path)
+
+
+def test_cli_handle_web_url_install_pip_console_script(fresh_deadline_config, monkeypatch):
+    """
+    When running from a pip/uv-installed console_script, sys.argv[0] is
+    extensionless (e.g. "deadline"). The handler should append .exe.
+    """
+    winreg_mock = MagicMock()
+    monkeypatch.setitem(sys.modules, "winreg", winreg_mock)
+
+    script_path = r"C:\Scripts\deadline"
+
+    with patch.object(sys, "platform", "win32"), patch.object(
+        sys, "argv", [script_path]
+    ), patch.object(os.path, "isfile", return_value=True), patch(
+        "os.path.abspath", return_value=script_path
     ):
         winreg_mock.HKEY_CURRENT_USER = "HKEY_CURRENT_USER"
         winreg_mock.REG_SZ = "REG_SZ"
@@ -515,8 +539,8 @@ def test_cli_handle_web_url_install_frozen_exe(fresh_deadline_config, monkeypatc
 
         install_deadline_web_url_handler(all_users=False)
 
-        # Should use sys.executable directly, no .exe.exe
-        os.path.isfile.assert_called_once_with(exe_path)
+        # Should append .exe to the extensionless console_script path
+        os.path.isfile.assert_called_once_with(script_path + ".exe")
 
 
 @pytest.mark.parametrize("install_command", ["install", "uninstall"])
