@@ -501,9 +501,9 @@ def test_cli_handle_web_url_install_frozen_exe(fresh_deadline_config, monkeypatc
 
     exe_path = r"C:\Program Files\DeadlineClient\deadline.exe"
 
-    with patch.object(sys, "platform", "win32"), patch.object(
-        sys, "argv", [exe_path]
-    ), patch.object(os.path, "isfile", return_value=True):
+    with patch.object(sys, "platform", "win32"), patch.object(sys, "argv", [exe_path]), patch(
+        "os.path.isfile", return_value=True
+    ) as isfile_mock:
         winreg_mock.HKEY_CURRENT_USER = "HKEY_CURRENT_USER"
         winreg_mock.REG_SZ = "REG_SZ"
         winreg_mock.CreateKeyEx.side_effect = ["FIRST_CREATED_KEY", "SECOND_CREATED_KEY"]
@@ -513,7 +513,7 @@ def test_cli_handle_web_url_install_frozen_exe(fresh_deadline_config, monkeypatc
         install_deadline_web_url_handler(all_users=False)
 
         # with_suffix(".exe") is a no-op when already .exe
-        os.path.isfile.assert_called_once_with(exe_path)
+        isfile_mock.assert_called_once_with(exe_path)
 
 
 def test_cli_handle_web_url_install_pip_console_script(fresh_deadline_config, monkeypatch):
@@ -526,11 +526,9 @@ def test_cli_handle_web_url_install_pip_console_script(fresh_deadline_config, mo
 
     script_path = r"C:\Scripts\deadline"
 
-    with patch.object(sys, "platform", "win32"), patch.object(
-        sys, "argv", [script_path]
-    ), patch.object(os.path, "isfile", return_value=True), patch(
-        "os.path.abspath", return_value=script_path
-    ):
+    with patch.object(sys, "platform", "win32"), patch.object(sys, "argv", [script_path]), patch(
+        "os.path.isfile", return_value=True
+    ) as isfile_mock:
         winreg_mock.HKEY_CURRENT_USER = "HKEY_CURRENT_USER"
         winreg_mock.REG_SZ = "REG_SZ"
         winreg_mock.CreateKeyEx.side_effect = ["FIRST_CREATED_KEY", "SECOND_CREATED_KEY"]
@@ -540,7 +538,7 @@ def test_cli_handle_web_url_install_pip_console_script(fresh_deadline_config, mo
         install_deadline_web_url_handler(all_users=False)
 
         # Should append .exe to the extensionless console_script path
-        os.path.isfile.assert_called_once_with(script_path + ".exe")
+        isfile_mock.assert_called_once_with(script_path + ".exe")
 
 
 @pytest.mark.parametrize("install_command", ["install", "uninstall"])
