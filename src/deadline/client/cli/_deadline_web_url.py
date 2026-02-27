@@ -176,16 +176,21 @@ def install_deadline_web_url_handler(all_users: bool) -> None:
                 winreg.CloseKey(hkey)
 
     elif sys.platform == "linux":
-        import subprocess
         import shutil
+        import subprocess
 
         if shutil.which("update-desktop-database") is None:
             raise DeadlineOperationError(
                 f"Failed to install the handler for {DEADLINE_URL_SCHEME_NAME} URLs: update-desktop-database is not installed."
             )
 
-        # Get the CLI program path
-        deadline_cli_program = os.path.abspath(sys.argv[0])
+        # Resolve the full path to the CLI program via PATH lookup.
+        deadline_cli_program = shutil.which(sys.argv[0])
+        if not deadline_cli_program:
+            raise DeadlineOperationError(
+                f"Failed to install the handler for {DEADLINE_URL_SCHEME_NAME} URLs: "
+                f"could not find '{sys.argv[0]}' on PATH."
+            )
 
         if all_users:
             entry_dir = "/usr/share/applications"
@@ -204,7 +209,6 @@ def install_deadline_web_url_handler(all_users: bool) -> None:
 Type=Application
 Name={DEADLINE_URL_SCHEME_NAME}
 Exec={deadline_cli_program} handle-web-url %u
-Type=Application
 Terminal=true
 MimeType=x-scheme-handler/{DEADLINE_URL_SCHEME_NAME}
 """
@@ -263,8 +267,8 @@ def uninstall_deadline_web_url_handler(all_users: bool) -> None:
                 winreg.CloseKey(hkey)
 
     elif sys.platform == "linux":
-        import subprocess
         import shutil
+        import subprocess
 
         if shutil.which("update-desktop-database") is None:
             raise DeadlineOperationError(

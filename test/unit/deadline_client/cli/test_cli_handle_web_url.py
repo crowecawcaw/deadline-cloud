@@ -5,6 +5,8 @@ Tests for the CLI handle-web-url command.
 """
 
 import os
+import shutil
+import subprocess
 import sys
 from typing import Dict, List
 from unittest.mock import ANY, MagicMock, call, patch
@@ -678,3 +680,92 @@ def test_cli_handle_web_url_uninstall_all_users_monkeypatched_windows(
             ]
         )
         assert result.output.strip() == ""
+
+
+def test_linux_install_generates_valid_desktop_file(fresh_deadline_config, tmp_path):
+    """
+    Tests that the generated .desktop file on Linux has the expected contents.
+    """
+    entry_dir = tmp_path / "applications"
+    entry_dir.mkdir()
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+
+    desktop_file_path = str(entry_dir / "deadline.desktop")
+
+    with patch.object(sys, "platform", "linux"), patch.object(
+        sys, "argv", ["/usr/bin/deadline"]
+    ), patch.object(shutil, "which", return_value="/usr/bin/deadline"), patch.object(
+        os.path,
+        "expanduser",
+        side_effect=lambda p: p.replace("~/.local/share", str(tmp_path)).replace(
+            "~/.config", str(config_dir)
+        ),
+    ), patch.object(subprocess, "run"), patch.object(os, "makedirs"):
+        from deadline.client.cli._deadline_web_url import install_deadline_web_url_handler
+
+        install_deadline_web_url_handler(all_users=False)
+
+    with open(desktop_file_path) as f:
+        desktop_content = f.read()
+    assert desktop_content == (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=deadline\n"
+        "Exec=/usr/bin/deadline handle-web-url %u\n"
+        "Terminal=true\n"
+        "MimeType=x-scheme-handler/deadline\n"
+    )
+
+
+def test_linux_install_resolves_bare_command_via_shutil_which(fresh_deadline_config, tmp_path):
+    """
+    Tests that on Linux, when sys.argv[0] is a bare command name (e.g. 'deadline'),
+    the install resolves the full path using shutil.which.
+    """
+    entry_dir = tmp_path / "applications"
+    entry_dir.mkdir()
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+
+    desktop_file_path = str(entry_dir / "deadline.desktop")
+
+    with patch.object(sys, "platform", "linux"), patch.object(
+        sys, "argv", ["deadline"]
+    ), patch.object(
+        shutil,
+        "which",
+        side_effect=lambda cmd: (
+            "/opt/deadline/bin/deadline" if cmd == "deadline" else "/usr/bin/" + cmd
+        ),
+    ), patch.object(
+        os.path,
+        "expanduser",
+        side_effect=lambda p: p.replace("~/.local/share", str(tmp_path)).replace(
+            "~/.config", str(config_dir)
+        ),
+    ), patch.object(subprocess, "run"), patch.object(os, "makedirs"):
+        from deadline.client.cli._deadline_web_url import install_deadline_web_url_handler
+
+        install_deadline_web_url_handler(all_users=False)
+
+    with open(desktop_file_path) as f:
+        desktop_content = f.read()
+    assert "Exec=/opt/deadline/bin/deadline handle-web-url %u" in desktop_content
+
+
+def test_linux_install_raises_when_command_not_found(fresh_deadline_config, tmp_path):
+    """
+    Tests that on Linux, when shutil.which cannot find the command,
+    the install raises a DeadlineOperationError.
+    """
+    with patch.object(sys, "platform", "linux"), patch.object(
+        sys, "argv", ["deadline"]
+    ), patch.object(
+        shutil, "which", side_effect=lambda cmd: None if cmd == "deadline" else "/usr/bin/" + cmd
+    ):
+        from deadline.client.cli._deadline_web_url import install_deadline_web_url_handler
+        from deadline.client.exceptions import DeadlineOperationError
+
+        with pytest.raises(DeadlineOperationError, match="could not find 'deadline' on PATH"):
+            install_deadline_web_url_handler(all_users=False)
