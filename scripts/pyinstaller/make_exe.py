@@ -49,6 +49,9 @@ def make_exe(exe_zipfile: Path, cleanup=True, version_file: Optional[Path] = Non
     # Create Deadline CLI dist
     pyinstaller(str(DEADLINE_CLI_SPEC_PATH))
 
+    # Remove unused Qt modules that get pulled in via binary dependencies
+    remove_unused_qt_modules(DEADLINE_CLI_DIST_PATH)
+
     # Sometimes the files output by pyinstaller have a last modified
     # date of the unix epoch. This causes make_archive to fail.
     # Touch each file in the directory we are archiving to make
@@ -92,6 +95,68 @@ def clean_pyinstaller_build_dirs():
     ]:
         shutil.rmtree(location, ignore_errors=True)
         print(f"Deleted build directory: {str(location)}")
+
+
+# Qt modules to keep - only the ones we actually use
+QT_MODULES_TO_KEEP = {
+    "QtCore",
+    "QtGui",
+    "QtWidgets",
+    "QtDBus",
+    "QtXcbQpa",
+    "QtWaylandClient",
+    "QtWaylandEglClientHwIntegration",
+    "QtWlShellIntegration",
+}
+
+
+def remove_unused_qt_modules(dist_path: Path) -> None:
+    """Remove Qt modules pulled in via binary dependencies that we don't need."""
+    internal_dir = dist_path / "_internal"
+    if not internal_dir.exists():
+        return
+
+    # Remove top-level Qt symlinks (macOS: QtCore, Linux: libQt6Core.so.6)
+    for item in internal_dir.iterdir():
+        if item.name.startswith("Qt") and item.name not in QT_MODULES_TO_KEEP:
+            if item.is_symlink() or item.is_file():
+                item.unlink()
+                print(f"Removed unused Qt symlink: {item.name}")
+        elif item.name.startswith("libQt6") and (item.is_symlink() or item.is_file()):
+            module_name = item.name.split(".")[0].replace("libQt6", "Qt")
+            if module_name not in QT_MODULES_TO_KEEP:
+                item.unlink()
+                print(f"Removed unused Qt symlink: {item.name}")
+
+    # Remove Qt framework directories (macOS) and DLLs (Windows)
+    pyside_dir = internal_dir / "PySide6"
+    if pyside_dir.exists():
+        # macOS frameworks
+        qt_lib_dir = pyside_dir / "Qt" / "lib"
+        if qt_lib_dir.exists():
+            for framework in qt_lib_dir.iterdir():
+                if framework.name.endswith(".framework"):
+                    module_name = framework.name.replace(".framework", "")
+                    if module_name not in QT_MODULES_TO_KEEP:
+                        shutil.rmtree(framework)
+                        print(f"Removed unused Qt framework: {framework.name}")
+
+        # Windows DLLs
+        for dll in pyside_dir.glob("Qt6*.dll"):
+            module_name = dll.stem.replace("Qt6", "Qt")
+            if module_name not in QT_MODULES_TO_KEEP:
+                dll.unlink()
+                print(f"Removed unused Qt DLL: {dll.name}")
+
+        # Linux shared libraries
+        qt_lib_dir_linux = pyside_dir / "Qt" / "lib"
+        if qt_lib_dir_linux.exists():
+            for so in qt_lib_dir_linux.glob("libQt6*.so*"):
+                # Extract module name from libQt6Core.so.6 -> QtCore
+                module_name = so.name.split(".")[0].replace("libQt6", "Qt")
+                if module_name not in QT_MODULES_TO_KEEP:
+                    so.unlink()
+                    print(f"Removed unused Qt library: {so.name}")
 
 
 def zip_with_symlinks(source_dir: Path, output_zip: Path) -> None:

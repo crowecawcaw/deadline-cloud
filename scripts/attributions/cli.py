@@ -216,6 +216,17 @@ _ADDITIONAL_ATTRIBUTIONS = [
         "url": "https://github.com/libexpat/libexpat",
         "spdx": _MIT,
     },
+    {
+        "name": "PySide6",
+        "attribution_path": "PYSIDE6_LICENSE.txt",
+        "url": "https://code.qt.io/cgit/pyside/pyside-setup.git/",
+        "spdx": "LGPL-3.0-only",
+    },
+    {
+        "name": "Qt Third-Party Components",
+        "attribution_path": "QT_THIRD_PARTY_LICENSES.txt",
+        "url": "https://doc.qt.io/qt-6/licenses-used-in-qt.html",
+    },
 ]
 
 # Some packages specify their license but do not include it in the repository/package

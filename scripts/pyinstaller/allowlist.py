@@ -18,6 +18,16 @@ DEPENDENCIES = [
     "typing_extensions",
     "urllib3",
     "xxhash",
+    # PySide6/Qt dependencies
+    "PySide6",
+    "shiboken6",
+    # cryptography (transitive via botocore/urllib3)
+    "cryptography",
+    # Additional transitive deps of botocore/urllib3
+    "certifi",
+    "idna",
+    "backports",
+    "zstandard",
 ]
 
 ALLOWLIST = {
@@ -48,27 +58,108 @@ ALLOWLIST = {
         "_internal/liblzma.5.dylib",
         # mpdec
         "_internal/libmpdec.4.dylib",
-        # openssl
-        "_internal/libcrypto-3.dll",
-        "_internal/libssl-3.dll",
+        # bz2
+        "_internal/libbz2.dylib",
+        # readline
+        "_internal/libreadline.8.dylib",
+        # ncursesw/tinfow (wide-char ncurses)
+        "_internal/libncursesw.6.dylib",
+        "_internal/libtinfow.6.dylib",
+        # tinfo
+        "_internal/libtinfo.6.dylib",
+        # expat
+        "_internal/libexpat.1.dylib",
     ],
     "globs": [
         "_internal/api-ms-win-*.dll",
         "_internal/libpython3.*.so.1.0",
+        "_internal/libpython3.*.so",
         "_internal/libpython3.*.dylib",
         "_internal/python3*.dll",
         "_internal/pywin32_system32/pywintypes3*.dll",
         "_internal/Python.framework/Versions/3.*/Python",
         "_internal/Python.framework/Versions/3.*/Resources/Info.plist",
         "_internal/libsqlite3.so.*",
+        "_internal/libsqlite3.*.dylib",
+        # zlib
+        "_internal/libz.*.dylib",
+        # ICU
+        "_internal/libicuuc.*.dylib",
+        "_internal/libicudata.*.dylib",
+        "_internal/libicui18n.*.dylib",
+        "_internal/libicuuc.so.*",
+        "_internal/libicudata.so.*",
+        "_internal/libicui18n.so.*",
         # openssl
         "_internal/libssl.so.*",
         "_internal/libcrypto.so.*",
         "_internal/libssl-*.dll",
+        "_internal/libcrypto-*.dll",
         "_internal/libssl.*.dylib",
         "_internal/libcrypto.*.dylib",
         # libffi
         "_internal/libffi-*.dll",
+        "_internal/libffi.*.dylib",
+        # cffi (required by cryptography)
+        "_internal/_cffi_backend.cp3*-win_amd64.pyd",
+        "_internal/lib-dynload/_cffi_backend.cpython-3*-x86_64-linux-gnu.so",
+        "_internal/lib-dynload/_cffi_backend.cpython-3*-darwin.so",
+        # xxsubtype (CPython internal C extension, pulled in by shiboken6/PySide6)
+        "_internal/lib-dynload/xxsubtype.cpython-3*-darwin.so",
+        "_internal/lib-dynload/xxsubtype.cpython-3*-x86_64-linux-gnu.so",
+        # PySide6/shiboken6 Python bindings
+        "_internal/PySide6/Qt*.abi3.so",
+        "_internal/PySide6/libpyside6.abi3.*.dylib",
+        "_internal/shiboken6/Shiboken.abi3.so",
+        "_internal/shiboken6/libshiboken6.abi3.*.dylib",
+        "_internal/libpyside6.abi3.*.dylib",
+        "_internal/libshiboken6.abi3.*.dylib",
+        "_internal/libpyside6.abi3.so.*",
+        "_internal/libshiboken6.abi3.so.*",
+        # Qt module symlinks (macOS)
+        "_internal/QtCore",
+        "_internal/QtGui",
+        "_internal/QtWidgets",
+        "_internal/QtDBus",
+        # Qt/PySide6 core libraries - Linux (deep path + top-level symlink per module)
+        "_internal/PySide6/Qt/lib/libQt6Core.so.*",
+        "_internal/libQt6Core.so.*",
+        "_internal/PySide6/Qt/lib/libQt6Gui.so.*",
+        "_internal/libQt6Gui.so.*",
+        "_internal/PySide6/Qt/lib/libQt6Widgets.so.*",
+        "_internal/libQt6Widgets.so.*",
+        "_internal/PySide6/Qt/lib/libQt6DBus.so.*",
+        "_internal/libQt6DBus.so.*",
+        "_internal/PySide6/Qt/lib/libQt6XcbQpa.so.*",
+        "_internal/libQt6XcbQpa.so.*",
+        "_internal/PySide6/Qt/lib/libQt6WaylandClient.so.*",
+        "_internal/libQt6WaylandClient.so.*",
+        "_internal/PySide6/Qt/lib/libQt6WaylandEglClientHwIntegration.so.*",
+        "_internal/libQt6WaylandEglClientHwIntegration.so.*",
+        "_internal/PySide6/Qt/lib/libQt6WlShellIntegration.so.*",
+        "_internal/libQt6WlShellIntegration.so.*",
+        # Qt/PySide6 transitive dependencies of platform plugins - Linux
+        "_internal/PySide6/Qt/lib/libQt6OpenGL.so.*",
+        "_internal/libQt6OpenGL.so.*",
+        "_internal/PySide6/Qt/lib/libQt6EglFSDeviceIntegration.so.*",
+        "_internal/libQt6EglFSDeviceIntegration.so.*",
+        "_internal/PySide6/Qt/lib/libQt6EglFsKmsSupport.so.*",
+        "_internal/libQt6EglFsKmsSupport.so.*",
+        # Qt/PySide6 core libraries - Windows
+        "_internal/PySide6/Qt6Core.dll",
+        "_internal/PySide6/Qt6Gui.dll",
+        "_internal/PySide6/Qt6Widgets.dll",
+        "_internal/PySide6/Qt6DBus.dll",
+        # Qt/PySide6 core libraries - macOS
+        "_internal/PySide6/Qt/lib/QtCore.framework/**/*",
+        "_internal/PySide6/Qt/lib/QtGui.framework/**/*",
+        "_internal/PySide6/Qt/lib/QtWidgets.framework/**/*",
+        "_internal/PySide6/Qt/lib/QtDBus.framework/**/*",
+        # Qt plugins (all LGPL-3.0 licensed as part of Qt framework)
+        "_internal/PySide6/Qt/plugins/*/**/*",
+        "_internal/PySide6/Qt/plugins/*/*",
+        # Qt translations
+        "_internal/PySide6/Qt/translations/*",
     ],
     "conditions": {
         "_internal/base_library.zip": {
@@ -92,6 +183,8 @@ ALLOWLIST = {
                     "pyi_rth_pkgutil",
                     "pyi_rth_inspect",
                     "pyi_rth_multiprocessing",
+                    "pyi_rth_pyside6",
+                    "pyi_rth_cryptography_openssl",
                     "deadline_cli_main",
                     "PYZ.pyz",
                 ],
@@ -100,7 +193,10 @@ ALLOWLIST = {
                         "archive_contents": {
                             "files": [
                                 # pywin32
-                                "ntsecuritycon"
+                                "ntsecuritycon",
+                                # pyinstaller runtime utils
+                                "_pyi_rth_utils",
+                                "_pyi_rth_utils.qt",
                             ]
                         }
                     }
@@ -120,6 +216,7 @@ ALLOWLIST = {
                     "pyi_rth_pkgutil",
                     "pyi_rth_inspect",
                     "pyi_rth_multiprocessing",
+                    "pyi_rth_pyside6",
                     "deadline_cli_main",
                     "pyi-contents-directory _internal",
                     "PYZ.pyz",
@@ -134,6 +231,8 @@ ALLOWLIST = {
                                 "_colorize",
                                 "_sysconfigdata__linux_x86_64-linux-gnu",
                                 "_sysconfigdata__darwin_darwin",
+                                "_pyi_rth_utils",
+                                "_pyi_rth_utils.qt",
                             ],
                         }
                     }
