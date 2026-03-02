@@ -65,6 +65,11 @@ _ui_modules = _get_ui_module_paths()
 class TestOnlyQtCoreWidgetsGuiUsed:
     """Tests verifying only QtCore, QtWidgets, and QtGui are used."""
 
+    def test_detection_works(self):
+        """Sanity check that our Qt module detection actually finds imports."""
+        imported = _get_imported_qt_modules("deadline.client.ui.dialogs.deadline_config_dialog")
+        assert "QtCore" in imported, "Expected QtCore to be detected but it wasn't"
+
     @pytest.mark.parametrize("module_path", _ui_modules, ids=_ui_modules)
     def test_module_imports_only_allowed_qt_modules(self, module_path: str):
         """Verify each UI module only imports allowed Qt modules."""
