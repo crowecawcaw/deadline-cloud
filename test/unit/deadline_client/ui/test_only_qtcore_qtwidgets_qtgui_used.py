@@ -7,7 +7,6 @@ This ensures we can distribute a minimal Qt build without unnecessary modules.
 """
 
 import importlib
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,7 +34,8 @@ print(','.join(sorted(qt_modules)) if qt_modules else '')
 def _get_ui_module_paths() -> List[str]:
     """Discover all importable Python modules under deadline.client.ui."""
     ui_pkg = importlib.import_module("deadline.client.ui")
-    ui_dir = Path(os.path.dirname(ui_pkg.__file__))
+    assert ui_pkg.__file__ is not None
+    ui_dir = Path(ui_pkg.__file__).parent
     modules = []
     for py_file in sorted(ui_dir.rglob("*.py")):
         if py_file.name.startswith("_"):
