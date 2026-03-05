@@ -87,10 +87,6 @@ if sys.platform == "win32":
 cli_a.datas = [item for item in cli_a.datas if not item[0].startswith("Python.framework")]
 cli_a.exclude_system_libraries(list_of_exceptions=['libssl*', 'libsqlite3*', 'libcrypto*'])
 
-# Exclude ICU libraries that get pulled in as a transitive binary dependency of
-# libsqlite3 on some build environments. They are not needed at runtime.
-cli_a.binaries = [b for b in cli_a.binaries if not b[0].startswith('libicu')]
-
 cli_pyz = PYZ(cli_a.pure, cli_a.zipped_data, cipher=BLOCK_CIPHER)
 cli_exe = EXE(
     cli_pyz,
