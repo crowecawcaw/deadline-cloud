@@ -185,7 +185,10 @@ def remove_unused_qt_modules(dist_path: Path) -> None:
             for plugin_dir in list(plugins_dir.iterdir()):
                 if not plugin_dir.is_dir():
                     continue
-                if plugin_dir.name not in QT_PLUGIN_DIRS_TO_KEEP and plugin_dir.name != "imageformats":
+                if (
+                    plugin_dir.name not in QT_PLUGIN_DIRS_TO_KEEP
+                    and plugin_dir.name != "imageformats"
+                ):
                     shutil.rmtree(plugin_dir)
                     print(f"Removed unused Qt plugin directory: {plugin_dir.name}/")
                 elif plugin_dir.name == "imageformats":
