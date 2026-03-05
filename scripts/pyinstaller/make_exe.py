@@ -173,6 +173,28 @@ def remove_unused_qt_modules(dist_path: Path) -> None:
                     so.unlink()
                     print(f"Removed unused Qt library: {so.name}")
 
+        # Remove unused Qt plugins. Only keep plugins required by the deadline GUI:
+        #   platforms/ - platform integration (cocoa, xcb, wayland, minimal)
+        #   styles/ - native widget styling
+        #   iconengines/ - SVG icon support (used for deadline_logo.svg, info.svg)
+        #   imageformats/libqsvg - SVG image format support
+        QT_PLUGIN_DIRS_TO_KEEP = {"platforms", "styles", "iconengines"}
+        QT_IMAGEFORMAT_PLUGINS_TO_KEEP = {"libqsvg"}
+        plugins_dir = pyside_dir / "Qt" / "plugins"
+        if plugins_dir.exists():
+            for plugin_dir in list(plugins_dir.iterdir()):
+                if not plugin_dir.is_dir():
+                    continue
+                if plugin_dir.name not in QT_PLUGIN_DIRS_TO_KEEP and plugin_dir.name != "imageformats":
+                    shutil.rmtree(plugin_dir)
+                    print(f"Removed unused Qt plugin directory: {plugin_dir.name}/")
+                elif plugin_dir.name == "imageformats":
+                    for plugin in list(plugin_dir.iterdir()):
+                        plugin_base = plugin.stem.split(".")[0]
+                        if plugin_base not in QT_IMAGEFORMAT_PLUGINS_TO_KEEP:
+                            plugin.unlink()
+                            print(f"Removed unused Qt imageformat plugin: {plugin.name}")
+
 
 def remove_icu_libs(dist_path: Path) -> None:
     """Remove ICU libraries from the distribution.
