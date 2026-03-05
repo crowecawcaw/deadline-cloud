@@ -97,7 +97,16 @@ def clean_pyinstaller_build_dirs():
         print(f"Deleted build directory: {str(location)}")
 
 
-# Qt modules to keep - only the ones we actually use
+# Qt modules to keep - only the ones we actually use.
+# This is a removal filter, not an inclusion list. PyInstaller only bundles
+# modules that exist on the build platform, so platform-specific entries
+# (e.g. QtDBus on Linux/macOS, Wayland/Xcb on Linux) are harmless on other OSes.
+# Direct dependencies:
+#   QtCore, QtGui, QtWidgets - used by deadline.client.ui via qtpy
+#   QtDBus - required by Qt on Linux/macOS for system integration
+# Transitive dependencies (pulled in by Qt platform plugins):
+#   QtXcbQpa - X11 platform plugin (Linux)
+#   QtWaylandClient, QtWaylandEglClientHwIntegration, QtWlShellIntegration - Wayland (Linux)
 QT_MODULES_TO_KEEP = {
     "QtCore",
     "QtGui",
@@ -114,7 +123,7 @@ def remove_unused_qt_modules(dist_path: Path) -> None:
     """Remove Qt modules pulled in via binary dependencies that we don't need."""
     internal_dir = dist_path / "_internal"
     if not internal_dir.exists():
-        return
+        raise RuntimeError(f"Expected directory {internal_dir} does not exist")
 
     # Remove top-level Qt symlinks (macOS: QtCore, Linux: libQt6Core.so.6)
     for item in internal_dir.iterdir():
