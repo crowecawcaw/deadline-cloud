@@ -46,6 +46,7 @@ cli_a = Analysis(
         'cmd',
         'code',
         'pdb',
+        'readline',
         'setuptools',
         'jaraco',
         'importlib_metadata',

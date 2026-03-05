@@ -21,13 +21,6 @@ DEPENDENCIES = [
     # PySide6/Qt dependencies
     "PySide6",
     "shiboken6",
-    # cryptography (transitive via botocore/urllib3)
-    "cryptography",
-    # Additional transitive deps of botocore/urllib3
-    "certifi",
-    "idna",
-    "backports",
-    "zstandard",
 ]
 
 ALLOWLIST = {
@@ -60,13 +53,6 @@ ALLOWLIST = {
         "_internal/libmpdec.4.dylib",
         # bz2
         "_internal/libbz2.dylib",
-        # readline
-        "_internal/libreadline.8.dylib",
-        # ncursesw/tinfow (wide-char ncurses)
-        "_internal/libncursesw.6.dylib",
-        "_internal/libtinfow.6.dylib",
-        # tinfo
-        "_internal/libtinfo.6.dylib",
         # expat
         "_internal/libexpat.1.dylib",
     ],
@@ -83,13 +69,6 @@ ALLOWLIST = {
         "_internal/libsqlite3.*.dylib",
         # zlib
         "_internal/libz.*.dylib",
-        # ICU
-        "_internal/libicuuc.*.dylib",
-        "_internal/libicudata.*.dylib",
-        "_internal/libicui18n.*.dylib",
-        "_internal/libicuuc.so.*",
-        "_internal/libicudata.so.*",
-        "_internal/libicui18n.so.*",
         # openssl
         "_internal/libssl.so.*",
         "_internal/libcrypto.so.*",
@@ -100,10 +79,6 @@ ALLOWLIST = {
         # libffi
         "_internal/libffi-*.dll",
         "_internal/libffi.*.dylib",
-        # cffi (required by cryptography)
-        "_internal/_cffi_backend.cp3*-win_amd64.pyd",
-        "_internal/lib-dynload/_cffi_backend.cpython-3*-x86_64-linux-gnu.so",
-        "_internal/lib-dynload/_cffi_backend.cpython-3*-darwin.so",
         # xxsubtype (CPython internal C extension, pulled in by shiboken6/PySide6)
         "_internal/lib-dynload/xxsubtype.cpython-3*-darwin.so",
         "_internal/lib-dynload/xxsubtype.cpython-3*-x86_64-linux-gnu.so",
@@ -184,7 +159,6 @@ ALLOWLIST = {
                     "pyi_rth_inspect",
                     "pyi_rth_multiprocessing",
                     "pyi_rth_pyside6",
-                    "pyi_rth_cryptography_openssl",
                     "deadline_cli_main",
                     "PYZ.pyz",
                 ],
