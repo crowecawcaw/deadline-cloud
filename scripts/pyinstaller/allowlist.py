@@ -96,6 +96,7 @@ ALLOWLIST = {
         "_internal/QtGui",
         "_internal/QtWidgets",
         "_internal/QtDBus",
+        "_internal/QtSvg",
         # Qt/PySide6 core libraries - Linux (deep path + top-level symlink per module)
         "_internal/PySide6/Qt/lib/libQt6Core.so.*",
         "_internal/libQt6Core.so.*",
@@ -105,6 +106,8 @@ ALLOWLIST = {
         "_internal/libQt6Widgets.so.*",
         "_internal/PySide6/Qt/lib/libQt6DBus.so.*",
         "_internal/libQt6DBus.so.*",
+        "_internal/PySide6/Qt/lib/libQt6Svg.so.*",
+        "_internal/libQt6Svg.so.*",
         "_internal/PySide6/Qt/lib/libQt6XcbQpa.so.*",
         "_internal/libQt6XcbQpa.so.*",
         "_internal/PySide6/Qt/lib/libQt6WaylandClient.so.*",
@@ -125,11 +128,13 @@ ALLOWLIST = {
         "_internal/PySide6/Qt6Gui.dll",
         "_internal/PySide6/Qt6Widgets.dll",
         "_internal/PySide6/Qt6DBus.dll",
+        "_internal/PySide6/Qt6Svg.dll",
         # Qt/PySide6 core libraries - macOS
         "_internal/PySide6/Qt/lib/QtCore.framework/**/*",
         "_internal/PySide6/Qt/lib/QtGui.framework/**/*",
         "_internal/PySide6/Qt/lib/QtWidgets.framework/**/*",
         "_internal/PySide6/Qt/lib/QtDBus.framework/**/*",
+        "_internal/PySide6/Qt/lib/QtSvg.framework/**/*",
         # Qt plugins - only the specific plugins we need
         "_internal/PySide6/Qt/plugins/platforms/libqcocoa.dylib",
         "_internal/PySide6/Qt/plugins/platforms/libqoffscreen.dylib",

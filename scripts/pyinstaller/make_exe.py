@@ -117,6 +117,7 @@ QT_MODULES_TO_KEEP = {
     "QtCore",
     "QtGui",
     "QtWidgets",
+    "QtSvg",
     "QtDBus",
     "QtXcbQpa",
     "QtWaylandClient",
