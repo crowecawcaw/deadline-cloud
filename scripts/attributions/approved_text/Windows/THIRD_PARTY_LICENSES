@@ -1382,9 +1382,16 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-PySide6
+Qt
 
-                   GNU LESSER GENERAL PUBLIC LICENSE
+Copyright (C) The Qt Company Ltd.
+License: LGPL-3.0-only
+Source code: https://code.qt.io/
+
+Source code for this component may be downloaded here:
+https://s3.amazonaws.com/amazon-source-code-downloads/deadline-cloud/qt-6.8.3-src.tar.gz
+
+GNU LESSER GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 
  Copyright (C) 2007 Free Software Foundation, Inc. <http://fsf.org/>
@@ -1551,15 +1558,6 @@ permanent authorization for you to choose that version for the
 Library.
 
 ---
-
-Qt includes third-party components with their own licenses.
-See the accompanying QT_THIRD_PARTY_LICENSES.txt file for complete license texts,
-or visit: https://doc.qt.io/qt-6/licenses-used-in-qt.html
-
-Source code is available at:
-https://code.qt.io/cgit/pyside/pyside-setup.git/
-
-Qt Third-Party Components
 
 Qt Third-Party Licenses
 ==========================================================================
@@ -6264,6 +6262,24 @@ The above copyright notice and this permission notice (including the next paragr
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 --------------------------------------------------------------------------
+
+PySide6
+
+Copyright (C) The Qt Company Ltd.
+License: LGPL-3.0-only (see Qt license above)
+Source code: https://code.qt.io/cgit/pyside/pyside-setup.git/
+
+Source code for this component may be downloaded here:
+https://s3.amazonaws.com/amazon-source-code-downloads/deadline-cloud/pyside-setup-6.8.3-src.tar.gz
+
+Shiboken6
+
+Copyright (C) The Qt Company Ltd.
+License: LGPL-3.0-only (see Qt license above)
+Source code: https://code.qt.io/cgit/pyside/pyside-setup.git/
+
+Source code for this component may be downloaded here:
+https://s3.amazonaws.com/amazon-source-code-downloads/deadline-cloud/pyside-setup-6.8.3-src.tar.gz
 
 VCRedist
 
