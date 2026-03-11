@@ -43,12 +43,16 @@ def test_glob_path_default(test_glob_folder: str):
     """
     globbed_files: List[str] = _glob_paths(path=test_glob_folder)
 
-    # There are 4 files
-    assert len(globbed_files) == 4
+    # There are 6 files (4 original + .dotfile + .hidden_dir/inside_hidden.txt)
+    assert len(globbed_files) == 6
     assert os.path.join(os.sep, test_glob_folder, "include.txt") in globbed_files
     assert os.path.join(os.sep, test_glob_folder, "exclude.txt") in globbed_files
     assert os.path.join(os.sep, test_glob_folder, "nested", "nested_include.txt") in globbed_files
     assert os.path.join(os.sep, test_glob_folder, "nested", "nested_exclude.txt") in globbed_files
+    assert os.path.join(os.sep, test_glob_folder, ".dotfile") in globbed_files
+    assert (
+        os.path.join(os.sep, test_glob_folder, ".hidden_dir", "inside_hidden.txt") in globbed_files
+    )
 
 
 def test_glob_path_default_include(test_glob_folder: str):
@@ -73,8 +77,8 @@ def test_glob_path_exclude(test_glob_folder: str):
         path=test_glob_folder, exclude=["*exclude.txt", "*/*exclude.txt"]
     )
 
-    # There are 4 files
-    assert len(globbed_files) == 2
+    # 6 total - 2 excluded = 4 remaining
+    assert len(globbed_files) == 4
     assert os.path.join(os.sep, test_glob_folder, "include.txt") in globbed_files
     assert os.path.join(os.sep, test_glob_folder, "nested", "nested_include.txt") in globbed_files
 
@@ -107,8 +111,8 @@ def test_glob_path_exclude_subdir(test_glob_folder: str):
     """
     globbed_files: List[str] = _glob_paths(path=test_glob_folder, exclude=["nested/**"])
 
-    # There are 2 files
-    assert len(globbed_files) == 2
+    # 6 total - 2 nested = 4 remaining
+    assert len(globbed_files) == 4
     assert os.path.join(os.sep, test_glob_folder, "include.txt") in globbed_files
     assert os.path.join(os.sep, test_glob_folder, "exclude.txt") in globbed_files
 
@@ -119,5 +123,33 @@ def test_glob_path_exclude_nonexistent(test_glob_folder: str):
     """
     globbed_files: List[str] = _glob_paths(path=test_glob_folder, exclude=["nonexistent/**"])
 
-    # There are 2 files
-    assert len(globbed_files) == 4
+    # All 6 files remain since the exclude pattern matches nothing
+    assert len(globbed_files) == 6
+
+
+def test_glob_path_default_includes_dotfiles(test_glob_folder: str):
+    """
+    Test that _glob_paths includes dotfiles and files inside dot-directories,
+    matching the behavior of pathlib.Path.glob("**/*").
+    """
+    globbed_files: List[str] = _glob_paths(path=test_glob_folder)
+
+    assert os.path.join(os.sep, test_glob_folder, ".dotfile") in globbed_files
+    assert (
+        os.path.join(os.sep, test_glob_folder, ".hidden_dir", "inside_hidden.txt") in globbed_files
+    )
+
+
+def test_glob_path_exclude_dotfiles(test_glob_folder: str):
+    """
+    Test that dotfiles can be explicitly excluded via exclude patterns.
+    """
+    globbed_files: List[str] = _glob_paths(path=test_glob_folder, exclude=["**/.*", "**/.*/**"])
+
+    assert os.path.join(os.sep, test_glob_folder, ".dotfile") not in globbed_files
+    assert (
+        os.path.join(os.sep, test_glob_folder, ".hidden_dir", "inside_hidden.txt")
+        not in globbed_files
+    )
+    # Non-dotfiles should still be present
+    assert os.path.join(os.sep, test_glob_folder, "include.txt") in globbed_files

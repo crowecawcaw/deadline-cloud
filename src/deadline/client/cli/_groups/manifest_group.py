@@ -75,14 +75,14 @@ def cli_manifest():
     "-i",
     "--include",
     default=None,
-    help="Glob syntax of files and directories to include in the manifest. Can be provided multiple times.",
+    help="Glob pattern for files to include. Matches dotfiles. Can be provided multiple times",
     multiple=True,
 )
 @click.option(
     "-e",
     "--exclude",
     default=None,
-    help="Glob syntax of files and directories to exclude in the manifest. Can be provided multiple times.",
+    help="Glob pattern for files to exclude. Matches dotfiles. Can be provided multiple times",
     multiple=True,
 )
 @click.option(
@@ -116,6 +116,11 @@ def manifest_snapshot(
     """
     BETA - Generates a snapshot of files in a directory root as a job
     attachment manifest.
+
+    By default all files are included, including dotfiles (files and
+    directories starting with `.`). Use `--include` and `--exclude` to
+    filter. Patterns follow Python pathlib glob syntax where wildcards
+    match dotfiles, similar to `.gitignore` behavior.
 
     \b
     Learn more about [job attachments](https://docs.aws.amazon.com/deadline-cloud/latest/userguide/storage-job-attachments.html)
@@ -173,14 +178,14 @@ For details and a fix using the registry, see: https://learn.microsoft.com/en-us
     "-i",
     "--include",
     default=None,
-    help="Glob syntax of files and directories to include in the manifest. Can be provided multiple times.",
+    help="Glob pattern for files to include. Matches dotfiles. Can be provided multiple times",
     multiple=True,
 )
 @click.option(
     "-e",
     "--exclude",
     default=None,
-    help="Glob syntax of files and directories to exclude in the manifest. Can be provided multiple times.",
+    help="Glob pattern for files to exclude. Matches dotfiles. Can be provided multiple times",
     multiple=True,
 )
 @click.option(
@@ -210,6 +215,9 @@ def manifest_diff(
     """
     BETA - Compute the file difference of a root directory against an existing
     job attachment manifest for new, modified or deleted files.
+
+    Patterns follow Python pathlib glob syntax where wildcards match
+    dotfiles (files and directories starting with `.`).
 
     \b
     Learn more about [job attachments](https://docs.aws.amazon.com/deadline-cloud/latest/userguide/storage-job-attachments.html)

@@ -1,7 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
+"""
+Glob utilities for file matching in job attachment manifests.
+
+Uses pathlib.Path.glob which, unlike the glob module, treats dotfiles
+(files and directories starting with '.') the same as any other file.
+The '*' wildcard matches dotfiles without requiring a leading dot in
+the pattern. This is consistent with .gitignore behavior and with the
+os.walk-based file discovery used by the main job submission path.
+"""
+
 import os
-import glob
 import json
 from pathlib import Path
 from typing import List, Optional
@@ -55,17 +64,17 @@ def _match_files_with_pattern(base_path: str, patterns: List[str]) -> set:
         Set of normalized file paths that match the patterns
     """
     matched_files = set()
+    root = Path(base_path)
     for pattern in patterns:
-        # Make pattern relative to base path
-        full_pattern = os.path.join(base_path, pattern)
-
-        # Use recursive glob for directory matching
-        for matched_path in glob.glob(full_pattern, recursive=True):
-            # Only add files, not directories
-            if os.path.isfile(matched_path):
-                # Convert to proper path format
-                normalized_path = os.path.normpath(matched_path)
-                matched_files.add(normalized_path)
+        for matched_path in root.glob(pattern):
+            if matched_path.is_file():
+                matched_files.add(os.path.normpath(str(matched_path)))
+        # On Python <3.13, a trailing "**" only yields directories.
+        # Append "/*" so files inside those directories are also matched.
+        if pattern.endswith("**"):
+            for matched_path in root.glob(pattern + "/*"):
+                if matched_path.is_file():
+                    matched_files.add(os.path.normpath(str(matched_path)))
 
     return matched_files
 
