@@ -131,6 +131,13 @@ ALLOWLIST = {
         "_internal/libQt6EglFSDeviceIntegration.so.*",
         "_internal/PySide6/Qt/lib/libQt6EglFsKmsSupport.so.*",
         "_internal/libQt6EglFsKmsSupport.so.*",
+        # ICU libraries - required by Qt6Core on Linux
+        "_internal/PySide6/Qt/lib/libicui18n.so.*",
+        "_internal/PySide6/Qt/lib/libicuuc.so.*",
+        "_internal/PySide6/Qt/lib/libicudata.so.*",
+        "_internal/libicui18n.so.*",
+        "_internal/libicuuc.so.*",
+        "_internal/libicudata.so.*",
         # Qt/PySide6 core libraries - Windows
         "_internal/PySide6/Qt6Core.dll",
         "_internal/PySide6/Qt6Gui.dll",

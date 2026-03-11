@@ -52,12 +52,6 @@ def make_exe(exe_zipfile: Path, cleanup=True, version_file: Optional[Path] = Non
     # Remove unused Qt modules that get pulled in via binary dependencies
     remove_unused_qt_modules(DEADLINE_CLI_DIST_PATH)
 
-    # Remove ICU libraries pulled in as a transitive binary dependency of libsqlite3
-    # on build environments where sqlite is compiled with ICU support. PyInstaller's
-    # COLLECT phase re-discovers these via binary dependency analysis even if filtered
-    # from Analysis.binaries, so they must be removed from the final output.
-    remove_icu_libs(DEADLINE_CLI_DIST_PATH)
-
     # Sometimes the files output by pyinstaller have a last modified
     # date of the unix epoch. This causes make_archive to fail.
     # Touch each file in the directory we are archiving to make
@@ -212,22 +206,6 @@ def remove_unused_qt_modules(dist_path: Path) -> None:
                     if plugin_base not in QT_IMAGEFORMAT_PLUGINS_TO_KEEP:
                         plugin.unlink()
                         print(f"Removed unused Qt imageformat plugin: {plugin.name}")
-
-
-def remove_icu_libs(dist_path: Path) -> None:
-    """Remove ICU libraries from the distribution.
-
-    Some build environments compile sqlite3 with ICU support, causing PyInstaller
-    to bundle ~38MB of ICU libraries. These are not needed at runtime for the
-    deadline CLI's sqlite3 usage (basic key-value caching).
-    """
-    internal_dir = dist_path / "_internal"
-    icu_dirs = [internal_dir, internal_dir / "PySide6" / "Qt" / "lib"]
-    for icu_dir in icu_dirs:
-        for lib in icu_dir.glob("libicu*"):
-            if lib.is_symlink() or lib.is_file():
-                lib.unlink()
-                print(f"Removed ICU library: {lib.name}")
 
 
 def zip_with_symlinks(source_dir: Path, output_zip: Path) -> None:

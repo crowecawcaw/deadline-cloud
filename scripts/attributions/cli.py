@@ -217,6 +217,13 @@ _ADDITIONAL_ATTRIBUTIONS = [
         "spdx": _MIT,
     },
     {
+        "name": "ICU",
+        "attribution_path": "ICU_LICENSE.txt",
+        "url": "https://github.com/unicode-org/icu",
+        "spdx": "Unicode-DFS-2016",
+        "platforms": ["Linux"],
+    },
+    {
         "name": "PySide6",
         "sort_key": "Qt.PySide6",
         "attribution_path": "PYSIDE6_LICENSE.txt",
