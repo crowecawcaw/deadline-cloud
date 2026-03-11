@@ -190,6 +190,8 @@ ALLOWLIST = {
         "_internal/PySide6/Qt/plugins/platforms/libqvkkhrdisplay.so",
         "_internal/PySide6/Qt/plugins/platforms/libqvnc.so",
         "_internal/PySide6/Qt/plugins/platforms/libqwayland*.so",
+        # Wayland shell integration plugins (required for wayland platform plugin)
+        "_internal/PySide6/Qt/plugins/wayland-shell-integration/lib*.so",
         "_internal/PySide6/Qt/plugins/styles/libqmacstyle.dylib",
         "_internal/PySide6/Qt/plugins/iconengines/libqsvgicon.*",
         "_internal/PySide6/Qt/plugins/imageformats/libqsvg.*",
