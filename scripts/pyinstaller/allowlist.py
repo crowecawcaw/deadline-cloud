@@ -91,8 +91,10 @@ ALLOWLIST = {
         # PySide6/shiboken6 Python bindings
         "_internal/PySide6/Qt*.abi3.so",
         "_internal/PySide6/libpyside6.abi3.*.dylib",
+        "_internal/PySide6/libpyside6.abi3.so.*",
         "_internal/shiboken6/Shiboken.abi3.so",
         "_internal/shiboken6/libshiboken6.abi3.*.dylib",
+        "_internal/shiboken6/libshiboken6.abi3.so.*",
         "_internal/libpyside6.abi3.*.dylib",
         "_internal/libshiboken6.abi3.*.dylib",
         "_internal/libpyside6.abi3.so.*",
@@ -135,6 +137,29 @@ ALLOWLIST = {
         "_internal/PySide6/Qt6Widgets.dll",
         "_internal/PySide6/Qt6DBus.dll",
         "_internal/PySide6/Qt6Svg.dll",
+        # PySide6/shiboken6 Python bindings - Windows
+        "_internal/PySide6/QtCore.pyd",
+        "_internal/PySide6/QtGui.pyd",
+        "_internal/PySide6/QtWidgets.pyd",
+        "_internal/PySide6/QtDBus.pyd",
+        "_internal/PySide6/QtSvg.pyd",
+        "_internal/PySide6/QtOpenGL.pyd",
+        "_internal/PySide6/QtOpenGLWidgets.pyd",
+        "_internal/PySide6/QtNetwork.pyd",
+        "_internal/PySide6/pyside6.abi3.dll",
+        "_internal/shiboken6/Shiboken.pyd",
+        "_internal/shiboken6/shiboken6.abi3.dll",
+        # MSVC runtime bundled with PySide6/shiboken6 - Windows
+        "_internal/PySide6/VCRUNTIME140.dll",
+        "_internal/PySide6/VCRUNTIME140_1.dll",
+        "_internal/PySide6/MSVCP140.dll",
+        "_internal/PySide6/MSVCP140_1.dll",
+        "_internal/PySide6/MSVCP140_2.dll",
+        "_internal/shiboken6/VCRUNTIME140.dll",
+        "_internal/shiboken6/VCRUNTIME140_1.dll",
+        "_internal/shiboken6/MSVCP140.dll",
+        # OpenGL software renderer - Windows
+        "_internal/PySide6/opengl32sw.dll",
         # Qt/PySide6 core libraries - macOS
         # fnmatch's ** doesn't do recursive matching, so we need both * and **/* patterns
         "_internal/PySide6/Qt/lib/QtCore.framework/*",
@@ -149,9 +174,14 @@ ALLOWLIST = {
         "_internal/PySide6/Qt/lib/QtSvg.framework/**/*",
         # Qt plugins - macOS/Linux (PySide6/Qt/plugins/)
         "_internal/PySide6/Qt/plugins/platforms/libqcocoa.dylib",
-        "_internal/PySide6/Qt/plugins/platforms/libqoffscreen.dylib",
+        "_internal/PySide6/Qt/plugins/platforms/libqoffscreen.*",
         "_internal/PySide6/Qt/plugins/platforms/libqminimal.*",
+        "_internal/PySide6/Qt/plugins/platforms/libqminimalegl.so",
         "_internal/PySide6/Qt/plugins/platforms/libqxcb.so",
+        "_internal/PySide6/Qt/plugins/platforms/libqeglfs.so",
+        "_internal/PySide6/Qt/plugins/platforms/libqlinuxfb.so",
+        "_internal/PySide6/Qt/plugins/platforms/libqvkkhrdisplay.so",
+        "_internal/PySide6/Qt/plugins/platforms/libqvnc.so",
         "_internal/PySide6/Qt/plugins/platforms/libqwayland*.so",
         "_internal/PySide6/Qt/plugins/styles/libqmacstyle.dylib",
         "_internal/PySide6/Qt/plugins/iconengines/libqsvgicon.*",
@@ -160,7 +190,9 @@ ALLOWLIST = {
         "_internal/PySide6/plugins/platforms/qwindows.dll",
         "_internal/PySide6/plugins/platforms/qminimal.dll",
         "_internal/PySide6/plugins/platforms/qoffscreen.dll",
+        "_internal/PySide6/plugins/platforms/qdirect2d.dll",
         "_internal/PySide6/plugins/styles/qwindowsvistastyle.dll",
+        "_internal/PySide6/plugins/styles/qmodernwindowsstyle.dll",
         "_internal/PySide6/plugins/iconengines/qsvgicon.dll",
         "_internal/PySide6/plugins/imageformats/qsvg.dll",
         # Qt translations
@@ -202,6 +234,8 @@ ALLOWLIST = {
                                 # pyinstaller runtime utils
                                 "_pyi_rth_utils",
                                 "_pyi_rth_utils.qt",
+                                "shiboken6",
+                                "PySide6",
                             ]
                         }
                     }

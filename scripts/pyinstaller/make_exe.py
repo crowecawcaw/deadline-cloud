@@ -222,10 +222,12 @@ def remove_icu_libs(dist_path: Path) -> None:
     deadline CLI's sqlite3 usage (basic key-value caching).
     """
     internal_dir = dist_path / "_internal"
-    for lib in internal_dir.glob("libicu*"):
-        if lib.is_symlink() or lib.is_file():
-            lib.unlink()
-            print(f"Removed ICU library: {lib.name}")
+    icu_dirs = [internal_dir, internal_dir / "PySide6" / "Qt" / "lib"]
+    for icu_dir in icu_dirs:
+        for lib in icu_dir.glob("libicu*"):
+            if lib.is_symlink() or lib.is_file():
+                lib.unlink()
+                print(f"Removed ICU library: {lib.name}")
 
 
 def zip_with_symlinks(source_dir: Path, output_zip: Path) -> None:
