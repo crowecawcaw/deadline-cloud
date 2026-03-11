@@ -126,6 +126,23 @@ QT_MODULES_TO_KEEP = {
 }
 
 
+def _find_qt_plugins_dir(pyside_dir: Path) -> Path:
+    """Find the Qt plugins directory, checking both possible layouts.
+
+    PySide6 places plugins under Qt/plugins on macOS/Linux and uses
+    plugins/ directly on Windows.
+
+    Raises RuntimeError if PySide6 is present but no plugins directory is found.
+    """
+    for candidate in (pyside_dir / "Qt" / "plugins", pyside_dir / "plugins"):
+        if candidate.exists():
+            return candidate
+    raise RuntimeError(
+        f"Expected Qt plugins directory not found under {pyside_dir}. "
+        "The PySide6 plugin layout may have changed."
+    )
+
+
 def remove_unused_qt_modules(dist_path: Path) -> None:
     """Remove Qt modules pulled in via binary dependencies that we don't need."""
     internal_dir = dist_path / "_internal"
@@ -178,26 +195,23 @@ def remove_unused_qt_modules(dist_path: Path) -> None:
         #   platforms/ - platform integration (cocoa, xcb, wayland, minimal)
         #   styles/ - native widget styling
         #   iconengines/ - SVG icon support (used for deadline_logo.svg, info.svg)
-        #   imageformats/libqsvg - SVG image format support
+        #   imageformats/qsvg - SVG image format support
         QT_PLUGIN_DIRS_TO_KEEP = {"platforms", "styles", "iconengines"}
-        QT_IMAGEFORMAT_PLUGINS_TO_KEEP = {"libqsvg"}
-        plugins_dir = pyside_dir / "Qt" / "plugins"
-        if plugins_dir.exists():
-            for plugin_dir in list(plugins_dir.iterdir()):
-                if not plugin_dir.is_dir():
-                    continue
-                if (
-                    plugin_dir.name not in QT_PLUGIN_DIRS_TO_KEEP
-                    and plugin_dir.name != "imageformats"
-                ):
-                    shutil.rmtree(plugin_dir)
-                    print(f"Removed unused Qt plugin directory: {plugin_dir.name}/")
-                elif plugin_dir.name == "imageformats":
-                    for plugin in list(plugin_dir.iterdir()):
-                        plugin_base = plugin.stem.split(".")[0]
-                        if plugin_base not in QT_IMAGEFORMAT_PLUGINS_TO_KEEP:
-                            plugin.unlink()
-                            print(f"Removed unused Qt imageformat plugin: {plugin.name}")
+        # libqsvg on macOS/Linux, qsvg on Windows
+        QT_IMAGEFORMAT_PLUGINS_TO_KEEP = {"libqsvg", "qsvg"}
+        plugins_dir = _find_qt_plugins_dir(pyside_dir)
+        for plugin_dir in list(plugins_dir.iterdir()):
+            if not plugin_dir.is_dir():
+                continue
+            if plugin_dir.name not in QT_PLUGIN_DIRS_TO_KEEP and plugin_dir.name != "imageformats":
+                shutil.rmtree(plugin_dir)
+                print(f"Removed unused Qt plugin directory: {plugin_dir.name}/")
+            elif plugin_dir.name == "imageformats":
+                for plugin in list(plugin_dir.iterdir()):
+                    plugin_base = plugin.stem.split(".")[0]
+                    if plugin_base not in QT_IMAGEFORMAT_PLUGINS_TO_KEEP:
+                        plugin.unlink()
+                        print(f"Removed unused Qt imageformat plugin: {plugin.name}")
 
 
 def remove_icu_libs(dist_path: Path) -> None:

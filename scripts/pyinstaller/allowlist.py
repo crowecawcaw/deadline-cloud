@@ -18,9 +18,10 @@ DEPENDENCIES = [
     "typing_extensions",
     "urllib3",
     "xxhash",
-    # PySide6/Qt dependencies
-    "PySide6",
-    "shiboken6",
+    # PySide6/shiboken6 are NOT listed here because the auto-generated
+    # _internal/{dep}/**/* glob would blanket-allow all files under PySide6/,
+    # defeating the purpose of the explicit plugin allowlist below.
+    # Their dist-info and binding globs are listed explicitly instead.
 ]
 
 ALLOWLIST = {
@@ -82,6 +83,11 @@ ALLOWLIST = {
         # xxsubtype (CPython internal C extension, pulled in by shiboken6/PySide6)
         "_internal/lib-dynload/xxsubtype.cpython-3*-darwin.so",
         "_internal/lib-dynload/xxsubtype.cpython-3*-x86_64-linux-gnu.so",
+        # PySide6/shiboken6 dist-info (auto-generated globs excluded, so list explicitly)
+        "_internal/PySide6-*.dist-info/**/*",
+        "_internal/PySide6-*.dist-info/*",
+        "_internal/shiboken6-*.dist-info/**/*",
+        "_internal/shiboken6-*.dist-info/*",
         # PySide6/shiboken6 Python bindings
         "_internal/PySide6/Qt*.abi3.so",
         "_internal/PySide6/libpyside6.abi3.*.dylib",
@@ -135,23 +141,25 @@ ALLOWLIST = {
         "_internal/PySide6/Qt/lib/QtWidgets.framework/**/*",
         "_internal/PySide6/Qt/lib/QtDBus.framework/**/*",
         "_internal/PySide6/Qt/lib/QtSvg.framework/**/*",
-        # Qt plugins - only the specific plugins we need
+        # Qt plugins - macOS/Linux (PySide6/Qt/plugins/)
         "_internal/PySide6/Qt/plugins/platforms/libqcocoa.dylib",
         "_internal/PySide6/Qt/plugins/platforms/libqoffscreen.dylib",
         "_internal/PySide6/Qt/plugins/platforms/libqminimal.*",
         "_internal/PySide6/Qt/plugins/platforms/libqxcb.so",
         "_internal/PySide6/Qt/plugins/platforms/libqwayland*.so",
-        "_internal/PySide6/Qt/plugins/platforms/qwindows.dll",
-        "_internal/PySide6/Qt/plugins/platforms/qminimal.dll",
-        "_internal/PySide6/Qt/plugins/platforms/qoffscreen.dll",
         "_internal/PySide6/Qt/plugins/styles/libqmacstyle.dylib",
-        "_internal/PySide6/Qt/plugins/styles/qwindowsvistastyle.dll",
         "_internal/PySide6/Qt/plugins/iconengines/libqsvgicon.*",
-        "_internal/PySide6/Qt/plugins/iconengines/qsvgicon.dll",
         "_internal/PySide6/Qt/plugins/imageformats/libqsvg.*",
-        "_internal/PySide6/Qt/plugins/imageformats/qsvg.dll",
+        # Qt plugins - Windows (PySide6/plugins/ - no Qt subdirectory)
+        "_internal/PySide6/plugins/platforms/qwindows.dll",
+        "_internal/PySide6/plugins/platforms/qminimal.dll",
+        "_internal/PySide6/plugins/platforms/qoffscreen.dll",
+        "_internal/PySide6/plugins/styles/qwindowsvistastyle.dll",
+        "_internal/PySide6/plugins/iconengines/qsvgicon.dll",
+        "_internal/PySide6/plugins/imageformats/qsvg.dll",
         # Qt translations
         "_internal/PySide6/Qt/translations/*",
+        "_internal/PySide6/translations/*",
     ],
     "conditions": {
         "_internal/base_library.zip": {
