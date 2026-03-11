@@ -1,0 +1,195 @@
+name: "Build Installer (GHA Native)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - Linux
+          - Windows
+          - MacOS
+
+env:
+  INSTALLBUILDER_VERSION: "26.2.0"
+
+jobs:
+  build-matrix:
+    name: Build Installer (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            os: ubuntu-latest
+            installer_artifact: DeadlineCloudClient-linux-x64-installer.run
+            ib_cache_path: /opt/installbuilder
+          - platform: Windows
+            os: windows-latest
+            installer_artifact: DeadlineCloudClient-windows-x64-installer.exe
+            ib_cache_path: C:\installbuilder
+          - platform: MacOS
+            os: macos-14
+            installer_artifact: DeadlineCloudClient-osx-installer.app
+            ib_cache_path: /opt/installbuilder
+    runs-on: ${{ matrix.os }}
+    env:
+      INSTALLER_VERSION: ${{ github.run_id }}
+    steps:
+      - name: Check if platform selected
+        id: check
+        shell: bash
+        run: |
+          INPUT_OS="${{ inputs.os }}"
+          if [[ "$INPUT_OS" != "all" && "$INPUT_OS" != "" && "$INPUT_OS" != "${{ matrix.platform }}" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.skip != 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.skip != 'true'
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        if: steps.check.outputs.skip != 'true'
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install hatch "virtualenv<21"
+
+      # --- InstallBuilder setup (cached) ---
+
+      - name: Cache InstallBuilder
+        if: steps.check.outputs.skip != 'true'
+        id: ib-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.ib_cache_path }}
+          key: installbuilder-${{ matrix.platform }}-${{ env.INSTALLBUILDER_VERSION }}
+
+      - name: Download & install InstallBuilder (Linux)
+        if: steps.check.outputs.skip != 'true' && steps.ib-cache.outputs.cache-hit != 'true' && matrix.platform == 'Linux'
+        run: |
+          curl -fSL -o /tmp/ib-installer.run "https://releases.installbuilder.com/installbuilder/installbuilder-enterprise-${INSTALLBUILDER_VERSION}-linux-x64-installer.run"
+          chmod +x /tmp/ib-installer.run
+          /tmp/ib-installer.run --mode unattended --prefix /opt/installbuilder
+
+      - name: Download & install InstallBuilder (Windows)
+        if: steps.check.outputs.skip != 'true' && steps.ib-cache.outputs.cache-hit != 'true' && matrix.platform == 'Windows'
+        shell: pwsh
+        run: |
+          $ibUrl = "https://releases.installbuilder.com/installbuilder/installbuilder-enterprise-$env:INSTALLBUILDER_VERSION-windows-x64-installer.exe"
+          Invoke-WebRequest -Uri $ibUrl -OutFile "$env:TEMP\ib-installer.exe"
+          Start-Process -FilePath "$env:TEMP\ib-installer.exe" -ArgumentList "--mode", "unattended", "--prefix", "C:\installbuilder" -Wait -NoNewWindow
+
+      - name: Download & install InstallBuilder (macOS)
+        if: steps.check.outputs.skip != 'true' && steps.ib-cache.outputs.cache-hit != 'true' && matrix.platform == 'MacOS'
+        run: |
+          curl -fSL -o /tmp/ib-installer.dmg "https://releases.installbuilder.com/installbuilder/installbuilder-enterprise-${INSTALLBUILDER_VERSION}-osx-installer.dmg"
+          hdiutil attach /tmp/ib-installer.dmg -mountpoint /Volumes/InstallBuilder
+          IB_APP=$(find /Volumes/InstallBuilder -name "*.app" -maxdepth 1 | head -1)
+          sudo "$IB_APP/Contents/MacOS/installbuilder" --mode unattended --prefix /opt/installbuilder
+          hdiutil detach /Volumes/InstallBuilder
+
+      - name: Set InstallBuilder path
+        if: steps.check.outputs.skip != 'true'
+        shell: bash
+        run: echo "INSTALLBUILDER_PATH=${{ matrix.ib_cache_path }}" >> "$GITHUB_ENV"
+
+      # --- Build PyInstaller artifact ---
+
+      - name: Build PyInstaller artifact (Linux/macOS)
+        if: steps.check.outputs.skip != 'true' && matrix.platform != 'Windows'
+        run: |
+          hatch run attributions:generate
+          hatch build
+          hatch run installer:make_exe
+          hatch run installer:validate_exe
+
+      - name: Build PyInstaller artifact (Windows)
+        if: steps.check.outputs.skip != 'true' && matrix.platform == 'Windows'
+        shell: pwsh
+        run: |
+          hatch run attributions:generate
+          if ($LASTEXITCODE -ne 0) { throw "Failed to generate attributions" }
+          hatch build
+          if ($LASTEXITCODE -ne 0) { throw "Failed to build project" }
+          hatch run installer:make_exe
+          if ($LASTEXITCODE -ne 0) { throw "Failed to build pyinstaller artifact" }
+          hatch run installer:validate_exe
+          if ($LASTEXITCODE -ne 0) { throw "Failed to validate pyinstaller artifact" }
+
+      # --- Build installer ---
+
+      - name: Build installer (Linux/macOS)
+        if: steps.check.outputs.skip != 'true' && matrix.platform != 'Windows'
+        run: |
+          hatch run installer:prepare_artifacts
+          hatch run installer:build_installer \
+            --platform ${{ matrix.platform }} \
+            --install-builder-path "$INSTALLBUILDER_PATH" \
+            --dev \
+            --output-dir "${{ github.workspace }}/output" \
+            --installer-source-path "${{ github.workspace }}/installer/DeadlineCloudClient.xml"
+
+      - name: Build installer (Windows)
+        if: steps.check.outputs.skip != 'true' && matrix.platform == 'Windows'
+        shell: pwsh
+        run: |
+          hatch run installer:prepare_artifacts
+          if ($LASTEXITCODE -ne 0) { throw "Failed to prepare artifacts" }
+          hatch run installer:build_installer `
+            --platform Windows `
+            --install-builder-path "$env:INSTALLBUILDER_PATH" `
+            --dev `
+            --output-dir "${{ github.workspace }}\output" `
+            --installer-source-path "${{ github.workspace }}\installer\DeadlineCloudClient.xml"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to build installer" }
+
+      # --- Package macOS .app into zip (it's a directory) ---
+
+      - name: Zip macOS .app bundle
+        if: steps.check.outputs.skip != 'true' && matrix.platform == 'MacOS'
+        working-directory: ${{ github.workspace }}/output
+        run: |
+          zip -ry "${{ matrix.installer_artifact }}.zip" "${{ matrix.installer_artifact }}"
+          rm -rf "${{ matrix.installer_artifact }}"
+
+      # --- Generate checksums ---
+
+      - name: Generate checksum (Linux)
+        if: steps.check.outputs.skip != 'true' && matrix.platform == 'Linux'
+        working-directory: ${{ github.workspace }}/output
+        run: sha256sum "${{ matrix.installer_artifact }}" > checksums.sha256
+
+      - name: Generate checksum (macOS)
+        if: steps.check.outputs.skip != 'true' && matrix.platform == 'MacOS'
+        working-directory: ${{ github.workspace }}/output
+        run: shasum -a 256 "${{ matrix.installer_artifact }}.zip" > checksums.sha256
+
+      - name: Generate checksum (Windows)
+        if: steps.check.outputs.skip != 'true' && matrix.platform == 'Windows'
+        shell: pwsh
+        working-directory: ${{ github.workspace }}/output
+        run: |
+          Get-FileHash -Algorithm SHA256 "${{ matrix.installer_artifact }}" |
+            ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } |
+            Set-Content checksums.sha256
+
+      # --- Upload ---
+
+      - name: Upload installer artifact
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: ${{ github.workspace }}/output/
+          if-no-files-found: error
