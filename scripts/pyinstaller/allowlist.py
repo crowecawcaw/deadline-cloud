@@ -136,10 +136,16 @@ ALLOWLIST = {
         "_internal/PySide6/Qt6DBus.dll",
         "_internal/PySide6/Qt6Svg.dll",
         # Qt/PySide6 core libraries - macOS
+        # fnmatch's ** doesn't do recursive matching, so we need both * and **/* patterns
+        "_internal/PySide6/Qt/lib/QtCore.framework/*",
         "_internal/PySide6/Qt/lib/QtCore.framework/**/*",
+        "_internal/PySide6/Qt/lib/QtGui.framework/*",
         "_internal/PySide6/Qt/lib/QtGui.framework/**/*",
+        "_internal/PySide6/Qt/lib/QtWidgets.framework/*",
         "_internal/PySide6/Qt/lib/QtWidgets.framework/**/*",
+        "_internal/PySide6/Qt/lib/QtDBus.framework/*",
         "_internal/PySide6/Qt/lib/QtDBus.framework/**/*",
+        "_internal/PySide6/Qt/lib/QtSvg.framework/*",
         "_internal/PySide6/Qt/lib/QtSvg.framework/**/*",
         # Qt plugins - macOS/Linux (PySide6/Qt/plugins/)
         "_internal/PySide6/Qt/plugins/platforms/libqcocoa.dylib",
@@ -232,6 +238,8 @@ ALLOWLIST = {
                                 "_sysconfigdata__darwin_darwin",
                                 "_pyi_rth_utils",
                                 "_pyi_rth_utils.qt",
+                                "shiboken6",
+                                "PySide6",
                             ],
                         }
                     }
