@@ -80,16 +80,23 @@ under `deadline-cloud/`.
 ## Updating PySide6 / Qt Version
 
 1. Update the version pin in `requirements-installer.txt`
-2. Regenerate attributions: `hatch run attributions:generate_local`
-   - If Qt's third-party licenses changed, first run `fetch_qt_licenses.py` and update
-     `additional/QT_LICENSE.txt`
-3. If the golden file diff fails, review the changes and copy the new output to
+2. Update `BASE_URL` in `fetch_qt_licenses.py` to match the Qt minor version
+   (e.g. `https://doc.qt.io/qt-6.8` for Qt 6.8.x). The version-specific page lists
+   the correct third-party component versions for that release.
+3. Regenerate Qt third-party licenses and update `additional/QT_LICENSE.txt`:
+   ```bash
+   python scripts/attributions/fetch_qt_licenses.py --output /tmp/qt_third_party.txt
+   ```
+   Then replace the third-party section in `additional/QT_LICENSE.txt` (everything after
+   the LGPLv3 full text) with the generated output.
+4. Regenerate attributions: `hatch run attributions:generate_local`
+5. If the golden file diff fails, review the changes and copy the new output to
    `approved_text/<platform>/THIRD_PARTY_LICENSES`
-4. Generate new source tarballs:
+6. Generate new source tarballs:
    ```bash
    python scripts/attributions/generate_source_tarballs.py --output-dir ./source-tarballs
    ```
-5. Upload tarballs to the S3 compliance bucket
+7. Upload tarballs to the S3 compliance bucket
 
 ## Adding a New Dependency
 
