@@ -43,6 +43,20 @@ class TestToolRegistry:
         for func_name in expected:
             assert func_name in TOOL_REGISTRY
 
+    def test_auto_paginating_tools_do_not_expose_maxResults(self):
+        """Auto-paginating list tools should not expose maxResults since they
+        always return all results regardless of the parameter value."""
+        auto_paginating_tools = [
+            "list_farms",
+            "list_queues",
+            "list_jobs",
+            "list_fleets",
+            "list_storage_profiles_for_queue",
+        ]
+        for tool_name in auto_paginating_tools:
+            params = TOOL_REGISTRY[tool_name]["param_names"]
+            assert "maxResults" not in params, f"{tool_name} should not expose maxResults"
+
 
 class TestUtilityFunctions:
     """Test utility functions."""
