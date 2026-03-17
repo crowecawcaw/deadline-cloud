@@ -52,10 +52,14 @@ class TestToolRegistry:
             "list_jobs",
             "list_fleets",
             "list_storage_profiles_for_queue",
+            "list_sessions",
+            "list_steps",
+            "list_tasks",
         ]
         for tool_name in auto_paginating_tools:
             params = TOOL_REGISTRY[tool_name]["param_names"]
             assert "maxResults" not in params, f"{tool_name} should not expose maxResults"
+            assert "max_results" not in params, f"{tool_name} should not expose max_results"
 
 
 class TestUtilityFunctions:

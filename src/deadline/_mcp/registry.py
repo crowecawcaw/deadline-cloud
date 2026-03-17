@@ -90,15 +90,15 @@ TOOL_REGISTRY: Dict[str, ToolDefinition] = {
     },
     "list_sessions": {
         "func": api.list_sessions,
-        "param_names": ["farm_id", "queue_id", "job_id", "max_results"],
+        "param_names": ["farm_id", "queue_id", "job_id"],
     },
     "list_steps": {
         "func": api.list_steps,
-        "param_names": ["farm_id", "queue_id", "job_id", "max_results"],
+        "param_names": ["farm_id", "queue_id", "job_id"],
     },
     "list_tasks": {
         "func": api.list_tasks,
-        "param_names": ["farm_id", "queue_id", "job_id", "step_id", "max_results"],
+        "param_names": ["farm_id", "queue_id", "job_id", "step_id"],
     },
     "search_jobs": {
         "func": api.search_jobs,
