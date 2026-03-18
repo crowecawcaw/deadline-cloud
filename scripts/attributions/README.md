@@ -75,8 +75,8 @@ These three components are LGPL-licensed and attributed separately:
 ## Commands
 
 ```bash
-# Generate and validate attributions for all platforms (local dev)
-hatch run attributions:generate_local
+# Validate attributions and license text for all platforms
+hatch run attributions:check
 
 # Update golden files for all platforms
 hatch run attributions:update_approved_text
@@ -110,7 +110,7 @@ under `deadline-cloud/`.
    ```bash
    hatch run attributions:update_approved_text
    ```
-5. Verify all platforms pass: `hatch run attributions:generate_local`
+5. Verify all platforms pass: `hatch run attributions:check`
 6. Generate new source tarballs:
    ```bash
    python scripts/attributions/generate_source_tarballs.py --output-dir ./source-tarballs
@@ -122,7 +122,7 @@ under `deadline-cloud/`.
 1. Add the package to `pyproject.toml`
 2. If it will be bundled in the installer, add it to `scripts/pyinstaller/allowlist.py`'s
    `DEPENDENCIES` list
-3. Run `hatch run attributions:generate_local`
+3. Run `hatch run attributions:check`
    - **If pip-licenses finds it**: Add an entry to `_ATTRIBUTIONS_ALLOW_LIST` in `cli.py`
      with the SHA256 of its license text. Run generation again.
    - **If pip-licenses doesn't find it**: Add the license file to `additional/` and add an
@@ -132,7 +132,7 @@ under `deadline-cloud/`.
      transitive dependency): Add it to `_PLATFORM_CONDITIONAL_PACKAGES` in `cli.py`
      so cross-platform generation works correctly.
 4. Update golden files: `hatch run attributions:update_approved_text`
-5. Verify all platforms: `hatch run attributions:generate_local`
+5. Verify all platforms: `hatch run attributions:check`
 6. If the dependency is LGPL/GPL licensed, generate and upload source tarballs
 
 ## File Reference
