@@ -192,6 +192,10 @@ ALLOWLIST = {
         "_internal/PySide6/Qt/plugins/platforms/libqwayland*.so",
         # Wayland shell integration plugins (required for wayland platform plugin)
         "_internal/PySide6/Qt/plugins/wayland-shell-integration/lib*.so",
+        # Wayland decoration plugins (required for client-side window decorations on Wayland)
+        "_internal/PySide6/Qt/plugins/wayland-decoration-client/lib*.so",
+        # Platform theme plugins (GTK3, xdg-desktop-portal integration)
+        "_internal/PySide6/Qt/plugins/platformthemes/lib*.so",
         "_internal/PySide6/Qt/plugins/styles/libqmacstyle.dylib",
         "_internal/PySide6/Qt/plugins/iconengines/libqsvgicon.*",
         "_internal/PySide6/Qt/plugins/imageformats/libqsvg.*",
