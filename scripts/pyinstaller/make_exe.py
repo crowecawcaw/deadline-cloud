@@ -190,7 +190,16 @@ def remove_unused_qt_modules(dist_path: Path) -> None:
         #   styles/ - native widget styling
         #   iconengines/ - SVG icon support (used for deadline_logo.svg, info.svg)
         #   imageformats/qsvg - SVG image format support
-        QT_PLUGIN_DIRS_TO_KEEP = {"platforms", "styles", "iconengines", "wayland-shell-integration"}
+        #   wayland-decoration-client/ - client-side window decorations on Wayland (title bar, close/min/max buttons)
+        #   platformthemes/ - desktop theme integration (GTK3, xdg-desktop-portal) for native look and feel
+        QT_PLUGIN_DIRS_TO_KEEP = {
+            "platforms",
+            "styles",
+            "iconengines",
+            "wayland-shell-integration",
+            "wayland-decoration-client",
+            "platformthemes",
+        }
         # libqsvg on macOS/Linux, qsvg on Windows
         QT_IMAGEFORMAT_PLUGINS_TO_KEEP = {"libqsvg", "qsvg"}
         plugins_dir = _find_qt_plugins_dir(pyside_dir)
