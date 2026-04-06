@@ -53,6 +53,8 @@ __all__ = [
     "get_session_logs",
     "SessionLogResult",
     "LogEvent",
+    "get_worker_logs",
+    "WorkerLogResult",
     # Diagnostics APIs
     "get_job",
     "get_session",
@@ -60,6 +62,10 @@ __all__ = [
     "list_steps",
     "list_tasks",
     "search_jobs",
+    # Update checker
+    "safe_check_for_updates",
+    "UpdateCheckResult",
+    "UpdateCheckStatus",
 ]
 
 # The following import is needed to prevent the following sporadic failure:
@@ -116,6 +122,8 @@ from ._job_monitoring import (
     get_session_logs,
     SessionLogResult,
     LogEvent,
+    get_worker_logs,
+    WorkerLogResult,
 )
 from ._mcp import (
     get_job,
@@ -124,6 +132,11 @@ from ._mcp import (
     list_steps,
     list_tasks,
     search_jobs,
+)
+from ._update_checker import (
+    safe_check_for_updates,
+    UpdateCheckResult,
+    UpdateCheckStatus,
 )
 
 logger = getLogger(__name__)

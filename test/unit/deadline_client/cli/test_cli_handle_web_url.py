@@ -563,6 +563,38 @@ def test_cli_handle_web_url_install(fresh_deadline_config, install_command, all_
         assert result.exit_code == 0
 
 
+@pytest.mark.parametrize("all_users", [True, False])
+def test_cli_handle_web_url_install_prints_success_message(fresh_deadline_config, all_users):
+    """
+    Confirm that --install prints a success message on completion.
+    """
+    with patch.object(handle_web_url_command, "install_deadline_web_url_handler"):
+        runner = CliRunner()
+        cli_options = ["handle-web-url", "--install"]
+        if all_users:
+            cli_options.append("--all-users")
+        result = runner.invoke(main, cli_options)
+
+        assert result.exit_code == 0
+        assert "Web URL handler installed successfully." in result.output
+
+
+@pytest.mark.parametrize("all_users", [True, False])
+def test_cli_handle_web_url_uninstall_prints_success_message(fresh_deadline_config, all_users):
+    """
+    Confirm that --uninstall prints a success message on completion.
+    """
+    with patch.object(handle_web_url_command, "uninstall_deadline_web_url_handler"):
+        runner = CliRunner()
+        cli_options = ["handle-web-url", "--uninstall"]
+        if all_users:
+            cli_options.append("--all-users")
+        result = runner.invoke(main, cli_options)
+
+        assert result.exit_code == 0
+        assert "Web URL handler uninstalled successfully." in result.output
+
+
 def test_cli_handle_web_url_install_current_user_monkeypatched_windows(
     fresh_deadline_config, monkeypatch
 ):
@@ -608,7 +640,7 @@ def test_cli_handle_web_url_install_current_user_monkeypatched_windows(
                 call.CloseKey("FIRST_CREATED_KEY"),
             ]
         )
-        assert result.output.strip() == ""
+        assert "Web URL handler installed successfully." in result.output
 
 
 def test_cli_handle_web_url_install_all_users_monkeypatched_windows(
@@ -656,7 +688,7 @@ def test_cli_handle_web_url_install_all_users_monkeypatched_windows(
                 call.CloseKey("FIRST_CREATED_KEY"),
             ]
         )
-        assert result.output.strip() == ""
+        assert "Web URL handler installed successfully." in result.output
 
 
 def test_cli_handle_web_url_uninstall_current_user_monkeypatched_windows(
@@ -695,7 +727,7 @@ def test_cli_handle_web_url_uninstall_current_user_monkeypatched_windows(
                 call.CloseKey("FIRST_OPENED_KEY"),
             ]
         )
-        assert result.output.strip() == ""
+        assert "Web URL handler uninstalled successfully." in result.output
 
 
 def test_cli_handle_web_url_uninstall_all_users_monkeypatched_windows(
@@ -732,7 +764,7 @@ def test_cli_handle_web_url_uninstall_all_users_monkeypatched_windows(
                 call.DeleteKeyEx("HKEY_CLASSES_ROOT", "deadline"),
             ]
         )
-        assert result.output.strip() == ""
+        assert "Web URL handler uninstalled successfully." in result.output
 
 
 def test_linux_install_generates_valid_desktop_file(fresh_deadline_config, tmp_path):

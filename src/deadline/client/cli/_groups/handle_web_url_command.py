@@ -135,8 +135,10 @@ def cli_handle_web_url(
         )
     elif install:
         install_deadline_web_url_handler(all_users=all_users)
+        click.echo("Web URL handler installed successfully.")
     elif uninstall:
         uninstall_deadline_web_url_handler(all_users=all_users)
+        click.echo("Web URL handler uninstalled successfully.")
     else:
         raise DeadlineOperationError(
             "At least one of a URL, --install, or --uninstall must be provided."

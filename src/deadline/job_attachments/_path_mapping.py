@@ -148,7 +148,7 @@ class _PathMappingRuleApplier:
         parts = self._split_source_path(path)
 
         matched_destination_path = None
-        matched_remaining_parts = None
+        matched_remaining_parts: tuple[str, ...] = ()
 
         # Traverse the trie using trie_entry
         trie_entry: dict = self._path_mapping_trie
@@ -162,7 +162,7 @@ class _PathMappingRuleApplier:
             destination_path = next_trie_entry.get(".")
             if destination_path:
                 matched_destination_path = destination_path
-                matched_remaining_parts = parts[i + 1 :]
+                matched_remaining_parts = tuple(parts[i + 1 :])
             trie_entry = next_trie_entry
 
         if matched_destination_path is None:

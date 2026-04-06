@@ -1,13 +1,38 @@
-## 0.54.3 (2026-03-16)
+## 0.55.1 (2026-04-02)
 
 
 ### Features
-* show estimated time remaining for in-progress jobs (#992) ([`509af3c`](https://github.com/aws-deadline/deadline-cloud/commit/509af3c63a3620ad625e681210d945b9ea0683f6))
-* bundle Qt dependencies in installer (#1021) ([`7ec10cc`](https://github.com/aws-deadline/deadline-cloud/commit/7ec10cc4b5a9bec9e861f0fb904bfc8ef9da331b))
+* Add newer submitter available dialog. (#1070) ([`a93b553`](https://github.com/aws-deadline/deadline-cloud/commit/a93b553c662e1e703da0503545b4f5f9538551cf))
+
+
+## 0.55.0 (2026-03-26)
+
+### BREAKING CHANGES
+* Decoupled Job Attachments from the Client package — `deadline.job_attachments` no longer imports from `deadline.client` ([migration guide](https://github.com/aws-deadline/deadline-cloud/blob/mainline/docs/design/client-job-attachments-decoupling.md#migration-guide)) (#1076)
+
+### Features
+* `deadline handle-web-url --install` and `--uninstall` now print a confirmation message on success (#1056) ([`6d0c5d9`](https://github.com/aws-deadline/deadline-cloud/commit/6d0c5d9dc167e8fd65721feb5cd6d318c7f38b44))
 
 ### Bug Fixes
-* accept hidden parameters with empty string defaults (#1032) ([`347adcc`](https://github.com/aws-deadline/deadline-cloud/commit/347adcce70e873792b62e554d70ab311f2d3ba09))
-* fix load job bundle button not working (#1041) ([`eee187e`](https://github.com/aws-deadline/deadline-cloud/commit/eee187e7f763a1f52d7d09ee8980801e8c1841c6))
+* Telemetry client not correctly labeling the source package when multiple packages use telemetry (#1055) ([`cb47435`](https://github.com/aws-deadline/deadline-cloud/commit/cb47435fefb6232137c66933539a2da259e297d3))
+* `maxResults` parameter in MCP server not working correctly and causing type errors (#1049) ([`a1df215`](https://github.com/aws-deadline/deadline-cloud/commit/a1df215a5669fd735a2d6f8f3a30911860afc219))
+
+
+## 0.54.3 (2026-03-19)
+
+
+### Features
+* Add worker log retrieval to MCP server for job troubleshooting (#999) ([`0378f77`](https://github.com/aws-deadline/deadline-cloud/commit/0378f7792372eecec17e9c72d7bb81f1da977bc3))
+* Show estimated time remaining for in-progress jobs (#992) ([`509af3c`](https://github.com/aws-deadline/deadline-cloud/commit/509af3c63a3620ad625e681210d945b9ea0683f6))
+* Bundle Qt dependencies in installer (#1021) ([`7ec10cc`](https://github.com/aws-deadline/deadline-cloud/commit/7ec10cc4b5a9bec9e861f0fb904bfc8ef9da331b))
+
+### Bug Fixes
+* Update attributions for OS-specific dependencies (#1057) ([`2616a75`](https://github.com/aws-deadline/deadline-cloud/commit/2616a75e63eb8191c3903895507f83247dbb3fed))
+* Show friendly OS name instead of sys.platform in error messages (#1004) (#1045) ([`e0346ce`](https://github.com/aws-deadline/deadline-cloud/commit/e0346ce1aba96dee825d2c650f064d8740fa99aa))
+* Missing newline in terminal output when submitting a job with no attachments (#1008) (#1043) ([`5bce616`](https://github.com/aws-deadline/deadline-cloud/commit/5bce616d4b9c07508b5a0b7de8eb54607ed0ffcf))
+* Show checkboxes in multiselect combo boxes on macOS (#1052) ([`c4eb36b`](https://github.com/aws-deadline/deadline-cloud/commit/c4eb36b93c850330c0928afa00efb84cd3b1864f))
+* Accept hidden parameters with empty string defaults (#1032) ([`347adcc`](https://github.com/aws-deadline/deadline-cloud/commit/347adcce70e873792b62e554d70ab311f2d3ba09))
+* Fix load job bundle button not working (#1041) ([`eee187e`](https://github.com/aws-deadline/deadline-cloud/commit/eee187e7f763a1f52d7d09ee8980801e8c1841c6))
 
 
 ## 0.54.2 (2026-03-04)
