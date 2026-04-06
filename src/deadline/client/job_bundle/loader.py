@@ -12,7 +12,7 @@ __all__ = [
 import json
 import os
 from itertools import chain
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Literal, Optional, Tuple, overload
 
 import yaml
 
@@ -98,6 +98,18 @@ def parse_yaml_or_json_content(file_contents: str, file_type: str, bundle_dir: s
         raise RuntimeError(f"Unexpected file type '{file_type}' in job bundle:\n{bundle_dir}")
 
 
+@overload
+def read_yaml_or_json_object(
+    bundle_dir: str, filename: str, required: Literal[True]
+) -> Dict[str, Any]: ...
+
+
+@overload
+def read_yaml_or_json_object(
+    bundle_dir: str, filename: str, required: Literal[False]
+) -> Optional[Dict[str, Any]]: ...
+
+
 def read_yaml_or_json_object(
     bundle_dir: str, filename: str, required: bool
 ) -> Optional[Dict[str, Any]]:
@@ -108,8 +120,8 @@ def read_yaml_or_json_object(
     Args:
         job_bundle_dir (str): The directory containing the job bundle.
         filename (str): The filename, without extension, to look for.
-        required (bool): Whether this file is required. If not required and its missing,
-                         the function returns ("", "").
+        required (bool): Whether this file is required. If not required and missing,
+                         the function returns None.
     """
     file_contents, file_type = read_yaml_or_json(bundle_dir, filename, required)
     if file_contents and file_type:

@@ -257,9 +257,7 @@ def show_job_bundle_submitter(
     asset_references = AssetReferences.from_dict(asset_references_obj)
 
     if name is None:
-        name = (
-            template.get("name", "Job bundle submission") if template else "Job bundle submission"
-        )
+        name = template.get("name", "Job bundle submission")
 
     if not os.path.isdir(input_job_bundle_dir):
         raise DeadlineOperationError(f"Input Job Bundle Dir is not valid: {input_job_bundle_dir}")
