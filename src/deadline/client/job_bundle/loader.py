@@ -12,7 +12,7 @@ __all__ = [
 import json
 import os
 from itertools import chain
-from typing import Any, Dict, Literal, Optional, Tuple, overload
+from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
@@ -96,18 +96,6 @@ def parse_yaml_or_json_content(file_contents: str, file_type: str, bundle_dir: s
             raise DeadlineOperationError(f"Error loading '{filename}.yaml':\n{e}")
     else:
         raise RuntimeError(f"Unexpected file type '{file_type}' in job bundle:\n{bundle_dir}")
-
-
-@overload
-def read_yaml_or_json_object(
-    bundle_dir: str, filename: str, required: Literal[True]
-) -> Dict[str, Any]: ...
-
-
-@overload
-def read_yaml_or_json_object(
-    bundle_dir: str, filename: str, required: Literal[False]
-) -> Optional[Dict[str, Any]]: ...
 
 
 def read_yaml_or_json_object(
