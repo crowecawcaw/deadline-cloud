@@ -1,16 +1,17 @@
-name: "Test: Bump with Bedrock Release Notes"
+name: "Test: Release Bump"
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to simulate (e.g. 0.56.0)"
-        required: true
-        default: "0.56.0"
-      since:
-        description: "Previous tag to diff from"
-        required: true
-        default: "0.55.1"
+      force_version_bump:
+        required: false
+        default: ""
+        type: choice
+        options:
+        - ""
+        - patch
+        - minor
+        - major
 
 jobs:
   Bump:
@@ -41,38 +42,62 @@ jobs:
           role-to-assume: ${{ secrets.BEDROCK_ROLE_ARN }}
           aws-region: us-west-2
 
-      - name: Generate changelog
+      - name: ConfigureGit
         run: |
-          NOTES=$(python scripts/generate_release_notes.py "${{ inputs.version }}" \
-            --since "${{ inputs.since }}" \
+          git config --local user.email "test@test.com"
+          git config --local user.name "Test Bot"
+
+      - name: NextSemver
+        run: |
+          BUMP_ARGS=""
+          if [[ "${{ inputs.force_version_bump }}" != "" ]]; then
+            BUMP_ARGS="$BUMP_ARGS --${{ inputs.force_version_bump }}"
+          fi
+
+          touch CHANGELOG.md
+          cp CHANGELOG.md CHANGELOG.bak.md
+
+          pip install -r requirements-release.txt
+
+          NEXT_SEMVER=$(semantic-release -v --strict version --no-commit --no-push --no-tag $BUMP_ARGS)
+          echo "NEXT_SEMVER=$NEXT_SEMVER" >> $GITHUB_ENV
+          git checkout -b bump/$NEXT_SEMVER
+
+      - name: GenerateChangeLog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0)
+          echo "Generating release notes for $NEXT_SEMVER since $PREV_TAG..."
+
+          NOTES=$(python scripts/generate_release_notes.py "$NEXT_SEMVER" \
+            --since "$PREV_TAG" \
             --repo "${{ github.event.repository.name }}")
 
           echo "=== Generated Release Notes ==="
           echo "$NOTES"
           echo "=== End ==="
 
-          # Prepend to CHANGELOG.md
-          cp CHANGELOG.md CHANGELOG.bak.md
-          echo "$NOTES" > CHANGELOG.md
-          echo "" >> CHANGELOG.md
-          cat CHANGELOG.bak.md >> CHANGELOG.md
-          rm CHANGELOG.bak.md
+          echo "$NOTES" > NEW_LOG.md
+          cat NEW_LOG.md CHANGELOG.bak.md > CHANGELOG.md
+          rm NEW_LOG.md
 
-          echo "=== First 30 lines of CHANGELOG.md ==="
-          head -30 CHANGELOG.md
+          git add CHANGELOG.md
 
-      - name: Create test PR
+          {
+            echo 'RELEASE_NOTES<<EOF'
+            echo "$NOTES"
+            echo 'EOF'
+          } >> $GITHUB_ENV
+
+      - name: Commit
+        run: |
+          git commit -sm "chore(release): $NEXT_SEMVER"
+
+      - name: PushPR
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.email "test@test.com"
-          git config user.name "Test Bot"
-          git checkout -b bump/test-${{ inputs.version }}
-          git add CHANGELOG.md
-          git commit -m "chore(release): ${{ inputs.version }}"
-          git push origin bump/test-${{ inputs.version }}
+          git push -u origin bump/$NEXT_SEMVER
           gh pr create \
             --base ${{ github.ref_name }} \
-            --title "chore(release): ${{ inputs.version }} [TEST]" \
-            --body "$(head -30 CHANGELOG.md)" \
-            --label "test"
+            --title "chore(release): $NEXT_SEMVER [TEST]" \
+            --body "$RELEASE_NOTES"
