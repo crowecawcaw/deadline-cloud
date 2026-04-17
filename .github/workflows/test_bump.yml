@@ -1,0 +1,78 @@
+name: "Test: Bump with Bedrock Release Notes"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to simulate (e.g. 0.56.0)"
+        required: true
+        default: "0.56.0"
+      since:
+        description: "Previous tag to diff from"
+        required: true
+        default: "0.55.1"
+
+jobs:
+  Bump:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.BEDROCK_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Generate changelog
+        run: |
+          NOTES=$(python scripts/generate_release_notes.py "${{ inputs.version }}" \
+            --since "${{ inputs.since }}" \
+            --repo "${{ github.event.repository.name }}")
+
+          echo "=== Generated Release Notes ==="
+          echo "$NOTES"
+          echo "=== End ==="
+
+          # Prepend to CHANGELOG.md
+          cp CHANGELOG.md CHANGELOG.bak.md
+          echo "$NOTES" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          cat CHANGELOG.bak.md >> CHANGELOG.md
+          rm CHANGELOG.bak.md
+
+          echo "=== First 30 lines of CHANGELOG.md ==="
+          head -30 CHANGELOG.md
+
+      - name: Create test PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.email "test@test.com"
+          git config user.name "Test Bot"
+          git checkout -b bump/test-${{ inputs.version }}
+          git add CHANGELOG.md
+          git commit -m "chore(release): ${{ inputs.version }}"
+          git push origin bump/test-${{ inputs.version }}
+          gh pr create \
+            --base ${{ github.ref_name }} \
+            --title "chore(release): ${{ inputs.version }} [TEST]" \
+            --body "$(head -30 CHANGELOG.md)" \
+            --label "test"
