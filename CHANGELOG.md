@@ -1,3 +1,12 @@
+## 0.55.2 (2026-04-17)
+
+### Features
+* Added submission hooks support for job bundles. You can now define pre-submission and post-submission hooks via `hooks.yaml`/`hooks.json` in job bundles or via the `DEADLINE_HOOKS_DIR` environment variable. Pre-submission hooks can modify the submission before hashing/uploading, and post-submission hooks run after job creation for notifications/integrations. Hooks are disabled by default and require confirmation before execution. (#986)
+* Added `--name` option to the `bundle gui-submit` command, allowing you to specify a job name when submitting a job bundle through the GUI. (#1053)
+
+### Bug Fixes
+* Fixed an issue where external tools (such as Deadline Cloud Monitor on Windows) could corrupt the `~/.deadline/config` file by writing backslash path separators that broke known paths configuration. Path separators are now normalized to forward slashes on Windows. (#1098)
+* Improved the error message when a job output download directory cannot be created (e.g., due to cross-OS path incompatibility). The error now clearly explains the failure and suggests re-running the download to choose a valid local path. (#1034)
 ## 0.55.1 (2026-04-07)
 
 
