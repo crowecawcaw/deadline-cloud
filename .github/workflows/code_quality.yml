@@ -11,6 +11,10 @@ on:
       tag:
         required: false
         type: string
+      use-cache:
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   Test:
@@ -19,11 +23,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
-    uses: aws-deadline/.github/.github/workflows/reusable_python_build.yml@mainline
+    # TODO: revert to aws-deadline/.github/.github/workflows/reusable_python_build.yml@mainline
+    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_python_build.yml@ci/add-build-caches
     with:
       os: ${{ matrix.os }}
       python-version: ${{ matrix.python-version }}
       ref: ${{inputs.tag}}
+      use-cache: ${{ inputs.use-cache == '' && true || inputs.use-cache }}
 
   TestPy38:
     name: Python
@@ -38,6 +44,7 @@ jobs:
       ref: ${{inputs.tag}}
       # The incremental output download and mcp feature doesn't run on Python 3.8, so test coverage is lower
       cov-fail-under: "74"
+      use-cache: ${{ inputs.use-cache == '' && true || inputs.use-cache }}
 
   Attributions:
     name: Attributions
@@ -49,5 +56,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+          cache: pip
       - run: pip install hatch
       - run: hatch run attributions:check

@@ -33,6 +33,7 @@ jobs:
     uses: ./.github/workflows/code_quality.yml
     with:
       tag: ${{ needs.TagRelease.outputs.tag }}
+      use-cache: false
 
   LinuxIntegrationTests:
     name: Linux Integration Tests

@@ -1,5 +1,8 @@
 # TODO: Move the ability to override the coverage fail-under back to the aws-deadline/.github repo,
 #       by making the cov-fail-under parameter optional and using conditionals in the Run Tests step.
+#
+# Caching strategy: see comment in aws-deadline/.github reusable_python_build.yml.
+# Release workflows should pass use-cache: false for clean builds.
 name: Python Build
 
 on:
@@ -23,6 +26,10 @@ on:
       cov-fail-under:
         required: true
         type: string
+      use-cache:
+        required: false
+        type: boolean
+        default: true
 
 
 jobs:
@@ -33,6 +40,7 @@ jobs:
       contents: read
     env:
       PYTHON: ${{ inputs.python-version }}
+      HATCH_DATA_DIR: ${{ github.workspace }}/.hatch-data
     steps:
     - uses: actions/checkout@v6
       if: ${{ !inputs.branch && !inputs.commit && !inputs.ref }}
@@ -62,11 +70,18 @@ jobs:
           libxcb-render-util0 libxcb-xinerama0 libxcb-xinput0 libxcb-xfixes0 \
           x11-utils libxcb-cursor0 libopengl0
 
-
     - name: Set up Python ${{ inputs.python-version }}
       uses: actions/setup-python@v6
       with:
         python-version: ${{ inputs.python-version }}
+        cache: ${{ inputs.use-cache && 'pip' || '' }}
+
+    - name: Restore Hatch environment cache
+      if: inputs.use-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/.hatch-data/env
+        key: hatch-env-${{ inputs.os }}-py${{ inputs.python-version }}-${{ hashFiles('pyproject.toml', 'hatch.toml', 'requirements*.txt') }}
 
     - name: Install Hatch
       run: |

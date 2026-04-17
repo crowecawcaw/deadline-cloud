@@ -27,6 +27,7 @@ jobs:
     uses: ./.github/workflows/code_quality.yml
     with:
       tag: ${{ inputs.tag }}
+      use-cache: false
       
   PublishToPyPI:
     needs: UnitTests
