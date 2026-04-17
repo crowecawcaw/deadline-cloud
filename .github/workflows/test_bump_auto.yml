@@ -1,0 +1,83 @@
+name: "Test: Release Bump (auto)"
+
+on:
+  push:
+    branches:
+      - trigger-bump
+
+jobs:
+  Bump:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout mainline
+        uses: actions/checkout@v4
+        with:
+          ref: mainline
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.BEDROCK_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: ConfigureGit
+        run: |
+          git config --local user.email "test@test.com"
+          git config --local user.name "Test Bot"
+
+      - name: NextSemver
+        run: |
+          touch CHANGELOG.md
+          cp CHANGELOG.md CHANGELOG.bak.md
+          pip install -r requirements-release.txt
+          NEXT_SEMVER=$(semantic-release -v --strict version --no-commit --no-push --no-tag)
+          echo "NEXT_SEMVER=$NEXT_SEMVER" >> $GITHUB_ENV
+          git checkout -b bump/$NEXT_SEMVER
+
+      - name: GenerateChangeLog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0)
+          echo "Generating release notes for $NEXT_SEMVER since $PREV_TAG..."
+          NOTES=$(python scripts/generate_release_notes.py "$NEXT_SEMVER" --since "$PREV_TAG" --repo "${{ github.event.repository.name }}")
+
+          echo "=== Generated Release Notes ==="
+          echo "$NOTES"
+          echo "=== End ==="
+
+          echo "$NOTES" > NEW_LOG.md
+          cat NEW_LOG.md CHANGELOG.bak.md > CHANGELOG.md
+          rm NEW_LOG.md
+          git add CHANGELOG.md
+
+          {
+            echo 'RELEASE_NOTES<<EOF'
+            echo "$NOTES"
+            echo 'EOF'
+          } >> $GITHUB_ENV
+
+      - name: ShowChangelog
+        run: head -40 CHANGELOG.md
+
+      - name: Commit
+        run: git commit -sm "chore(release): $NEXT_SEMVER"
+
+      - name: PushPR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git push -u origin bump/$NEXT_SEMVER
+          gh pr create --base mainline --title "chore(release): $NEXT_SEMVER [TEST]" --body "$RELEASE_NOTES"
