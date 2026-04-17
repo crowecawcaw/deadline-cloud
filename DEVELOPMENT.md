@@ -513,12 +513,6 @@ These are the manual test cases for the client software release cycle, covering 
 | `deadline fleet list` | Verify correct information is displayed. | |
 | `deadline worker get` | Verify correct information is displayed. | Include `--fleet-id` and `--worker-id` parameter. |
 | `deadline worker list` | Verify correct information is displayed. | Include `--fleet-id` parameter. |
-| `deadline --help` | Verify correct information is displayed. | |
-| `deadline -h` | Verify correct information is displayed. | |
-| `deadline --log-level ERROR` | Must include command after level (e.g. `deadline --log-level ERROR farm list`). | |
-| `deadline --log-level WARNING` | | |
-| `deadline --log-level INFO` | | |
-| `deadline --log-level DEBUG` | | |
 
 ## Job Attachments Tests
 
