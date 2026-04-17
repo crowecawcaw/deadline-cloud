@@ -73,11 +73,14 @@ jobs:
         run: head -40 CHANGELOG.md
 
       - name: Commit
-        run: git commit -sm "chore(release): $NEXT_SEMVER"
+        run: |
+          git commit -sm "chore(release): $NEXT_SEMVER"
 
       - name: PushPR
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git push -u origin bump/$NEXT_SEMVER
-          gh pr create --base mainline --title "chore(release): $NEXT_SEMVER [TEST]" --body "$RELEASE_NOTES"
+          gh pr create --base mainline \
+            --title "chore(release): $NEXT_SEMVER [TEST]" \
+            --body "$RELEASE_NOTES"
