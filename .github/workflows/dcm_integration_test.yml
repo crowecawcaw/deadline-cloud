@@ -1,0 +1,60 @@
+name: DCM Integration Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: DCM E2E Test
+    runs-on: ubuntu-latest
+    environment: dcm-testing
+    timeout-minutes: 30
+    env:
+      MONITOR_URL: ${{ secrets.MONITOR_URL }}
+      MONITOR_USERNAME: ${{ secrets.MONITOR_USERNAME }}
+      MONITOR_PASSWORD: ${{ secrets.MONITOR_PASSWORD }}
+      DISPLAY: ':99'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install desktop/a11y stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb x11-utils dbus-x11 \
+            at-spi2-core libatspi2.0-0 \
+            libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 \
+            libxss1 libasound2t64 libgbm1 fluxbox
+
+      - name: Start Xvfb + window manager + a11y bus
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 1
+          fluxbox &
+          /usr/libexec/at-spi-bus-launcher --launch-immediately &
+          sleep 2
+          echo "ACCESSIBILITY_ENABLED=1" >> $GITHUB_ENV
+          echo "GTK_MODULES=gail:atk-bridge" >> $GITHUB_ENV
+          echo "QT_ACCESSIBILITY=1" >> $GITHUB_ENV
+
+      - name: Build and install deadline CLI from source
+        run: pip install .
+
+      - name: Install xa11y
+        run: pip install xa11y
+
+      - name: Download and install DCM (unattended)
+        run: |
+          BASE=https://downloads.deadlinecloud.amazonaws.com/submitters
+          REL=$(curl -s $BASE/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['DeadlineCloudSubmitter']['latest']['linux']['installer'])")
+          curl -sL "$BASE$REL" -o /tmp/dcm.run
+          chmod +x /tmp/dcm.run
+          /tmp/dcm.run --mode unattended --prefix "$HOME/DeadlineCloudSubmitter"
+          echo "$HOME/DeadlineCloudSubmitter/bin" >> $GITHUB_PATH
+
+      - name: Run E2E test
+        run: python .github/scripts/dcm_e2e_test.py
