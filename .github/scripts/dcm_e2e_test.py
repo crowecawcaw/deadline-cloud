@@ -90,26 +90,48 @@ def create_profile_via_gui():
     print(f"Found DCM app. Listing all apps:", flush=True)
     for a in xa11y.App.list():
         print(f"  - {a.name}", flush=True)
-    dcm.locator("window").wait_visible(timeout=30)
 
-    # Dump initial tree for diagnosis
-    def dump(node, depth=0, maxd=10):
+    # DCM's UI is in WebKitWebProcess on Linux (webkit2gtk). Walk all apps to find
+    # the one containing the "Create new Profile" button.
+    def has_create_button(app):
         try:
-            role = getattr(node, 'role', 'App')
-            nm = (getattr(node, 'name', '') or '')[:80]
-            val = (getattr(node, 'value', '') or '')[:60]
-            print("  " * depth + f"{role}: name={nm!r} value={val!r}", flush=True)
+            return app.locator("button[name='Create new Profile']").count() > 0
         except Exception:
-            return
-        if depth < maxd:
-            try:
-                for c in node.children():
-                    dump(c, depth + 1, maxd)
-            except Exception:
-                pass
-    print("=== DCM tree ===", flush=True)
-    dump(dcm)
+            return False
 
+    ui_app = None
+    deadline = time.time() + 60
+    while time.time() < deadline and ui_app is None:
+        for a in xa11y.App.list():
+            if has_create_button(a):
+                ui_app = a
+                break
+        if ui_app is None:
+            time.sleep(2)
+    if ui_app is None:
+        # Dump all WebKit apps for diagnosis
+        for a in xa11y.App.list():
+            if 'WebKit' in a.name or 'deadline' in a.name.lower():
+                print(f"=== tree for {a.name} ===", flush=True)
+                def dump(node, depth=0, maxd=8):
+                    try:
+                        role = getattr(node, 'role', 'App')
+                        nm = (getattr(node, 'name', '') or '')[:80]
+                        val = (getattr(node, 'value', '') or '')[:60]
+                        print("  " * depth + f"{role}: name={nm!r} value={val!r}", flush=True)
+                    except Exception:
+                        return
+                    if depth < maxd:
+                        try:
+                            for c in node.children():
+                                dump(c, depth + 1, maxd)
+                        except Exception:
+                            pass
+                dump(a)
+        raise SystemExit("Could not find DCM UI with 'Create new Profile' button")
+
+    print(f"Using UI app: {ui_app.name}", flush=True)
+    dcm = ui_app
     dcm.locator("button[name='Create new Profile']").wait_visible(timeout=30)
     dcm.locator("button[name='Create new Profile']").press()
 
