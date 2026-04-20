@@ -29,7 +29,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 libgbm1
+          sudo apt-get install -y xvfb dbus-x11 libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 libgbm1 libfuse2t64
 
       - name: Start Xvfb
         run: |
@@ -44,11 +44,11 @@ jobs:
           npm install -g agent-browser
           agent-browser install --with-deps
 
-      - name: Download and install DCM (.deb)
+      - name: Download and install DCM (AppImage)
         run: |
-          DEB=$(curl -s https://downloads.deadlinecloud.amazonaws.com/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['latest']['linux_deb'])")
-          curl -sL "$DEB" -o /tmp/dcm.deb
-          sudo apt-get install -y /tmp/dcm.deb
+          APPIMAGE=$(curl -s https://downloads.deadlinecloud.amazonaws.com/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['latest']['linux_appimage'])")
+          curl -sL "$APPIMAGE" -o /usr/local/bin/deadline-cloud-monitor
+          chmod +x /usr/local/bin/deadline-cloud-monitor
 
       - name: Create DCM profile
         run: |
