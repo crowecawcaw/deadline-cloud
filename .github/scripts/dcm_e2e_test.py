@@ -1,9 +1,9 @@
 """End-to-end test: DCM first-time sign-in, then deadline auth login/logout/login + farm list.
 
-DCM opens the system browser via $BROWSER or xdg-open with the IAM Identity Center auth URL,
-then waits for the OAuth callback on a local port. We set BROWSER to a helper script that
-drives the sign-in via agent-browser, which follows the redirect back to the callback and
-completes DCM's auth.
+DCM opens the system browser via xdg-open with the IAM Identity Center auth URL,
+then waits for the OAuth callback on a local port. We shadow xdg-open with a helper
+that drives the sign-in via agent-browser, which follows the redirect back to the
+callback and completes DCM's auth.
 """
 import os
 import subprocess
@@ -14,54 +14,51 @@ USERNAME = os.environ["MONITOR_USERNAME"]
 PASSWORD = os.environ["MONITOR_PASSWORD"]
 
 
-def run(cmd, check=True, env=None):
+def run(cmd, check=True, env=None, timeout=120):
     print(f"$ {' '.join(cmd)}", flush=True)
-    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
-    if r.stdout:
-        print(r.stdout)
-    if r.stderr:
-        print(r.stderr, file=sys.stderr)
+    try:
+        r = subprocess.run(cmd, text=True, env=env, timeout=timeout,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except subprocess.TimeoutExpired as e:
+        print(f"TIMEOUT after {timeout}s. Partial output:\n{e.output}", flush=True)
+        raise SystemExit(f"Command timed out: {cmd}")
+    print(r.stdout, flush=True)
     if check and r.returncode != 0:
         raise SystemExit(f"Command failed ({r.returncode})")
     return r
 
 
-def make_browser_driver() -> tuple[str, str]:
-    """Create a shell script that acts as the system browser.
-
-    Returns (bin_dir, path_to_script). We shadow `xdg-open`, `kde-open`, and `BROWSER`
-    so DCM's auth URL is handed to this script, which drives agent-browser to complete
-    IAM Identity Center sign-in. The 302 redirect agent-browser follows hits DCM's
-    http://127.0.0.1:PORT/oauth/callback and completes auth.
-    """
+def make_browser_driver() -> str:
     bin_dir = Path("/tmp/fake-browser")
     bin_dir.mkdir(exist_ok=True)
     script = bin_dir / "drive-auth.sh"
     script.write_text(f"""#!/usr/bin/env bash
-set -e
+set -x
 URL="$1"
-echo "[auth driver] URL: $URL" >&2
-agent-browser open "$URL"
-agent-browser wait --load networkidle
-agent-browser find role textbox fill --name Username {USERNAME!r}
-agent-browser find role button click --name Next
-agent-browser wait --load networkidle
-agent-browser find role textbox fill --name Password {PASSWORD!r}
-agent-browser find role button click --name 'Sign in'
-agent-browser wait --load networkidle
-# Optional consent screen for the same-device devtools client
-agent-browser find role button click --name Allow 2>/dev/null || true
-agent-browser wait --load networkidle 2>/dev/null || true
-echo "[auth driver] done" >&2
+LOG=/tmp/drive-auth.log
+echo "=== drive-auth invoked: $URL ===" >> $LOG 2>&1
+{{
+  agent-browser open "$URL"
+  agent-browser wait --load networkidle
+  agent-browser find role textbox fill --name Username {USERNAME!r}
+  agent-browser find role button click --name Next
+  agent-browser wait --load networkidle
+  agent-browser find role textbox fill --name Password {PASSWORD!r}
+  agent-browser find role button click --name 'Sign in'
+  agent-browser wait --load networkidle
+  agent-browser find role button click --name Allow 2>/dev/null || true
+  agent-browser wait --load networkidle 2>/dev/null || true
+  echo "=== sign-in complete ===" >&2
+}} >> $LOG 2>&1 &
+exit 0
 """)
     script.chmod(0o755)
-    # Shadow xdg-open + kde-open so DCM invokes our driver
     for name in ("xdg-open", "kde-open", "kde-open5"):
         link = bin_dir / name
         if link.exists():
             link.unlink()
         link.symlink_to(script)
-    return str(bin_dir), str(script)
+    return str(bin_dir)
 
 
 def assert_authenticated():
@@ -76,30 +73,41 @@ def assert_not_authenticated():
         raise SystemExit(f"Expected NOT authenticated, got: {r.stdout}")
 
 
+def dump_driver_log():
+    log = Path("/tmp/drive-auth.log")
+    if log.exists():
+        print("=== driver log ===", flush=True)
+        print(log.read_text(), flush=True)
+
+
 def main():
-    bin_dir, driver = make_browser_driver()
+    bin_dir = make_browser_driver()
     env = {
         **os.environ,
-        "BROWSER": driver,
+        "BROWSER": f"{bin_dir}/drive-auth.sh",
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
     }
 
-    # 1. First-time login
-    run(["deadline", "auth", "login"], env=env)
-    assert_authenticated()
+    # Sanity check: DCM must be runnable, and our xdg-open must take priority
+    run(["which", "deadline-cloud-monitor"])
+    run(["which", "xdg-open"], env=env)
+    run(["deadline", "config", "show"])
+    print(f"AWS config:\n{Path.home().joinpath('.aws/config').read_text() if Path.home().joinpath('.aws/config').exists() else '(none)'}", flush=True)
 
-    # 2. Logout
-    run(["deadline", "auth", "logout"], env=env)
-    assert_not_authenticated()
+    try:
+        run(["deadline", "auth", "login"], env=env, timeout=180)
+        assert_authenticated()
 
-    # 3. Login again
-    run(["deadline", "auth", "login"], env=env)
-    assert_authenticated()
+        run(["deadline", "auth", "logout"], env=env, timeout=60)
+        assert_not_authenticated()
 
-    # 4. Farm list
-    run(["deadline", "farm", "list"], env=env)
+        run(["deadline", "auth", "login"], env=env, timeout=180)
+        assert_authenticated()
 
-    print("\nAll checks passed.")
+        run(["deadline", "farm", "list"], env=env, timeout=30)
+        print("\nAll checks passed.")
+    finally:
+        dump_driver_log()
 
 
 if __name__ == "__main__":
