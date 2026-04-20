@@ -48,8 +48,10 @@ jobs:
       - name: Download and install DCM (AppImage)
         run: |
           APPIMAGE=$(curl -s https://downloads.deadlinecloud.amazonaws.com/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['latest']['linux_appimage'])")
-          curl -sL "$APPIMAGE" -o /usr/local/bin/deadline-cloud-monitor
-          chmod +x /usr/local/bin/deadline-cloud-monitor
+          curl -sL "$APPIMAGE" -o /tmp/dcm.AppImage
+          chmod +x /tmp/dcm.AppImage
+          (cd /tmp && ./dcm.AppImage --appimage-extract >/dev/null)
+          sudo ln -sf /tmp/squashfs-root/AppRun /usr/local/bin/deadline-cloud-monitor
 
       - name: Create DCM profile
         run: |
