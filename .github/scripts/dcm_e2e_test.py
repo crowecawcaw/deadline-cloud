@@ -4,59 +4,47 @@ import subprocess
 import time
 import xa11y
 
-MONITOR_URL = os.environ["MONITOR_URL"].rstrip("/")
-USERNAME = os.environ["MONITOR_USERNAME"]
-PASSWORD = os.environ["MONITOR_PASSWORD"]
 
-
-def dump_tree():
+def list_apps():
     for app in xa11y.App.list():
         print(f"APP: {app.name}")
-        try:
-            print(app.describe())
-        except Exception as e:
-            print(f"  describe failed: {e}")
 
 
 def find_dcm():
     for app in xa11y.App.list():
-        if "deadline" in (app.name or "").lower():
+        n = (app.name or "").lower()
+        if "deadline" in n or "dcm" in n:
             return app
     return None
 
 
-def wait_for(locator_fn, timeout=30):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            el = locator_fn()
-            if el:
-                return el
-        except Exception:
-            pass
-        time.sleep(0.5)
-    raise TimeoutError("element not found")
-
-
 def main():
-    # Launch deadline auth login in background, which starts DCM
-    subprocess.Popen(["deadline", "auth", "login"])
-    time.sleep(8)
-
-    print("=== accessibility tree ===")
-    dump_tree()
-
-    dcm = find_dcm()
+    # Launch DCM with the profile (same invocation deadline-cli uses)
+    dcm_proc = subprocess.Popen(
+        ["deadline-cloud-monitor", "login", "--profile", "dcm-test"]
+    )
+    # Wait for DCM window to appear in AT-SPI
+    dcm = None
+    for i in range(40):
+        time.sleep(1)
+        dcm = find_dcm()
+        if dcm:
+            print(f"Found DCM after {i+1}s: {dcm.name}", flush=True)
+            break
     if not dcm:
+        print("=== accessibility tree ===")
+        list_apps()
         raise SystemExit("DCM not visible to xa11y")
 
-    # Click Launch Portal in DCM's GUI
-    btn = wait_for(lambda: dcm.locator("button[name*='Launch']").first)
-    btn.press()
-
-    # Now a browser opens via xdg-open (we'll need a browser shim too)
-    time.sleep(10)
-    dump_tree()
+    # Print full DCM subtree
+    print("=== DCM subtree ===")
+    for el in dcm.locator("*").all():
+        try:
+            role = getattr(el, "role", "?")
+            name = getattr(el, "name", "")
+            print(f"  {role} name={name!r}")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
