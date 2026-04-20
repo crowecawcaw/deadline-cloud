@@ -15,6 +15,12 @@ jobs:
       MONITOR_PASSWORD: ${{ secrets.MONITOR_PASSWORD }}
       MONITOR_ID: monitor-00000000000000000000000000000000
       DISPLAY: ':99'
+      GTK_MODULES: gail:atk-bridge
+      GTK_A11Y: atk
+      NO_AT_BRIDGE: '0'
+      WEBKIT_FORCE_ACCESSIBILITY: '1'
+      WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+      GNOME_ACCESSIBILITY: '1'
     steps:
       - uses: actions/checkout@v6
 
@@ -29,16 +35,25 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 libnss3 libgtk-3-0 libatk-bridge2.0-0 \
+          sudo apt-get install -y xvfb dbus-x11 at-spi2-core gsettings-desktop-schemas \
+            libnss3 libgtk-3-0 libatk-bridge2.0-0 \
             libxss1 libasound2t64 libgbm1 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3
 
-      - name: Start Xvfb
+      - name: Start Xvfb + session bus + AT-SPI bus
         run: |
           Xvfb :99 -screen 0 1920x1080x24 &
           sleep 1
+          eval "$(dbus-launch --sh-syntax)"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
+          # AT-SPI registry registers itself on the session bus on demand,
+          # but we pre-launch to ensure org.a11y.Bus is reachable.
+          /usr/libexec/at-spi-bus-launcher --launch-immediately &
+          sleep 2
+          # Enable GTK a11y globally
+          gsettings set org.gnome.desktop.interface toolkit-accessibility true || true
 
-      - name: Install deadline CLI from source
-        run: pip install .
+      - name: Install deadline CLI and xa11y
+        run: pip install . xa11y
 
       - name: Install agent-browser
         run: |
