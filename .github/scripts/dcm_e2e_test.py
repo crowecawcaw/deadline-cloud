@@ -21,10 +21,10 @@ def dump(el, depth=0, max_depth=10):
     print(f"{pad}{role} name={name!r}")
     if depth < max_depth:
         try:
-            for c in el.children:
+            for c in el.children():
                 dump(c, depth+1, max_depth)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"{pad}  <children error: {e}>")
 
 
 def main():
@@ -43,7 +43,7 @@ def main():
     for i, delay in enumerate([0, 5, 10, 20]):
         time.sleep(delay)
         print(f"\n=== tree at t+{sum([0,5,15,35][:i+1])}s ===")
-        for c in dcm.children:
+        for c in dcm.children():
             dump(c)
 
 
