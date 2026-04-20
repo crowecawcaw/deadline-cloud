@@ -11,7 +11,6 @@ jobs:
     timeout-minutes: 20
     env:
       MONITOR_URL: ${{ secrets.MONITOR_URL }}
-      MONITOR_ID: ${{ secrets.MONITOR_ID }}
       MONITOR_USERNAME: ${{ secrets.MONITOR_USERNAME }}
       MONITOR_PASSWORD: ${{ secrets.MONITOR_PASSWORD }}
       DISPLAY: ':99'
@@ -29,15 +28,19 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 libgbm1 libfuse2t64 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3 xdg-utils
+          sudo apt-get install -y xvfb dbus-x11 at-spi2-core libnss3 libgtk-3-0 \
+            libatk-bridge2.0-0 libxss1 libasound2t64 libgbm1 libegl1 libgl1 \
+            libwebkit2gtk-4.1-0 libxdo3 libfuse2t64
 
-      - name: Start Xvfb
+      - name: Start Xvfb + a11y bus
         run: |
           Xvfb :99 -screen 0 1920x1080x24 &
           sleep 1
+          /usr/libexec/at-spi-bus-launcher --launch-immediately &
+          sleep 2
 
-      - name: Install deadline CLI from source
-        run: pip install .
+      - name: Install deadline CLI and xa11y
+        run: pip install . xa11y
 
       - name: Install agent-browser
         run: |
@@ -49,14 +52,6 @@ jobs:
           APPIMAGE=$(curl -s https://downloads.deadlinecloud.amazonaws.com/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['latest']['linux_appimage'])")
           curl -sL "$APPIMAGE" -o /usr/local/bin/deadline-cloud-monitor
           chmod +x /usr/local/bin/deadline-cloud-monitor
-
-      - name: Create DCM profile
-        run: |
-          deadline-cloud-monitor create-profile \
-            --profile dcm-test \
-            --monitor-id "$MONITOR_ID" \
-            --monitor-url "$MONITOR_URL" \
-            --set-as-deadline-default
 
       - name: Run E2E test
         run: python .github/scripts/dcm_e2e_test.py
