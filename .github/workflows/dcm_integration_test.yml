@@ -54,6 +54,10 @@ jobs:
           curl -sL "$BASE$REL" -o /tmp/dcm.run
           chmod +x /tmp/dcm.run
           /tmp/dcm.run --mode unattended --prefix "$HOME/DeadlineCloudSubmitter"
+          echo "--- Install tree ---"
+          find "$HOME/DeadlineCloudSubmitter" -maxdepth 4 -type f \( -name "*onitor*" -o -name "deadline-*" \) 2>/dev/null | head -40
+          echo "--- /opt ---"
+          ls -la /opt 2>/dev/null || true
           echo "$HOME/DeadlineCloudSubmitter/bin" >> $GITHUB_PATH
 
       - name: Run E2E test
