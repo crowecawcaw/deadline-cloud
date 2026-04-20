@@ -63,35 +63,14 @@ jobs:
             --profile dcm-test \
             --monitor-id "$MONITOR_ID" \
             --monitor-url "$MONITOR_URL" \
+            --enable-auto-login \
             --set-as-deadline-default
 
       - name: Run E2E test
-        run: |
-          # First: manually invoke DCM and capture everything
-          echo "=== direct DCM login (with BROWSER shim) ==="
-          mkdir -p /tmp/fake-browser
-          cat > /tmp/fake-browser/xdg-open <<'SH'
-          #!/usr/bin/env bash
-          echo "[xdg-open] URL=$1" >> /tmp/drive-auth.log
-          (agent-browser open "$1" && agent-browser wait --load networkidle) >> /tmp/drive-auth.log 2>&1 &
-          SH
-          chmod +x /tmp/fake-browser/xdg-open
-          PATH="/tmp/fake-browser:$PATH" BROWSER=/tmp/fake-browser/xdg-open \
-            timeout 30 deadline-cloud-monitor login --profile dcm-test 2>&1 | tee /tmp/dcm-direct.log || true
-          echo "=== direct DCM exit code: $? ==="
-          echo "=== xdg-open was it invoked? ==="
-          cat /tmp/drive-auth.log 2>/dev/null || echo "(no driver log)"
-          python .github/scripts/dcm_e2e_test.py
+        run: python .github/scripts/dcm_e2e_test.py
 
-      - name: Dump logs on failure
+      - name: Dump logs
         if: always()
         run: |
           echo "=== driver log ==="
           cat /tmp/drive-auth.log 2>/dev/null || echo "(none)"
-          echo "=== DCM logs ==="
-          find $HOME/.config/com.amazonaws.deadline.monitor \
-               $HOME/.local/share/com.amazonaws.deadline.monitor \
-               $HOME/.cache/com.amazonaws.deadline.monitor \
-               -name "*.log" 2>/dev/null | xargs -r tail -n 200
-          echo "=== aws config ==="
-          cat ~/.aws/config 2>/dev/null || true
