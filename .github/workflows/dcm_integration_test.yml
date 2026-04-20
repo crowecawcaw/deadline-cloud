@@ -53,12 +53,12 @@ jobs:
           REL=$(curl -s $BASE/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['DeadlineCloudSubmitter']['versions']['latest']['linux']['installer'])")
           curl -sL "$BASE$REL" -o /tmp/dcm.run
           chmod +x /tmp/dcm.run
-          /tmp/dcm.run --mode unattended --prefix "$HOME/DeadlineCloudSubmitter"
+          /tmp/dcm.run --help 2>&1 | head -50 || true
+          /tmp/dcm.run --mode unattended --prefix "$HOME/DCMInstall" 2>&1 | tail -40
           echo "--- Install tree ---"
-          find "$HOME/DeadlineCloudSubmitter" -maxdepth 4 -type f \( -name "*onitor*" -o -name "deadline-*" \) 2>/dev/null | head -40
-          echo "--- /opt ---"
-          ls -la /opt 2>/dev/null || true
-          echo "$HOME/DeadlineCloudSubmitter/bin" >> $GITHUB_PATH
+          ls -la "$HOME/DCMInstall" 2>/dev/null || echo "(no prefix dir)"
+          find "$HOME" -maxdepth 6 -iname "*monitor*" 2>/dev/null | head -20
+          find / -maxdepth 6 \( -iname "deadline-cloud-monitor*" -o -iname "DeadlineCloudMonitor*" \) 2>/dev/null | head -20
 
       - name: Run E2E test
         run: python .github/scripts/dcm_e2e_test.py
