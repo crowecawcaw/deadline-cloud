@@ -50,7 +50,7 @@ jobs:
       - name: Download and install DCM (unattended)
         run: |
           BASE=https://downloads.deadlinecloud.amazonaws.com/submitters
-          REL=$(curl -s $BASE/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['DeadlineCloudSubmitter']['latest']['linux']['installer'])")
+          REL=$(curl -s $BASE/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['DeadlineCloudSubmitter']['versions']['latest']['linux']['installer'])")
           curl -sL "$BASE$REL" -o /tmp/dcm.run
           chmod +x /tmp/dcm.run
           /tmp/dcm.run --mode unattended --prefix "$HOME/DeadlineCloudSubmitter"
