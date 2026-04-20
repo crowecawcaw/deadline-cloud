@@ -29,7 +29,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 libgbm1 libfuse2t64
+          sudo apt-get install -y xvfb dbus-x11 libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 libgbm1 libfuse2t64 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3 xdg-utils
 
       - name: Start Xvfb
         run: |
