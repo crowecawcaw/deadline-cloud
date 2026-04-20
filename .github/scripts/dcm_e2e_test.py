@@ -1,50 +1,50 @@
-"""Drive the DCM GUI via xa11y to sign in end-to-end."""
-import os
+"""Probe DCM a11y tree on Linux CI, find the Launch Portal button."""
 import subprocess
 import time
 import xa11y
 
 
-def list_apps():
-    for app in xa11y.App.list():
-        print(f"APP: {app.name}")
-
-
 def find_dcm():
     for app in xa11y.App.list():
-        n = (app.name or "").lower()
-        if "deadline" in n or "dcm" in n:
+        if "deadline" in (app.name or "").lower():
             return app
     return None
 
 
+def dump(el, depth=0, max_depth=10):
+    try:
+        name = el.name
+        role = el.role
+    except Exception:
+        return
+    pad = "  " * depth
+    print(f"{pad}{role} name={name!r}")
+    if depth < max_depth:
+        try:
+            for c in el.children:
+                dump(c, depth+1, max_depth)
+        except Exception:
+            pass
+
+
 def main():
-    # Launch DCM with the profile (same invocation deadline-cli uses)
-    dcm_proc = subprocess.Popen(
-        ["deadline-cloud-monitor", "login", "--profile", "dcm-test"]
-    )
-    # Wait for DCM window to appear in AT-SPI
+    subprocess.Popen(["deadline-cloud-monitor", "login", "--profile", "dcm-test"])
     dcm = None
     for i in range(40):
         time.sleep(1)
         dcm = find_dcm()
         if dcm:
-            print(f"Found DCM after {i+1}s: {dcm.name}", flush=True)
+            print(f"Found DCM after {i+1}s")
             break
     if not dcm:
-        print("=== accessibility tree ===")
-        list_apps()
-        raise SystemExit("DCM not visible to xa11y")
+        raise SystemExit("DCM not visible")
 
-    # Print full DCM subtree
-    print("=== DCM subtree ===")
-    for el in dcm.locator("*").all():
-        try:
-            role = getattr(el, "role", "?")
-            name = getattr(el, "name", "")
-            print(f"  {role} name={name!r}")
-        except Exception:
-            pass
+    # Dump tree several times as webview content loads
+    for i, delay in enumerate([0, 5, 10, 20]):
+        time.sleep(delay)
+        print(f"\n=== tree at t+{sum([0,5,15,35][:i+1])}s ===")
+        for c in dcm.children:
+            dump(c)
 
 
 if __name__ == "__main__":
