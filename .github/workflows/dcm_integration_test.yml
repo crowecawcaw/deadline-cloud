@@ -51,7 +51,11 @@ jobs:
           curl -sL "$APPIMAGE" -o /tmp/dcm.AppImage
           chmod +x /tmp/dcm.AppImage
           (cd /tmp && ./dcm.AppImage --appimage-extract >/dev/null)
-          sudo ln -sf /tmp/squashfs-root/AppRun /usr/local/bin/deadline-cloud-monitor
+          sudo tee /usr/local/bin/deadline-cloud-monitor >/dev/null <<'SH'
+          #!/usr/bin/env bash
+          cd /tmp/squashfs-root && exec ./AppRun "$@"
+          SH
+          sudo chmod +x /usr/local/bin/deadline-cloud-monitor
 
       - name: Create DCM profile
         run: |
