@@ -76,18 +76,39 @@ def create_profile_via_gui():
     print("Waiting for DCM window...", flush=True)
     dcm = None
     for _ in range(30):
-        try:
-            dcm = xa11y.App.by_name("deadline-cloud-monitor")
-            break
-        except Exception:
+        for name in ("deadline-cloud-monitor", "Deadline Cloud Monitor"):
             try:
-                dcm = xa11y.App.by_name("Deadline Cloud Monitor")
+                dcm = xa11y.App.by_name(name)
                 break
             except Exception:
-                time.sleep(1)
+                pass
+        if dcm:
+            break
+        time.sleep(1)
     if dcm is None:
         raise SystemExit("DCM window never appeared")
+    print(f"Found DCM app. Listing all apps:", flush=True)
+    for a in xa11y.App.list():
+        print(f"  - {a.name}", flush=True)
     dcm.locator("window").wait_visible(timeout=30)
+
+    # Dump initial tree for diagnosis
+    def dump(node, depth=0, maxd=10):
+        try:
+            role = getattr(node, 'role', 'App')
+            nm = (getattr(node, 'name', '') or '')[:80]
+            val = (getattr(node, 'value', '') or '')[:60]
+            print("  " * depth + f"{role}: name={nm!r} value={val!r}", flush=True)
+        except Exception:
+            return
+        if depth < maxd:
+            try:
+                for c in node.children():
+                    dump(c, depth + 1, maxd)
+            except Exception:
+                pass
+    print("=== DCM tree ===", flush=True)
+    dump(dcm)
 
     dcm.locator("button[name='Create new Profile']").wait_visible(timeout=30)
     dcm.locator("button[name='Create new Profile']").press()
