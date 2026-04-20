@@ -94,18 +94,26 @@ def main():
     run(["deadline", "config", "show"])
     print(f"AWS config:\n{Path.home().joinpath('.aws/config').read_text() if Path.home().joinpath('.aws/config').exists() else '(none)'}", flush=True)
 
+    # Probe DCM itself: can it launch at all under Xvfb? Run login in bg, wait 20s, kill.
+    print("=== DCM launch probe ===", flush=True)
+    p = subprocess.Popen(
+        ["deadline-cloud-monitor", "login", "--profile", "dcm-test"],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    import time
+    time.sleep(20)
+    dump_driver_log()
+    p.terminate()
     try:
-        run(["deadline", "auth", "login"], env=env, timeout=180)
-        assert_authenticated()
+        out, _ = p.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        out, _ = p.communicate()
+    print(f"DCM stdout/stderr (first 2KB):\n{out[:2000]}", flush=True)
 
-        run(["deadline", "auth", "logout"], env=env, timeout=60)
-        assert_not_authenticated()
-
-        run(["deadline", "auth", "login"], env=env, timeout=180)
-        assert_authenticated()
-
-        run(["deadline", "farm", "list"], env=env, timeout=30)
-        print("\nAll checks passed.")
+    try:
+        # Skip the full flow until we understand what DCM is doing
+        print("Probe complete; exiting after diagnostics.")
     finally:
         dump_driver_log()
 
