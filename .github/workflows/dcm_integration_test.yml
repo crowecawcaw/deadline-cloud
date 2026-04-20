@@ -13,6 +13,7 @@ jobs:
       MONITOR_URL: ${{ secrets.MONITOR_URL }}
       MONITOR_USERNAME: ${{ secrets.MONITOR_USERNAME }}
       MONITOR_PASSWORD: ${{ secrets.MONITOR_PASSWORD }}
+      MONITOR_ID: monitor-00000000000000000000000000000000
       DISPLAY: ':99'
     steps:
       - uses: actions/checkout@v6
@@ -28,26 +29,16 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 at-spi2-core libnss3 libgtk-3-0 \
-            libatk-bridge2.0-0 libxss1 libasound2t64 libgbm1 libegl1 libgl1 \
-            libwebkit2gtk-4.1-0 libxdo3 libfuse2t64
+          sudo apt-get install -y xvfb dbus-x11 libnss3 libgtk-3-0 libatk-bridge2.0-0 \
+            libxss1 libasound2t64 libgbm1 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3
 
-      - name: Start Xvfb + a11y bus
+      - name: Start Xvfb
         run: |
           Xvfb :99 -screen 0 1920x1080x24 &
           sleep 1
-          # Start a session dbus and export its address for all subsequent steps
-          eval "$(dbus-launch --sh-syntax)"
-          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
-          echo "DBUS_SESSION_BUS_PID=$DBUS_SESSION_BUS_PID" >> $GITHUB_ENV
-          # Launch a11y bus tied to this session bus
-          /usr/libexec/at-spi-bus-launcher --launch-immediately &
-          sleep 2
-          # Verify a11y bus is reachable
-          busctl --user list 2>&1 | grep -i a11y || true
 
-      - name: Install deadline CLI and xa11y
-        run: pip install . xa11y
+      - name: Install deadline CLI from source
+        run: pip install .
 
       - name: Install agent-browser
         run: |
@@ -59,6 +50,14 @@ jobs:
           APPIMAGE=$(curl -s https://downloads.deadlinecloud.amazonaws.com/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['latest']['linux_appimage'])")
           curl -sL "$APPIMAGE" -o /usr/local/bin/deadline-cloud-monitor
           chmod +x /usr/local/bin/deadline-cloud-monitor
+
+      - name: Create DCM profile
+        run: |
+          deadline-cloud-monitor create-profile \
+            --profile dcm-test \
+            --monitor-id "$MONITOR_ID" \
+            --monitor-url "$MONITOR_URL" \
+            --set-as-deadline-default
 
       - name: Run E2E test
         run: python .github/scripts/dcm_e2e_test.py
