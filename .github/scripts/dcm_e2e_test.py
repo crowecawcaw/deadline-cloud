@@ -1,149 +1,103 @@
 """End-to-end test: DCM first-time sign-in, then deadline auth login/logout/login + farm list.
 
-Drives the DCM Electron UI via xa11y (AT-SPI2) to add a monitor profile and complete
-IAM Identity Center sign-in using MONITOR_URL/MONITOR_USERNAME/MONITOR_PASSWORD.
+DCM opens the system browser via $BROWSER or xdg-open with the IAM Identity Center auth URL,
+then waits for the OAuth callback on a local port. We set BROWSER to a helper script that
+drives the sign-in via agent-browser, which follows the redirect back to the callback and
+completes DCM's auth.
 """
-import configparser
 import os
-import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
-import xa11y
-
-MONITOR_URL = os.environ["MONITOR_URL"]
 USERNAME = os.environ["MONITOR_USERNAME"]
 PASSWORD = os.environ["MONITOR_PASSWORD"]
-TIMEOUT = 60.0
 
 
-def run(cmd, check=True):
+def run(cmd, check=True, env=None):
     print(f"$ {' '.join(cmd)}", flush=True)
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    print(r.stdout)
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if r.stdout:
+        print(r.stdout)
     if r.stderr:
         print(r.stderr, file=sys.stderr)
     if check and r.returncode != 0:
-        raise SystemExit(f"Command failed: {cmd}")
+        raise SystemExit(f"Command failed ({r.returncode})")
     return r
 
 
-def launch_dcm():
-    """Launch DCM with Chromium accessibility enabled."""
-    binary = shutil.which("deadline-cloud-monitor") or shutil.which("DeadlineCloudMonitor")
-    if not binary:
-        # Fallback to the install prefix
-        for p in [Path.home() / "DeadlineCloudSubmitter/bin/deadline-cloud-monitor",
-                  Path.home() / "DeadlineCloudSubmitter/bin/DeadlineCloudMonitor"]:
-            if p.exists():
-                binary = str(p)
-                break
-    if not binary:
-        raise SystemExit("DCM binary not found on PATH or install prefix")
-    print(f"Launching DCM: {binary}", flush=True)
-    return subprocess.Popen([binary, "--force-renderer-accessibility", "--no-sandbox"])
+def make_browser_driver() -> tuple[str, str]:
+    """Create a shell script that acts as the system browser.
+
+    Returns (bin_dir, path_to_script). We shadow `xdg-open`, `kde-open`, and `BROWSER`
+    so DCM's auth URL is handed to this script, which drives agent-browser to complete
+    IAM Identity Center sign-in. The 302 redirect agent-browser follows hits DCM's
+    http://127.0.0.1:PORT/oauth/callback and completes auth.
+    """
+    bin_dir = Path("/tmp/fake-browser")
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "drive-auth.sh"
+    script.write_text(f"""#!/usr/bin/env bash
+set -e
+URL="$1"
+echo "[auth driver] URL: $URL" >&2
+agent-browser open "$URL"
+agent-browser wait --load networkidle
+agent-browser find role textbox fill --name Username {USERNAME!r}
+agent-browser find role button click --name Next
+agent-browser wait --load networkidle
+agent-browser find role textbox fill --name Password {PASSWORD!r}
+agent-browser find role button click --name 'Sign in'
+agent-browser wait --load networkidle
+# Optional consent screen for the same-device devtools client
+agent-browser find role button click --name Allow 2>/dev/null || true
+agent-browser wait --load networkidle 2>/dev/null || true
+echo "[auth driver] done" >&2
+""")
+    script.chmod(0o755)
+    # Shadow xdg-open + kde-open so DCM invokes our driver
+    for name in ("xdg-open", "kde-open", "kde-open5"):
+        link = bin_dir / name
+        if link.exists():
+            link.unlink()
+        link.symlink_to(script)
+    return str(bin_dir), str(script)
 
 
-def dump_tree(app, label):
-    print(f"\n--- a11y tree: {label} ---", flush=True)
-    try:
-        subprocess.run(["xa11y", "tree", "--app", app.name], check=False, timeout=10)
-    except Exception as e:
-        print(f"(tree dump failed: {e})")
+def assert_authenticated():
+    r = run(["deadline", "auth", "status", "--output", "json"])
+    if '"AUTHENTICATED"' not in r.stdout:
+        raise SystemExit(f"Expected AUTHENTICATED, got: {r.stdout}")
 
 
-def sign_in_to_dcm(app):
-    """First-time sign-in: enter monitor URL, then IAM Identity Center credentials."""
-    # Monitor URL entry — find the first text field and type the URL
-    url_field = app.locator("text_field").nth(0) if hasattr(app.locator("text_field"), "nth") else app.locator("text_field:nth(1)")
-    url_field.wait_visible(timeout=TIMEOUT)
-    url_field.type_text(MONITOR_URL)
-
-    # Click the primary button (Sign in / Continue / Add)
-    for name in ["Sign in", "Continue", "Add", "Next", "OK"]:
-        btn = app.locator(f"button[name='{name}']")
-        if btn.count() > 0:
-            btn.press()
-            break
-
-    # IAM Identity Center sign-in — DCM opens an internal BrowserView or the system browser.
-    # Try DCM first, then fall back to any browser window exposed via a11y.
-    deadline = time.time() + TIMEOUT * 3
-    while time.time() < deadline:
-        for candidate in [app] + [a for a in xa11y.App.list() if "chrom" in a.name.lower() or "firefox" in a.name.lower()]:
-            user = candidate.locator("text_field[name*='sername']")
-            if user.count() == 0:
-                user = candidate.locator("text_field[name*='mail']")
-            if user.count() > 0:
-                user.type_text(USERNAME)
-                candidate.locator("button[name*='ext']").press()  # "Next"
-                pwd = candidate.locator("text_field[name*='assword']")
-                pwd.wait_visible(timeout=TIMEOUT)
-                pwd.type_text(PASSWORD)
-                candidate.locator("button[name*='ign in']").press()
-                # Handle "Allow access" / consent screen
-                allow = candidate.locator("button[name*='llow']")
-                try:
-                    allow.wait_visible(timeout=30)
-                    allow.press()
-                except Exception:
-                    pass
-                return
-        time.sleep(1)
-    dump_tree(app, "timeout waiting for sign-in form")
-    raise SystemExit("Could not locate IAM Identity Center sign-in form")
-
-
-def wait_for_dcm_profile():
-    """Wait until DCM writes a profile into ~/.aws/config with monitor_id."""
-    aws_config = Path.home() / ".aws/config"
-    deadline = time.time() + TIMEOUT * 2
-    while time.time() < deadline:
-        if aws_config.exists():
-            cp = configparser.ConfigParser()
-            cp.read(aws_config)
-            for section in cp.sections():
-                if "monitor_id" in cp[section]:
-                    profile = section.replace("profile ", "")
-                    print(f"DCM created profile: {profile}")
-                    return profile
-        time.sleep(1)
-    raise SystemExit("DCM did not create an AWS profile with monitor_id")
-
-
-def configure_deadline_cli(profile):
-    run(["deadline", "config", "set", "defaults.aws_profile_name", profile])
+def assert_not_authenticated():
+    r = run(["deadline", "auth", "status", "--output", "json"])
+    if '"AUTHENTICATED"' in r.stdout:
+        raise SystemExit(f"Expected NOT authenticated, got: {r.stdout}")
 
 
 def main():
-    dcm_proc = launch_dcm()
-    try:
-        app = xa11y.App.by_name("Deadline Cloud Monitor")
-        app.locator("window").wait_visible(timeout=TIMEOUT)
-        sign_in_to_dcm(app)
-        profile = wait_for_dcm_profile()
-    finally:
-        dcm_proc.terminate()
-        try:
-            dcm_proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            dcm_proc.kill()
+    bin_dir, driver = make_browser_driver()
+    env = {
+        **os.environ,
+        "BROWSER": driver,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+    }
 
-    configure_deadline_cli(profile)
+    # 1. First-time login
+    run(["deadline", "auth", "login"], env=env)
+    assert_authenticated()
 
-    # End-to-end CLI flow
-    run(["deadline", "auth", "login"])
-    status = run(["deadline", "auth", "status", "--output", "json"]).stdout
-    assert '"AUTHENTICATED"' in status, f"Expected AUTHENTICATED, got: {status}"
+    # 2. Logout
+    run(["deadline", "auth", "logout"], env=env)
+    assert_not_authenticated()
 
-    run(["deadline", "auth", "logout"])
-    status = run(["deadline", "auth", "status", "--output", "json"]).stdout
-    assert '"AUTHENTICATED"' not in status, f"Expected logged out, got: {status}"
+    # 3. Login again
+    run(["deadline", "auth", "login"], env=env)
+    assert_authenticated()
 
-    run(["deadline", "auth", "login"])
-    run(["deadline", "farm", "list"])
+    # 4. Farm list
+    run(["deadline", "farm", "list"], env=env)
 
     print("\nAll checks passed.")
 
