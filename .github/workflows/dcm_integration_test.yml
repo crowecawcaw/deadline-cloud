@@ -66,12 +66,17 @@ jobs:
             --set-as-deadline-default
 
       - name: Run E2E test
+        run: python .github/scripts/dcm_e2e_test.py
+
+      - name: Dump logs on failure
+        if: always()
         run: |
-          # DCM pre-flight: run the subcommand directly to see any errors
-          (deadline-cloud-monitor login --profile dcm-test || true) &
-          DCM_PID=$!
-          sleep 15
-          kill $DCM_PID 2>/dev/null || true
-          echo "--- DCM log ---"
-          find $HOME/.config/com.amazonaws.deadline.monitor $HOME/.local/share/com.amazonaws.deadline.monitor $HOME/.cache/com.amazonaws.deadline.monitor -name "*.log" 2>/dev/null | xargs -r tail -n 100 || true
-          python .github/scripts/dcm_e2e_test.py
+          echo "=== driver log ==="
+          cat /tmp/drive-auth.log 2>/dev/null || echo "(none)"
+          echo "=== DCM logs ==="
+          find $HOME/.config/com.amazonaws.deadline.monitor \
+               $HOME/.local/share/com.amazonaws.deadline.monitor \
+               $HOME/.cache/com.amazonaws.deadline.monitor \
+               -name "*.log" 2>/dev/null | xargs -r tail -n 200
+          echo "=== aws config ==="
+          cat ~/.aws/config 2>/dev/null || true
