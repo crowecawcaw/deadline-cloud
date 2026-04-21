@@ -107,29 +107,21 @@ def main():
         el = wait_for(lambda: find_in_tree(firefox, role="entry", name_contains="Username"),
                       timeout=90)
     except TimeoutError:
-        print("=== firefox DCM tab tree (wider dump) ===", flush=True)
-        # Find first web_area (the monitor page), dump it deep
-        def all_web_areas(root, acc=None):
-            if acc is None: acc = []
+        print("=== dump nodes on DCM tab ===", flush=True)
+        # Find the first web_area whose parent/tab is 'AWS Deadline Cloud'
+        stack = list(firefox.children())
+        while stack:
+            el = stack.pop()
             try:
-                if root.role == "web_area":
-                    acc.append(root)
+                if el.role == "web_area":
+                    print(f"\n--- web_area name={el.name!r} ---")
+                    dump(el, maxd=25)
             except Exception:
-                return acc
+                continue
             try:
-                for c in root.children():
-                    all_web_areas(c, acc)
+                stack.extend(el.children())
             except Exception:
                 pass
-            return acc
-        wa = all_web_areas(firefox)
-        for w in wa:
-            try:
-                nm = w.name or ''
-            except Exception:
-                nm = '?'
-            print(f"\n=== web_area {nm!r} ===")
-            dump(w, maxd=20)
         raise
 
     el.set_value(USERNAME)
