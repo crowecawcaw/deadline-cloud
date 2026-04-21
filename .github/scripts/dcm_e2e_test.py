@@ -107,9 +107,29 @@ def main():
         el = wait_for(lambda: find_in_tree(firefox, role="entry", name_contains="Username"),
                       timeout=90)
     except TimeoutError:
-        print("=== firefox tree ===", flush=True)
-        for c in firefox.children():
-            dump(c)
+        print("=== firefox DCM tab tree (wider dump) ===", flush=True)
+        # Find first web_area (the monitor page), dump it deep
+        def all_web_areas(root, acc=None):
+            if acc is None: acc = []
+            try:
+                if root.role == "web_area":
+                    acc.append(root)
+            except Exception:
+                return acc
+            try:
+                for c in root.children():
+                    all_web_areas(c, acc)
+            except Exception:
+                pass
+            return acc
+        wa = all_web_areas(firefox)
+        for w in wa:
+            try:
+                nm = w.name or ''
+            except Exception:
+                nm = '?'
+            print(f"\n=== web_area {nm!r} ===")
+            dump(w, maxd=20)
         raise
 
     el.set_value(USERNAME)
