@@ -31,7 +31,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb dbus-x11 at-spi2-core xdotool \
-            python3-pyatspi gir1.2-atspi-2.0 \
             libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 \
             libgbm1 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3 \
             libdbus-glib-1-2 desktop-file-utils
@@ -41,7 +40,6 @@ jobs:
           curl -sL 'https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US' -o /tmp/ff.tar.xz
           sudo tar -xJf /tmp/ff.tar.xz -C /opt
           sudo ln -sf /opt/firefox/firefox /usr/local/bin/firefox
-          # Register Firefox as HTTP/HTTPS handler so DCM's xdg-open uses it
           mkdir -p ~/.local/share/applications
           cat > ~/.local/share/applications/firefox.desktop <<'EOF'
           [Desktop Entry]
@@ -63,22 +61,15 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
           /usr/libexec/at-spi-bus-launcher --launch-immediately &
           sleep 2
-          # Connect to the a11y bus and register an event listener via RegisterEvent.
-          # That call triggers WebKit's AccessibilityAtspi::addEventListener → addClient
-          # → AXObjectCache::enableAccessibility, so DCM's webview exposes its tree.
-          A11Y_BUS=$(dbus-send --dest=org.a11y.Bus --print-reply \
-            /org/a11y/bus org.a11y.Bus.GetAddress \
-            | sed -n 's/.*string "\(.*\)"$/\1/p')
-          echo "a11y bus: $A11Y_BUS"
-          dbus-send --bus="$A11Y_BUS" --print-reply \
-            --dest=org.a11y.atspi.Registry /org/a11y/atspi/registry \
-            org.a11y.atspi.Registry.RegisterEvent string:"object:state-changed:focused" || true
-          # Keep a process subscribed so WebKit keeps a11y on.
-          dbus-monitor --address="$A11Y_BUS" "type='signal'" &
-          sleep 2
 
-      - name: Install deadline CLI and xa11y
-        run: pip install . xa11y
+      - name: Install deadline CLI, xa11y, jeepney
+        run: pip install . xa11y jeepney
+
+      - name: Start persistent AT-SPI client (enables webkit2gtk a11y)
+        run: |
+          nohup python .github/scripts/a11y_client.py > /tmp/a11y_client.log 2>&1 &
+          sleep 2
+          cat /tmp/a11y_client.log
 
       - name: Install DCM (AppImage)
         run: |
@@ -112,10 +103,7 @@ jobs:
           deadline-cloud-monitor create-profile --profile dcm-test \
             --monitor-id "$MONITOR_ID" --monitor-url "$MONITOR_URL" \
             --enable-auto-login --set-as-deadline-default
-          # DCM wrote its internal path; override with our wrapper so CLI invokes
-          # deadline-cloud-monitor with the correct working directory.
           sed -i 's|^path=.*|path=/usr/local/bin/deadline-cloud-monitor|' ~/.deadline/config
-          echo "=== deadline config ==="
           cat ~/.deadline/config
 
       - name: Run E2E test

@@ -1,5 +1,4 @@
-"""E2E: drive DCM's Tauri GUI via xa11y (works if an AT-SPI listener is running so
-webkit2gtk exposes its a11y tree); then drive Firefox for IdC sign-in."""
+"""E2E: drive DCM's Tauri GUI via xa11y, then Firefox for IdC sign-in."""
 import os
 import subprocess
 import sys
@@ -13,7 +12,7 @@ USERNAME = os.environ["MONITOR_USERNAME"]
 PASSWORD = os.environ["MONITOR_PASSWORD"]
 
 
-def run(cmd, check=True, timeout=120):
+def run(cmd, check=True, timeout=180):
     print(f"$ {' '.join(cmd)}", flush=True)
     r = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
     print(r.stdout, r.stderr, flush=True)
@@ -22,42 +21,46 @@ def run(cmd, check=True, timeout=120):
     return r
 
 
-def find_app(substr):
-    for a in xa11y.App.list():
-        if substr.lower() in (a.name or "").lower():
-            return a
-    return None
+def iter_apps(substr):
+    return [a for a in xa11y.App.list() if substr.lower() in (a.name or "").lower()]
 
 
-def wait_for(pred, timeout=60):
-    end = time.time() + timeout
-    while time.time() < end:
-        r = pred()
-        if r:
-            return r
-        time.sleep(0.5)
-    raise TimeoutError
-
-
-def find_in_tree(root, role=None, name_contains=None):
+def walk(root):
     stack = [root]
     while stack:
         el = stack.pop()
-        try:
-            er, en = el.role, (el.name or "")
-        except Exception:
-            continue
-        if (role is None or er == role) and (name_contains is None or name_contains.lower() in en.lower()):
-            return el
+        yield el
         try:
             stack.extend(el.children())
         except Exception:
             pass
+
+
+def find(roots, role=None, name_contains=None):
+    for r in roots:
+        for el in walk(r):
+            try:
+                er, en = el.role, (el.name or "")
+            except Exception:
+                continue
+            if (role is None or er == role) and (name_contains is None or name_contains.lower() in en.lower()):
+                return el
     return None
 
 
-def dump(el, d=0, maxd=14):
-    if d > maxd: return
+def wait_for(fn, timeout=60, desc=""):
+    end = time.time() + timeout
+    while time.time() < end:
+        r = fn()
+        if r:
+            return r
+        time.sleep(0.5)
+    raise TimeoutError(desc)
+
+
+def dump(el, d=0, maxd=20):
+    if d > maxd:
+        return
     try:
         print("  " * d + f"{el.role} name={(el.name or '')[:100]!r}")
     except Exception:
@@ -69,14 +72,27 @@ def dump(el, d=0, maxd=14):
         pass
 
 
-def click(app, **kw):
-    el = wait_for(lambda: find_in_tree(app, **kw))
+def dump_all(substr):
+    print(f"=== apps matching {substr!r} ===")
+    for a in iter_apps(substr):
+        print(f"APP {a.name}")
+        try:
+            for c in a.children():
+                dump(c)
+        except Exception as e:
+            print(f"  (no children: {e})")
+
+
+def click(substr, **kw):
+    roots = wait_for(lambda: iter_apps(substr) or None, desc=f"app {substr}")
+    el = wait_for(lambda: find(roots, **kw), desc=f"{substr} {kw}")
     el.actions["press"]()
 
 
-def fill(app, name, value):
-    el = wait_for(lambda: find_in_tree(app, role="entry", name_contains=name))
-    el.set_value(value)
+def fill(substr, **kw):
+    roots = wait_for(lambda: iter_apps(substr) or None, desc=f"app {substr}")
+    el = wait_for(lambda: find(roots, **kw), desc=f"{substr} {kw}")
+    el.set_value(kw["_value"] if "_value" in kw else None)
 
 
 def main():
@@ -85,27 +101,31 @@ def main():
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     print(f"auth login pid={cli.pid}")
     try:
-        dcm = wait_for(lambda: find_app("deadline"), timeout=30)
-        print(f"DCM: {dcm.name}")
-        time.sleep(5)  # Let webview render
-        # Click Launch Portal
+        wait_for(lambda: iter_apps("deadline") or None, timeout=30, desc="DCM")
+        time.sleep(5)
         try:
-            click(dcm, role="push_button", name_contains="Launch")
+            roots = iter_apps("deadline") + iter_apps("webkit")
+            btn = wait_for(lambda: find(roots, role="push_button", name_contains="Launch"),
+                           desc="Launch button")
+            btn.actions["press"]()
             print("clicked Launch Portal")
         except TimeoutError:
-            print("=== DCM tree ===")
-            for c in dcm.children():
-                dump(c)
+            dump_all("deadline")
+            dump_all("webkit")
             raise
 
-        firefox = wait_for(lambda: find_app("firefox"), timeout=60)
-        print(f"Firefox: {firefox.name}")
-        fill(firefox, "Username", USERNAME)
-        click(firefox, role="push_button", name_contains="Next")
-        fill(firefox, "Password", PASSWORD)
-        click(firefox, role="push_button", name_contains="Sign in")
+        wait_for(lambda: iter_apps("firefox") or None, timeout=60, desc="firefox")
+        ff = iter_apps("firefox")
+        user_el = wait_for(lambda: find(ff, role="entry", name_contains="Username"), desc="Username")
+        user_el.set_value(USERNAME)
+        find(ff, role="push_button", name_contains="Next").actions["press"]()
+        pw_el = wait_for(lambda: find(ff, role="entry", name_contains="Password"), desc="Password")
+        pw_el.set_value(PASSWORD)
+        find(ff, role="push_button", name_contains="Sign in").actions["press"]()
         try:
-            click(firefox, role="push_button", name_contains="Allow")
+            el = wait_for(lambda: find(iter_apps("firefox"), role="push_button", name_contains="Allow"),
+                          timeout=15, desc="Allow")
+            el.actions["press"]()
         except TimeoutError:
             pass
 
