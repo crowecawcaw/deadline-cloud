@@ -28,9 +28,16 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 at-spi2-core firefox \
+          sudo apt-get install -y xvfb dbus-x11 at-spi2-core \
             libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 \
-            libgbm1 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3 desktop-file-utils
+            libgbm1 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3 \
+            libdbus-glib-1-2 desktop-file-utils
+
+      - name: Install Firefox (tarball)
+        run: |
+          curl -sL 'https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US' -o /tmp/ff.tar.xz
+          sudo tar -xJf /tmp/ff.tar.xz -C /opt
+          sudo ln -sf /opt/firefox/firefox /usr/local/bin/firefox
 
       - name: Start Xvfb + session bus + AT-SPI
         run: |
