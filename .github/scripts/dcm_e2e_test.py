@@ -141,6 +141,10 @@ def main():
         ["deadline", "auth", "login"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     time.sleep(15)  # wait for DCM to start + webview to load
+    if cli.poll() is not None:
+        # CLI already exited — capture its output
+        out, _ = cli.communicate(timeout=5)
+        print("CLI exited early:", out, flush=True)
     click_center_of_dcm_window()
     sign_in_firefox()
 
