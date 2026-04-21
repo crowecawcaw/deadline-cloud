@@ -1,4 +1,4 @@
-"""E2E: drive DCM via xa11y (falls back to xdotool for webview click), then Firefox for IdC sign-in."""
+"""E2E: deadline auth login auto-opens Firefox; drive the IdC sign-in via xa11y."""
 import os
 import subprocess
 import sys
@@ -23,7 +23,6 @@ def run(cmd, check=True, timeout=180):
 
 def screenshot(name):
     subprocess.run(["import", "-window", "root", f"/tmp/{name}.png"], check=False)
-    subprocess.run(["ls", "-la", f"/tmp/{name}.png"], check=False)
 
 
 def iter_apps(substr):
@@ -63,11 +62,11 @@ def wait_for(fn, timeout=60, desc=""):
     raise TimeoutError(desc)
 
 
-def dump(el, d=0, maxd=20):
+def dump(el, d=0, maxd=25):
     if d > maxd:
         return
     try:
-        print("  " * d + f"{el.role} name={(el.name or '')[:100]!r}")
+        print("  " * d + f"{el.role} name={(el.name or '')[:80]!r}")
     except Exception:
         return
     try:
@@ -88,62 +87,40 @@ def dump_all(substr):
             print(f"  (no children: {e})")
 
 
-def xdotool_click_center_of_dcm_window():
-    """Fallback: click center-ish of DCM window where Launch Portal button sits."""
-    # Query DCM window geometry via xdotool
-    r = subprocess.run(["xdotool", "search", "--name", "Deadline Cloud monitor"],
-                       capture_output=True, text=True)
-    wid = (r.stdout.strip().split("\n") or [""])[-1]
-    if not wid:
-        raise RuntimeError("no DCM window")
-    subprocess.run(["xdotool", "windowactivate", wid], check=False)
-    subprocess.run(["xdotool", "windowsize", wid, "1200", "800"], check=False)
-    subprocess.run(["xdotool", "windowmove", wid, "100", "100"], check=False)
-    time.sleep(1)
-    # Click centre of the window (Launch Portal button is typically horizontally centred
-    # around y=~400 in a 1200x800 "sign in" view).
-    subprocess.run(["xdotool", "mousemove", "700", "500", "click", "1"], check=True)
-    print("xdotool clicked 700,500", flush=True)
+def sign_in():
+    ff = wait_for(lambda: iter_apps("firefox") or None, timeout=60, desc="firefox app")
+    # Wait for Username field (AWS sign-in page)
+    try:
+        user_el = wait_for(lambda: find(ff, role="entry", name_contains="Username"),
+                           timeout=90, desc="Username field")
+    except TimeoutError:
+        screenshot("firefox_no_username")
+        dump_all("firefox")
+        raise
+    user_el.set_value(USERNAME)
+    find(ff, role="push_button", name_contains="Next").actions["press"]()
+    pw_el = wait_for(lambda: find(ff, role="entry", name_contains="Password"),
+                     timeout=60, desc="Password field")
+    pw_el.set_value(PASSWORD)
+    find(ff, role="push_button", name_contains="Sign in").actions["press"]()
+    try:
+        el = wait_for(lambda: find(iter_apps("firefox"), role="push_button",
+                                   name_contains="Allow"),
+                      timeout=15, desc="Allow")
+        el.actions["press"]()
+    except TimeoutError:
+        pass
 
 
 def main():
-    print("starting")
     cli = subprocess.Popen(["deadline", "auth", "login"],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    print(f"auth login pid={cli.pid}")
+    print(f"auth login pid={cli.pid}", flush=True)
     try:
-        wait_for(lambda: iter_apps("deadline") or None, timeout=30, desc="DCM")
-        time.sleep(8)  # Let webview render
-        screenshot("dcm_before_click")
-
-        roots = iter_apps("deadline") + iter_apps("webkit")
-        btn = find(roots, role="push_button", name_contains="Launch")
-        if btn:
-            btn.actions["press"]()
-            print("clicked Launch Portal via xa11y")
-        else:
-            print("xa11y didn't find Launch Portal, dumping and falling back to xdotool")
-            dump_all("deadline")
-            dump_all("webkit")
-            xdotool_click_center_of_dcm_window()
-        time.sleep(2)
-        screenshot("dcm_after_click")
-
-        wait_for(lambda: iter_apps("firefox") or None, timeout=60, desc="firefox")
-        ff = iter_apps("firefox")
-        user_el = wait_for(lambda: find(ff, role="entry", name_contains="Username"), desc="Username")
-        user_el.set_value(USERNAME)
-        find(ff, role="push_button", name_contains="Next").actions["press"]()
-        pw_el = wait_for(lambda: find(ff, role="entry", name_contains="Password"), desc="Password")
-        pw_el.set_value(PASSWORD)
-        find(ff, role="push_button", name_contains="Sign in").actions["press"]()
-        try:
-            el = wait_for(lambda: find(iter_apps("firefox"), role="push_button", name_contains="Allow"),
-                          timeout=15, desc="Allow")
-            el.actions["press"]()
-        except TimeoutError:
-            pass
-
+        time.sleep(10)
+        screenshot("after_auth_login")
+        sign_in()
+        screenshot("after_sign_in")
         out, _ = cli.communicate(timeout=180)
         print(out, flush=True)
         if cli.returncode:
@@ -156,7 +133,20 @@ def main():
     run(["deadline", "auth", "logout"])
     r = run(["deadline", "auth", "status"], check=False)
     assert "AUTHENTICATED" not in r.stdout
-    run(["deadline", "auth", "login"])
+    # Re-login
+    cli2 = subprocess.Popen(["deadline", "auth", "login"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        time.sleep(10)
+        sign_in()
+        out, _ = cli2.communicate(timeout=180)
+        print(out, flush=True)
+        if cli2.returncode:
+            raise SystemExit(f"re-login failed: {cli2.returncode}")
+    finally:
+        if cli2.poll() is None:
+            cli2.kill()
+
     run(["deadline", "farm", "list"])
     print("SUCCESS")
 

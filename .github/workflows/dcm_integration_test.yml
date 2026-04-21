@@ -20,6 +20,7 @@ jobs:
       GNOME_ACCESSIBILITY: '1'
       ACCESSIBILITY_ENABLED: '1'
       MOZ_ENABLE_WAYLAND: '0'
+      MOZ_ACCESSIBILITY_ATK2: '1'
     steps:
       - uses: actions/checkout@v6
 
