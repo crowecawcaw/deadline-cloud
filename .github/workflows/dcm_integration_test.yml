@@ -63,19 +63,19 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
           /usr/libexec/at-spi-bus-launcher --launch-immediately &
           sleep 2
-          # Minimal AT-SPI listener: subscribes to events via D-Bus, which forces
-          # webkit2gtk's AccessibilityAtspi::addClient → AXObjectCache::enableAccessibility.
-          # We use at-spi-register-all events via the pyatspi subscription which is lighter than Orca.
-          python3 -c "
-          import pyatspi, gi
-          from gi.repository import GLib
-          pyatspi.Registry.registerEventListener(lambda e: None,
-              'object:state-changed', 'object:children-changed',
-              'object:text-changed', 'object:property-change',
-              'document:load-complete', 'window:activate')
-          GLib.MainLoop().run()
-          " &
-          sleep 3
+          # Connect to the a11y bus and register an event listener via RegisterEvent.
+          # That call triggers WebKit's AccessibilityAtspi::addEventListener → addClient
+          # → AXObjectCache::enableAccessibility, so DCM's webview exposes its tree.
+          A11Y_BUS=$(dbus-send --dest=org.a11y.Bus --print-reply \
+            /org/a11y/bus org.a11y.Bus.GetAddress \
+            | sed -n 's/.*string "\(.*\)"$/\1/p')
+          echo "a11y bus: $A11Y_BUS"
+          dbus-send --bus="$A11Y_BUS" --print-reply \
+            --dest=org.a11y.atspi.Registry /org/a11y/atspi/registry \
+            org.a11y.atspi.Registry.RegisterEvent string:"object:state-changed:focused" || true
+          # Keep a process subscribed so WebKit keeps a11y on.
+          dbus-monitor --address="$A11Y_BUS" "type='signal'" &
+          sleep 2
 
       - name: Install deadline CLI and xa11y
         run: pip install . xa11y
