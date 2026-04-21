@@ -1,9 +1,12 @@
-"""E2E: drive DCM's Tauri GUI via xa11y (works if Orca is running so webkit2gtk
-exposes its a11y tree); then drive Firefox for IdC sign-in; deep-link returns to DCM."""
+"""E2E: drive DCM's Tauri GUI via xa11y (works if an AT-SPI listener is running so
+webkit2gtk exposes its a11y tree); then drive Firefox for IdC sign-in."""
 import os
 import subprocess
+import sys
 import time
 import xa11y
+
+sys.stdout.reconfigure(line_buffering=True)
 
 MONITOR_URL = os.environ["MONITOR_URL"].rstrip("/")
 USERNAME = os.environ["MONITOR_USERNAME"]
@@ -77,13 +80,23 @@ def fill(app, name, value):
 
 
 def main():
+    print("starting")
     cli = subprocess.Popen(["deadline", "auth", "login"],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    print(f"auth login pid={cli.pid}")
     try:
-        dcm = wait_for(lambda: find_app("deadline"))
+        dcm = wait_for(lambda: find_app("deadline"), timeout=30)
         print(f"DCM: {dcm.name}")
-        # Wait for webview content to load; the Launch Portal push_button should appear
-        click(dcm, role="push_button", name_contains="Launch")
+        time.sleep(5)  # Let webview render
+        # Click Launch Portal
+        try:
+            click(dcm, role="push_button", name_contains="Launch")
+            print("clicked Launch Portal")
+        except TimeoutError:
+            print("=== DCM tree ===")
+            for c in dcm.children():
+                dump(c)
+            raise
 
         firefox = wait_for(lambda: find_app("firefox"), timeout=60)
         print(f"Firefox: {firefox.name}")

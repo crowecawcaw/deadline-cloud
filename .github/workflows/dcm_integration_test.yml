@@ -30,7 +30,8 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 at-spi2-core xdotool orca \
+          sudo apt-get install -y xvfb dbus-x11 at-spi2-core xdotool \
+            python3-pyatspi gir1.2-atspi-2.0 \
             libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 \
             libgbm1 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3 \
             libdbus-glib-1-2 desktop-file-utils
@@ -62,9 +63,18 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
           /usr/libexec/at-spi-bus-launcher --launch-immediately &
           sleep 2
-          # Start Orca (screen reader) — it registers AT-SPI event listeners,
-          # which forces webkit2gtk to enable its a11y tree (see AccessibilityAtspi::addClient).
-          orca --replace --no-setup &
+          # Minimal AT-SPI listener: subscribes to events via D-Bus, which forces
+          # webkit2gtk's AccessibilityAtspi::addClient → AXObjectCache::enableAccessibility.
+          # We use at-spi-register-all events via the pyatspi subscription which is lighter than Orca.
+          python3 -c "
+          import pyatspi, gi
+          from gi.repository import GLib
+          pyatspi.Registry.registerEventListener(lambda e: None,
+              'object:state-changed', 'object:children-changed',
+              'object:text-changed', 'object:property-change',
+              'document:load-complete', 'window:activate')
+          GLib.MainLoop().run()
+          " &
           sleep 3
 
       - name: Install deadline CLI and xa11y
