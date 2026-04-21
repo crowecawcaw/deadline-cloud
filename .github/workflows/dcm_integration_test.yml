@@ -98,10 +98,11 @@ jobs:
           deadline-cloud-monitor create-profile --profile dcm-test \
             --monitor-id "$MONITOR_ID" --monitor-url "$MONITOR_URL" \
             --enable-auto-login --set-as-deadline-default
+          # DCM wrote its internal path; override with our wrapper so CLI invokes
+          # deadline-cloud-monitor with the correct working directory.
+          sed -i 's|^path=.*|path=/usr/local/bin/deadline-cloud-monitor|' ~/.deadline/config
           echo "=== deadline config ==="
-          cat ~/.deadline/config 2>/dev/null || echo "(no config)"
-          echo "=== aws config ==="
-          cat ~/.aws/config 2>/dev/null || true
+          cat ~/.deadline/config
 
       - name: Run E2E test
         run: python .github/scripts/dcm_e2e_test.py
