@@ -111,11 +111,12 @@ def click_center_of_dcm_window():
                                     capture_output=True, text=True)
                 print(f"  window {wid}: {nr.stdout.strip()!r}")
         raise SystemExit("DCM window not found")
-    subprocess.run(["xdotool", "windowactivate", "--sync", window_id], check=True)
-    subprocess.run(["xdotool", "windowsize", window_id, "1000", "700"], check=True)
-    subprocess.run(["xdotool", "windowmove", window_id, "100", "100"], check=True)
+    # Xvfb has no window manager, so skip activate and use --window for click.
+    subprocess.run(["xdotool", "windowsize", window_id, "1000", "700"], check=False)
+    subprocess.run(["xdotool", "windowmove", window_id, "0", "0"], check=False)
     time.sleep(1)
-    subprocess.run(["xdotool", "mousemove", "600", "550", "click", "1"], check=True)
+    subprocess.run(["xdotool", "mousemove", "--window", window_id, "500", "500",
+                    "click", "1"], check=True)
 
 
 def sign_in_firefox():
