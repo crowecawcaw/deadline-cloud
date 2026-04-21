@@ -93,16 +93,28 @@ def click(app, name):
 
 def click_center_of_dcm_window():
     """Click in the center of DCM's window via xdotool, hitting 'Launch Portal'."""
-    r = subprocess.run(
-        ["xdotool", "search", "--name", "Deadline Cloud monitor"],
-        capture_output=True, text=True, check=True)
-    window_id = r.stdout.strip().split("\n")[0]
-    # Focus + move mouse + click
+    # Match on partial title
+    for name in ["AWS Deadline Cloud monitor", "Deadline Cloud monitor", "deadline-cloud-monitor"]:
+        r = subprocess.run(
+            ["xdotool", "search", "--name", name],
+            capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            window_id = r.stdout.strip().split("\n")[0]
+            break
+    else:
+        # Show all windows for diagnosis
+        r = subprocess.run(["xdotool", "search", "--onlyvisible", ""],
+                           capture_output=True, text=True)
+        for wid in r.stdout.strip().split("\n"):
+            if wid:
+                nr = subprocess.run(["xdotool", "getwindowname", wid],
+                                    capture_output=True, text=True)
+                print(f"  window {wid}: {nr.stdout.strip()!r}")
+        raise SystemExit("DCM window not found")
     subprocess.run(["xdotool", "windowactivate", "--sync", window_id], check=True)
     subprocess.run(["xdotool", "windowsize", window_id, "1000", "700"], check=True)
     subprocess.run(["xdotool", "windowmove", window_id, "100", "100"], check=True)
     time.sleep(1)
-    # "Launch Portal" button is roughly center-bottom of the DCM home screen
     subprocess.run(["xdotool", "mousemove", "600", "550", "click", "1"], check=True)
 
 
