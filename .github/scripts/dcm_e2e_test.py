@@ -123,9 +123,26 @@ def sign_in_firefox():
     # DCM opens Firefox via xdg-open when Launch Portal is clicked.
     firefox = wait_for(lambda: find_app("firefox"), timeout=60)
     print(f"Firefox: {firefox.name}")
-    el = wait_for(
-        lambda: find_in_tree(firefox, role="entry", name_contains="Username"),
-        timeout=120)
+    try:
+        el = wait_for(
+            lambda: find_in_tree(firefox, role="entry", name_contains="Username"),
+            timeout=120)
+    except TimeoutError:
+        print("=== firefox tree ===", flush=True)
+        stack = list(firefox.children())
+        while stack:
+            el = stack.pop()
+            try:
+                if el.role == "web_area":
+                    print(f"--- web_area name={el.name!r} ---")
+                    dump(el)
+            except Exception:
+                continue
+            try:
+                stack.extend(el.children())
+            except Exception:
+                pass
+        raise
     el.set_value(USERNAME)
     click(firefox, "Next")
     fill(firefox, "Password", PASSWORD)
@@ -133,6 +150,19 @@ def sign_in_firefox():
     try:
         click(firefox, "Allow")
     except TimeoutError:
+        pass
+
+
+def dump(el, d=0, maxd=15):
+    if d > maxd: return
+    try:
+        print("  " * d + f"{el.role} name={(el.name or '')[:100]!r}")
+    except Exception:
+        return
+    try:
+        for c in el.children():
+            dump(c, d + 1, maxd)
+    except Exception:
         pass
 
 
