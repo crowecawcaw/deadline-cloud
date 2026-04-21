@@ -30,7 +30,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 at-spi2-core xdotool \
+          sudo apt-get install -y xvfb dbus-x11 at-spi2-core xdotool imagemagick \
             libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 \
             libgbm1 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3 \
             libdbus-glib-1-2 desktop-file-utils
@@ -108,3 +108,11 @@ jobs:
 
       - name: Run E2E test
         run: python .github/scripts/dcm_e2e_test.py
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: /tmp/*.png
+          if-no-files-found: ignore

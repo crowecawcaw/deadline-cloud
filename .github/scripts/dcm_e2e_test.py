@@ -1,4 +1,4 @@
-"""E2E: drive DCM's Tauri GUI via xa11y, then Firefox for IdC sign-in."""
+"""E2E: drive DCM via xa11y (falls back to xdotool for webview click), then Firefox for IdC sign-in."""
 import os
 import subprocess
 import sys
@@ -19,6 +19,11 @@ def run(cmd, check=True, timeout=180):
     if check and r.returncode:
         raise SystemExit(f"failed: {cmd}")
     return r
+
+
+def screenshot(name):
+    subprocess.run(["import", "-window", "root", f"/tmp/{name}.png"], check=False)
+    subprocess.run(["ls", "-la", f"/tmp/{name}.png"], check=False)
 
 
 def iter_apps(substr):
@@ -83,16 +88,22 @@ def dump_all(substr):
             print(f"  (no children: {e})")
 
 
-def click(substr, **kw):
-    roots = wait_for(lambda: iter_apps(substr) or None, desc=f"app {substr}")
-    el = wait_for(lambda: find(roots, **kw), desc=f"{substr} {kw}")
-    el.actions["press"]()
-
-
-def fill(substr, **kw):
-    roots = wait_for(lambda: iter_apps(substr) or None, desc=f"app {substr}")
-    el = wait_for(lambda: find(roots, **kw), desc=f"{substr} {kw}")
-    el.set_value(kw["_value"] if "_value" in kw else None)
+def xdotool_click_center_of_dcm_window():
+    """Fallback: click center-ish of DCM window where Launch Portal button sits."""
+    # Query DCM window geometry via xdotool
+    r = subprocess.run(["xdotool", "search", "--name", "Deadline Cloud monitor"],
+                       capture_output=True, text=True)
+    wid = (r.stdout.strip().split("\n") or [""])[-1]
+    if not wid:
+        raise RuntimeError("no DCM window")
+    subprocess.run(["xdotool", "windowactivate", wid], check=False)
+    subprocess.run(["xdotool", "windowsize", wid, "1200", "800"], check=False)
+    subprocess.run(["xdotool", "windowmove", wid, "100", "100"], check=False)
+    time.sleep(1)
+    # Click centre of the window (Launch Portal button is typically horizontally centred
+    # around y=~400 in a 1200x800 "sign in" view).
+    subprocess.run(["xdotool", "mousemove", "700", "500", "click", "1"], check=True)
+    print("xdotool clicked 700,500", flush=True)
 
 
 def main():
@@ -102,17 +113,21 @@ def main():
     print(f"auth login pid={cli.pid}")
     try:
         wait_for(lambda: iter_apps("deadline") or None, timeout=30, desc="DCM")
-        time.sleep(5)
-        try:
-            roots = iter_apps("deadline") + iter_apps("webkit")
-            btn = wait_for(lambda: find(roots, role="push_button", name_contains="Launch"),
-                           desc="Launch button")
+        time.sleep(8)  # Let webview render
+        screenshot("dcm_before_click")
+
+        roots = iter_apps("deadline") + iter_apps("webkit")
+        btn = find(roots, role="push_button", name_contains="Launch")
+        if btn:
             btn.actions["press"]()
-            print("clicked Launch Portal")
-        except TimeoutError:
+            print("clicked Launch Portal via xa11y")
+        else:
+            print("xa11y didn't find Launch Portal, dumping and falling back to xdotool")
             dump_all("deadline")
             dump_all("webkit")
-            raise
+            xdotool_click_center_of_dcm_window()
+        time.sleep(2)
+        screenshot("dcm_after_click")
 
         wait_for(lambda: iter_apps("firefox") or None, timeout=60, desc="firefox")
         ff = iter_apps("firefox")
