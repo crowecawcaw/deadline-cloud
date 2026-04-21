@@ -17,9 +17,6 @@ jobs:
       DISPLAY: ':99'
       GTK_MODULES: gail:atk-bridge
       GTK_A11Y: atk
-      NO_AT_BRIDGE: '0'
-      WEBKIT_FORCE_ACCESSIBILITY: '1'
-      WEBKIT_DISABLE_DMABUF_RENDERER: '1'
       GNOME_ACCESSIBILITY: '1'
     steps:
       - uses: actions/checkout@v6
@@ -28,39 +25,26 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '20'
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 at-spi2-core gsettings-desktop-schemas \
-            libnss3 libgtk-3-0 libatk-bridge2.0-0 \
-            libxss1 libasound2t64 libgbm1 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3
+          sudo apt-get install -y xvfb dbus-x11 at-spi2-core firefox \
+            libnss3 libgtk-3-0 libatk-bridge2.0-0 libxss1 libasound2t64 \
+            libgbm1 libegl1 libgl1 libwebkit2gtk-4.1-0 libxdo3 desktop-file-utils
 
-      - name: Start Xvfb + session bus + AT-SPI bus
+      - name: Start Xvfb + session bus + AT-SPI
         run: |
           Xvfb :99 -screen 0 1920x1080x24 &
           sleep 1
           eval "$(dbus-launch --sh-syntax)"
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> $GITHUB_ENV
-          # AT-SPI registry registers itself on the session bus on demand,
-          # but we pre-launch to ensure org.a11y.Bus is reachable.
           /usr/libexec/at-spi-bus-launcher --launch-immediately &
           sleep 2
-          # Enable GTK a11y globally
-          gsettings set org.gnome.desktop.interface toolkit-accessibility true || true
 
       - name: Install deadline CLI and xa11y
         run: pip install . xa11y
 
-      - name: Install agent-browser
-        run: |
-          npm install -g agent-browser
-          agent-browser install --with-deps
-
-      - name: Download and install DCM (AppImage)
+      - name: Install DCM (AppImage)
         run: |
           APPIMAGE=$(curl -s https://downloads.deadlinecloud.amazonaws.com/manifest.json | python -c "import sys,json; print(json.load(sys.stdin)['latest']['linux_appimage'])")
           curl -sL "$APPIMAGE" -o /tmp/dcm.AppImage
@@ -72,20 +56,26 @@ jobs:
           SH
           sudo chmod +x /usr/local/bin/deadline-cloud-monitor
 
+      - name: Register deadline-cloud-monitor:// scheme handler
+        run: |
+          mkdir -p ~/.local/share/applications
+          cat > ~/.local/share/applications/deadline-cloud-monitor.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Deadline Cloud monitor
+          Exec=deadline-cloud-monitor handle-url --url %u
+          MimeType=x-scheme-handler/deadline-cloud-monitor;
+          Terminal=false
+          NoDisplay=true
+          EOF
+          update-desktop-database ~/.local/share/applications
+          xdg-mime default deadline-cloud-monitor.desktop x-scheme-handler/deadline-cloud-monitor
+
       - name: Create DCM profile
         run: |
-          deadline-cloud-monitor create-profile \
-            --profile dcm-test \
-            --monitor-id "$MONITOR_ID" \
-            --monitor-url "$MONITOR_URL" \
-            --enable-auto-login \
-            --set-as-deadline-default
+          deadline-cloud-monitor create-profile --profile dcm-test \
+            --monitor-id "$MONITOR_ID" --monitor-url "$MONITOR_URL" \
+            --enable-auto-login --set-as-deadline-default
 
       - name: Run E2E test
         run: python .github/scripts/dcm_e2e_test.py
-
-      - name: Dump logs
-        if: always()
-        run: |
-          echo "=== driver log ==="
-          cat /tmp/drive-auth.log 2>/dev/null || echo "(none)"
