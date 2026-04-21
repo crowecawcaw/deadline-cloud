@@ -114,9 +114,19 @@ def click_center_of_dcm_window():
     # Xvfb has no window manager, so skip activate and use --window for click.
     subprocess.run(["xdotool", "windowsize", window_id, "1000", "700"], check=False)
     subprocess.run(["xdotool", "windowmove", window_id, "0", "0"], check=False)
-    time.sleep(1)
-    subprocess.run(["xdotool", "mousemove", "--window", window_id, "500", "500",
-                    "click", "1"], check=True)
+    subprocess.run(["xdotool", "windowfocus", window_id], check=False)
+    time.sleep(2)
+    # Tab through to the Launch Portal button then Enter.
+    # DCM's page has a single primary CTA; Enter submits the default form.
+    for _ in range(8):
+        subprocess.run(["xdotool", "key", "--window", window_id, "Tab"], check=False)
+        time.sleep(0.2)
+    subprocess.run(["xdotool", "key", "--window", window_id, "Return"], check=False)
+    # Fallback: also click several spots where the button is likely to be.
+    for y in (400, 450, 500, 550, 600):
+        subprocess.run(["xdotool", "mousemove", "--window", window_id, "500", str(y),
+                        "click", "1"], check=False)
+        time.sleep(0.3)
 
 
 def sign_in_firefox():
