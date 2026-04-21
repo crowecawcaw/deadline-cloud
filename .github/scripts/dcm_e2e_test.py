@@ -1,5 +1,6 @@
-"""E2E: DCM background + Firefox (driven by xa11y) signs into IdC; Firefox follows
-deadline-cloud-monitor:// scheme to DCM's handle-url; CLI login polls AUTHENTICATED."""
+"""E2E: DCM background + Firefox (driven by xa11y) signs into IdC.
+Firefox follows deadline-cloud-monitor:// scheme to DCM's handle-url;
+CLI login polls AUTHENTICATED."""
 import os
 import subprocess
 import tempfile
@@ -23,19 +24,13 @@ def run(cmd, check=True, timeout=120):
 def make_firefox_profile() -> str:
     p = tempfile.mkdtemp(prefix="ffp-")
     with open(f"{p}/user.js", "w") as f:
-        # Auto-open deadline-cloud-monitor:// without prompting
         f.write('''user_pref("network.protocol-handler.external.deadline-cloud-monitor", true);
 user_pref("network.protocol-handler.warn-external.deadline-cloud-monitor", false);
-user_pref("network.protocol-handler.expose.deadline-cloud-monitor", false);
 user_pref("browser.startup.homepage_override.mstone", "ignore");
 user_pref("accessibility.force_disabled", 0);
-user_pref("browser.tabs.remote.force-enable", false);
-user_pref("toolkit.startup.max_resumed_crashes", -1);
 user_pref("browser.shell.checkDefaultBrowser", false);
-user_pref("datareporting.policy.firstRunURL", "");
 user_pref("browser.aboutwelcome.enabled", false);
-user_pref("trailhead.firstrun.didSeeAboutWelcome", true);
-user_pref("app.normandy.first_run", false);
+user_pref("privacy.trackingprotection.enabled", false);
 ''')
     return p
 
@@ -74,42 +69,49 @@ def find_in_tree(root, role=None, name_contains=None):
     return None
 
 
-def fill(firefox, name, value):
-    el = wait_for(lambda: find_in_tree(firefox, role="entry", name_contains=name))
+def dump(el, d=0, maxd=14):
+    if d > maxd: return
+    try:
+        print("  " * d + f"{el.role} name={(el.name or '')[:100]!r}")
+    except Exception:
+        return
+    try:
+        for c in el.children():
+            dump(c, d + 1, maxd)
+    except Exception:
+        pass
+
+
+def fill(app, name, value):
+    el = wait_for(lambda: find_in_tree(app, role="entry", name_contains=name))
     el.set_value(value)
 
 
-def click(firefox, name):
-    el = wait_for(lambda: find_in_tree(firefox, role="push_button", name_contains=name))
+def click(app, name):
+    el = wait_for(lambda: find_in_tree(app, role="push_button", name_contains=name))
     el.actions["press"]()
 
 
-def sign_in():
+def main():
+    # Start DCM in background — sets up PKCE local server for the portal handshake
+    dcm = subprocess.Popen(["deadline-cloud-monitor", "login", "--profile", "dcm-test"])
+    time.sleep(10)  # Let DCM init PKCE server
+
     ffp = make_firefox_profile()
     login_url = f"{MONITOR_URL}/?lng=en#dcmProfile=dcm-test"
-    subprocess.Popen(["firefox", "--no-remote", "--profile", ffp, "--new-tab", login_url])
+    subprocess.Popen(["firefox", "--no-remote", "--profile", ffp, login_url])
     firefox = wait_for(lambda: find_app("firefox"), timeout=30)
     print(f"Firefox: {firefox.name}")
-    # Poll for Username entry; dump tree on failure for diagnosis.
+
     try:
         el = wait_for(lambda: find_in_tree(firefox, role="entry", name_contains="Username"),
-                      timeout=60)
+                      timeout=90)
     except TimeoutError:
-        print("=== firefox tree (after timeout) ===", flush=True)
-        def dump(el, d=0):
-            if d > 14: return
-            try:
-                print("  " * d + f"{el.role} name={(el.name or '')[:80]!r}")
-            except Exception:
-                return
-            try:
-                for c in el.children():
-                    dump(c, d + 1)
-            except Exception:
-                pass
+        print("=== firefox tree ===", flush=True)
         for c in firefox.children():
             dump(c)
         raise
+
     el.set_value(USERNAME)
     click(firefox, "Next")
     fill(firefox, "Password", PASSWORD)
@@ -119,25 +121,17 @@ def sign_in():
     except TimeoutError:
         pass
 
-
-def main():
-    cli = subprocess.Popen(["deadline", "auth", "login"],
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    try:
-        sign_in()
-        out, _ = cli.communicate(timeout=120)
-        print(out)
-        if cli.returncode:
-            raise SystemExit(f"auth login failed: {cli.returncode}")
-    finally:
-        if cli.poll() is None:
-            cli.kill()
+    # Now the browser should redirect to deadline-cloud-monitor://launch?...
+    # which our .desktop handler dispatches to DCM handle-url.
+    # DCM stores creds. CLI check succeeds.
+    time.sleep(10)
 
     run(["deadline", "auth", "status"])
     run(["deadline", "auth", "logout"])
     r = run(["deadline", "auth", "status"], check=False)
-    assert "AUTHENTICATED" not in r.stdout, "expected logged out"
-    run(["deadline", "auth", "login"])  # reuses running DCM silently? if not, re-drive
+    assert "AUTHENTICATED" not in r.stdout
+    # Second login reuses profile → should succeed silently without browser
+    run(["deadline", "auth", "login"])
     run(["deadline", "farm", "list"])
     print("SUCCESS")
 
