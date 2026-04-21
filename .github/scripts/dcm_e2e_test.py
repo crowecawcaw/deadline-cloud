@@ -30,6 +30,12 @@ user_pref("network.protocol-handler.expose.deadline-cloud-monitor", false);
 user_pref("browser.startup.homepage_override.mstone", "ignore");
 user_pref("accessibility.force_disabled", 0);
 user_pref("browser.tabs.remote.force-enable", false);
+user_pref("toolkit.startup.max_resumed_crashes", -1);
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("datareporting.policy.firstRunURL", "");
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("trailhead.firstrun.didSeeAboutWelcome", true);
+user_pref("app.normandy.first_run", false);
 ''')
     return p
 
@@ -81,29 +87,16 @@ def click(firefox, name):
 def sign_in():
     ffp = make_firefox_profile()
     login_url = f"{MONITOR_URL}/?lng=en#dcmProfile=dcm-test"
-    subprocess.Popen(["firefox", "--no-remote", "--profile", ffp, login_url])
+    subprocess.Popen(["firefox", "--no-remote", "--profile", ffp, "--new-tab", login_url])
     firefox = wait_for(lambda: find_app("firefox"), timeout=30)
     print(f"Firefox: {firefox.name}")
-    time.sleep(15)  # wait for page load
-    print("=== firefox tree ===", flush=True)
-    def dump(el, d=0):
-        if d > 12: return
-        try:
-            print("  " * d + f"{el.role} name={(el.name or '')[:80]!r}")
-        except Exception:
-            return
-        try:
-            for c in el.children():
-                dump(c, d + 1)
-        except Exception:
-            pass
-    for c in firefox.children():
-        dump(c)
-    fill(firefox, "Username", USERNAME)
+    # Wait for IdC page — look for the Username entry field.
+    el = wait_for(lambda: find_in_tree(firefox, role="entry", name_contains="Username"),
+                  timeout=60)
+    el.set_value(USERNAME)
     click(firefox, "Next")
     fill(firefox, "Password", PASSWORD)
     click(firefox, "Sign in")
-    # consent page may or may not appear
     try:
         click(firefox, "Allow")
     except TimeoutError:
