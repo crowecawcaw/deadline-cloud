@@ -98,7 +98,7 @@ def main():
     time.sleep(10)  # Let DCM init PKCE server
 
     ffp = make_firefox_profile()
-    login_url = f"{MONITOR_URL}/?lng=en#dcmProfile=dcm-test"
+    login_url = f"{MONITOR_URL}/"  # plain, no fragment
     subprocess.Popen(["firefox", "--no-remote", "--profile", ffp, login_url])
     firefox = wait_for(lambda: find_app("firefox"), timeout=30)
     print(f"Firefox: {firefox.name}")
