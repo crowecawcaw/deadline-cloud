@@ -98,6 +98,10 @@ jobs:
           deadline-cloud-monitor create-profile --profile dcm-test \
             --monitor-id "$MONITOR_ID" --monitor-url "$MONITOR_URL" \
             --enable-auto-login --set-as-deadline-default
+          echo "=== deadline config ==="
+          cat ~/.deadline/config 2>/dev/null || echo "(no config)"
+          echo "=== aws config ==="
+          cat ~/.aws/config 2>/dev/null || true
 
       - name: Run E2E test
         run: python .github/scripts/dcm_e2e_test.py
