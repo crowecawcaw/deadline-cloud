@@ -90,9 +90,26 @@ def sign_in():
     subprocess.Popen(["firefox", "--no-remote", "--profile", ffp, "--new-tab", login_url])
     firefox = wait_for(lambda: find_app("firefox"), timeout=30)
     print(f"Firefox: {firefox.name}")
-    # Wait for IdC page — look for the Username entry field.
-    el = wait_for(lambda: find_in_tree(firefox, role="entry", name_contains="Username"),
-                  timeout=60)
+    # Poll for Username entry; dump tree on failure for diagnosis.
+    try:
+        el = wait_for(lambda: find_in_tree(firefox, role="entry", name_contains="Username"),
+                      timeout=60)
+    except TimeoutError:
+        print("=== firefox tree (after timeout) ===", flush=True)
+        def dump(el, d=0):
+            if d > 14: return
+            try:
+                print("  " * d + f"{el.role} name={(el.name or '')[:80]!r}")
+            except Exception:
+                return
+            try:
+                for c in el.children():
+                    dump(c, d + 1)
+            except Exception:
+                pass
+        for c in firefox.children():
+            dump(c)
+        raise
     el.set_value(USERNAME)
     click(firefox, "Next")
     fill(firefox, "Password", PASSWORD)
