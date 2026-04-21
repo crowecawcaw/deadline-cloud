@@ -18,6 +18,8 @@ jobs:
       GTK_MODULES: gail:atk-bridge
       GTK_A11Y: atk
       GNOME_ACCESSIBILITY: '1'
+      ACCESSIBILITY_ENABLED: '1'
+      MOZ_ENABLE_WAYLAND: '0'
     steps:
       - uses: actions/checkout@v6
 

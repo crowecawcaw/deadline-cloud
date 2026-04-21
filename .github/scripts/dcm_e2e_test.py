@@ -28,6 +28,8 @@ def make_firefox_profile() -> str:
 user_pref("network.protocol-handler.warn-external.deadline-cloud-monitor", false);
 user_pref("network.protocol-handler.expose.deadline-cloud-monitor", false);
 user_pref("browser.startup.homepage_override.mstone", "ignore");
+user_pref("accessibility.force_disabled", 0);
+user_pref("browser.tabs.remote.force-enable", false);
 ''')
     return p
 
@@ -82,6 +84,21 @@ def sign_in():
     subprocess.Popen(["firefox", "--no-remote", "--profile", ffp, login_url])
     firefox = wait_for(lambda: find_app("firefox"), timeout=30)
     print(f"Firefox: {firefox.name}")
+    time.sleep(15)  # wait for page load
+    print("=== firefox tree ===", flush=True)
+    def dump(el, d=0):
+        if d > 12: return
+        try:
+            print("  " * d + f"{el.role} name={(el.name or '')[:80]!r}")
+        except Exception:
+            return
+        try:
+            for c in el.children():
+                dump(c, d + 1)
+        except Exception:
+            pass
+    for c in firefox.children():
+        dump(c)
     fill(firefox, "Username", USERNAME)
     click(firefox, "Next")
     fill(firefox, "Password", PASSWORD)
