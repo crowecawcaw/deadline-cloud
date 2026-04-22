@@ -7,6 +7,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+import random
 import re
 import time
 from collections import defaultdict
@@ -63,6 +64,7 @@ from ._aws.aws_clients import (
     get_s3_client,
     get_s3_transfer_manager,
 )
+from .cross_region_cache import warm_cache
 from .os_file_permission import (
     FileSystemPermissionSettings,
     PosixFileSystemPermissionSettings,
@@ -491,6 +493,9 @@ def download_file(
     modified_time_override: Optional[float] = None,
     progress_tracker: Optional[ProgressTracker] = None,
     file_conflict_resolution: Optional[FileConflictResolution] = FileConflictResolution.CREATE_COPY,
+    cache_bucket: Optional[str] = None,
+    cache_s3_client: Optional[BaseClient] = None,
+    cache_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None,
 ) -> Tuple[int, Optional[Path]]:
     """
     Downloads a file from the S3 bucket to the local directory. `modified_time_override` is ignored if the manifest
@@ -519,6 +524,11 @@ def download_file(
         if cas_prefix
         else f"{file.hash}.{hash_algorithm.value}"
     )
+
+    # Determine which bucket to download from
+    download_bucket = s3_bucket
+    if cache_bucket:
+        download_bucket = cache_bucket
 
     # If the file name already exists, resolve the conflict based on the file_conflict_resolution
     if local_file_path.is_file():
@@ -561,80 +571,107 @@ def download_file(
 
     subscribers = [ProgressCallbackInvoker(handler)]
 
-    future = transfer_manager.download(
-        bucket=s3_bucket,
-        key=s3_key,
-        fileobj=str(local_file_path),
-        extra_args={"ExpectedBucketOwner": get_account_id(session=session)},
-        subscribers=subscribers,
-    )
+    def _do_download(bucket, key):
+        """Attempt to download from the given bucket/key."""
+        return transfer_manager.download(
+            bucket=bucket,
+            key=key,
+            fileobj=str(local_file_path),
+            extra_args={"ExpectedBucketOwner": get_account_id(session=session)},
+            subscribers=subscribers,
+        )
 
-    try:
-        future.result()
-    except concurrent.futures.CancelledError as ce:
-        if progress_tracker and progress_tracker.continue_reporting is False:
-            raise AssetSyncCancelledError("File download cancelled.")
-        else:
-            raise AssetSyncError("File download failed.", ce) from ce
-    except ClientError as exc:
-
-        def process_client_error(exc: ClientError, status_code: int):
-            status_code_guidance = {
-                **COMMON_ERROR_GUIDANCE_FOR_S3,
-                403: (
-                    (
-                        "Forbidden or Access denied. Please check your AWS credentials, and ensure that "
-                        "your AWS IAM Role or User has the 's3:GetObject' permission for this bucket. "
-                    )
-                    if "kms:" not in str(exc)
-                    else (
-                        "Forbidden or Access denied. Please check your AWS credentials and Job Attachments S3 bucket "
-                        "encryption settings. If a customer-managed KMS key is set, confirm that your AWS IAM Role or "
-                        "User has the 'kms:Decrypt' and 'kms:DescribeKey' permissions for the key used to encrypt the bucket."
-                    )
-                ),
-                404: (
-                    "Not found. Please check your bucket name and object key, and ensure that they exist in the AWS account."
-                ),
-            }
-            raise JobAttachmentsS3ClientError(
-                action="downloading file",
-                status_code=status_code,
-                bucket_name=s3_bucket,
-                key_or_prefix=s3_key,
-                message=f"{status_code_guidance.get(status_code, '')} {str(exc)} (Failed to download the file to {str(local_file_path)})",
-            ) from exc
-
-        # TODO: Temporary to prevent breaking backwards-compatibility; if file not found, try again without hash alg postfix
-        status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
-        if status_code == 404:
-            s3_key = s3_key.rsplit(".", 1)[0]
-            future = transfer_manager.download(
-                bucket=s3_bucket,
-                key=s3_key,
-                fileobj=str(local_file_path),
-                extra_args={"ExpectedBucketOwner": get_account_id(session=session)},
-                subscribers=subscribers,
-            )
-            try:
-                future.result()
-            except concurrent.futures.CancelledError as ce:
-                if progress_tracker and progress_tracker.continue_reporting is False:
-                    raise AssetSyncCancelledError("File download cancelled.")
-                else:
-                    raise AssetSyncError("File download failed.", ce) from ce
-            except ClientError as secondExc:
-                status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
-                process_client_error(secondExc, status_code)
-        else:
-            process_client_error(exc, status_code)
-    except BotoCoreError as bce:
-        raise JobAttachmentS3BotoCoreError(
+    def process_client_error(exc: ClientError, status_code: int):
+        status_code_guidance = {
+            **COMMON_ERROR_GUIDANCE_FOR_S3,
+            403: (
+                (
+                    "Forbidden or Access denied. Please check your AWS credentials, and ensure that "
+                    "your AWS IAM Role or User has the 's3:GetObject' permission for this bucket. "
+                )
+                if "kms:" not in str(exc)
+                else (
+                    "Forbidden or Access denied. Please check your AWS credentials and Job Attachments S3 bucket "
+                    "encryption settings. If a customer-managed KMS key is set, confirm that your AWS IAM Role or "
+                    "User has the 'kms:Decrypt' and 'kms:DescribeKey' permissions for the key used to encrypt the bucket."
+                )
+            ),
+            404: (
+                "Not found. Please check your bucket name and object key, and ensure that they exist in the AWS account."
+            ),
+        }
+        raise JobAttachmentsS3ClientError(
             action="downloading file",
-            error_details=str(bce),
-        ) from bce
-    except Exception as e:
-        raise AssetSyncError(e) from e
+            status_code=status_code,
+            bucket_name=s3_bucket,
+            key_or_prefix=s3_key,
+            message=f"{status_code_guidance.get(status_code, '')} {str(exc)} (Failed to download the file to {str(local_file_path)})",
+        ) from exc
+
+    def _try_download(bucket, key):
+        """Download with cache-miss handling: 404 from cache → warm → retry from cache → fallback to source."""
+        future = _do_download(bucket, key)
+        try:
+            future.result()
+            return
+        except concurrent.futures.CancelledError as ce:
+            if progress_tracker and progress_tracker.continue_reporting is False:
+                raise AssetSyncCancelledError("File download cancelled.")
+            raise AssetSyncError("File download failed.", ce) from ce
+        except ClientError as exc:
+            status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
+
+            # Cache miss: warm the cache and retry
+            if status_code == 404 and cache_bucket and bucket == cache_bucket and cache_s3_client and cache_executor:
+                try:
+                    warm_cache(
+                        source_bucket=s3_bucket,
+                        source_key=key,
+                        cache_bucket=cache_bucket,
+                        cache_key=key,
+                        source_size=file_bytes,
+                        cache_s3_client=cache_s3_client,
+                        executor=cache_executor,
+                    )
+                    _do_download(cache_bucket, key).result()
+                    return
+                except Exception:
+                    download_logger.warning(
+                        f"Cache warm failed for {key}, falling back to source bucket",
+                        exc_info=True,
+                    )
+                    try:
+                        _do_download(s3_bucket, key).result()
+                        return
+                    except ClientError as fallback_exc:
+                        fb_status = int(fallback_exc.response["ResponseMetadata"]["HTTPStatusCode"])
+                        if fb_status != 404:
+                            process_client_error(fallback_exc, fb_status)
+
+            # Legacy key fallback (without hash alg postfix)
+            if status_code == 404:
+                legacy_key = key.rsplit(".", 1)[0]
+                try:
+                    _do_download(bucket, legacy_key).result()
+                    return
+                except concurrent.futures.CancelledError as ce:
+                    if progress_tracker and progress_tracker.continue_reporting is False:
+                        raise AssetSyncCancelledError("File download cancelled.")
+                    raise AssetSyncError("File download failed.", ce) from ce
+                except ClientError as secondExc:
+                    second_status = int(secondExc.response["ResponseMetadata"]["HTTPStatusCode"])
+                    process_client_error(secondExc, second_status)
+            else:
+                process_client_error(exc, status_code)
+        except BotoCoreError as bce:
+            raise JobAttachmentS3BotoCoreError(
+                action="downloading file",
+                error_details=str(bce),
+            ) from bce
+        except Exception as e:
+            raise AssetSyncError(e) from e
+
+    _try_download(download_bucket, s3_key)
 
     download_logger.debug(f"Downloaded {file.path} to {str(local_file_path)}")
     os.utime(local_file_path, (modified_time_override, modified_time_override))  # type: ignore[arg-type]
@@ -654,15 +691,25 @@ def _download_files_parallel(
     file_mod_time: Optional[float] = None,
     progress_tracker: Optional[ProgressTracker] = None,
     file_conflict_resolution: Optional[FileConflictResolution] = FileConflictResolution.CREATE_COPY,
+    cache_bucket: Optional[str] = None,
+    cache_s3_client: Optional[BaseClient] = None,
 ) -> list[str]:
     """
     Downloads files in parallel using thread pool.
+    When a cache bucket is configured, files are randomized to spread cache-fill
+    work across workers and minimize duplicate cross-region transfers.
     Returns a list of local paths of downloaded files.
     """
     downloaded_file_names: list[str] = []
     collision_lock: Lock = Lock()
     collision_file_dict: DefaultDict[str, int] = DefaultDict(int)
 
+    # Randomize file order to spread cache-fill work across workers
+    download_order = list(files)
+    if cache_bucket:
+        random.shuffle(download_order)
+
+    # Shared executor for both file downloads and multipart cache-fill copy parts
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_download_workers) as executor:
         futures = {
             executor.submit(
@@ -679,8 +726,11 @@ def _download_files_parallel(
                 file_mod_time,
                 progress_tracker,
                 file_conflict_resolution,
+                cache_bucket,
+                cache_s3_client,
+                executor,
             ): file
-            for file in files
+            for file in download_order
         }
         # surfaces any exceptions in the thread
         for future in concurrent.futures.as_completed(futures):
@@ -905,6 +955,8 @@ def download_files_from_manifests(
     on_downloading_files: Optional[Callable[[ProgressReportMetadata], bool]] = None,
     logger: Optional[Union[Logger, LoggerAdapter]] = None,
     conflict_resolution: FileConflictResolution = FileConflictResolution.CREATE_COPY,
+    cache_bucket: Optional[str] = None,
+    cache_s3_client: Optional[BaseClient] = None,
 ) -> DownloadSummaryStatistics:
     """
     Given manifests, downloads all files from a CAS in each manifest.
@@ -954,6 +1006,8 @@ def download_files_from_manifests(
             file_mod_time,
             progress_tracker=progress_tracker,
             file_conflict_resolution=conflict_resolution,
+            cache_bucket=cache_bucket,
+            cache_s3_client=cache_s3_client,
         )
 
         if fs_permission_settings is not None:
