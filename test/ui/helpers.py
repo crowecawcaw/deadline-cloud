@@ -57,7 +57,9 @@ class DeadlineApp:
     ) -> _T:
         cmd = [sys.executable, "-m", "deadline", *args]
         baseline = {a.name for a in xa11y.App.list()}
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        # Inherit stdout/stderr so pytest's capture surfaces subprocess diagnostics
+        # in the test report when launches or assertions fail.
+        proc = subprocess.Popen(cmd, env=env)
         try:
             app = _find_app(proc.pid, baseline, timeout)
             instance = cls(proc, app)
@@ -65,7 +67,10 @@ class DeadlineApp:
             return instance
         except Exception:
             proc.kill()
-            proc.wait()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
             raise
 
     def __enter__(self):
@@ -95,14 +100,13 @@ class DeadlineApp:
         try:
             self.button(button_name).press()
             self.dialog().wait_detached(timeout=5)
-            # Drain stdout/stderr so a full pipe can't block process exit.
-            self.proc.communicate(timeout=5)
+            self.proc.wait(timeout=5)
             return
         except (xa11y.XA11yError, subprocess.TimeoutExpired):
             pass
         self.proc.kill()
         try:
-            self.proc.communicate(timeout=5)
+            self.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             pass
 
