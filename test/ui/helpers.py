@@ -78,7 +78,14 @@ class DeadlineApp:
         return self._app.locator(selector)
 
     def dialog(self) -> xa11y.Locator:
-        return self.locator(f'dialog[name="{self.DIALOG}"]')
+        # Qt's top-level QDialog is exposed as a Dialog role on macOS/Linux,
+        # but on Windows it often registers as a Window without IsDialog set.
+        selector = (
+            f'window[name="{self.DIALOG}"]'
+            if sys.platform.startswith("win")
+            else f'dialog[name="{self.DIALOG}"]'
+        )
+        return self.locator(selector)
 
     def button(self, name: str) -> xa11y.Locator:
         return self.locator(f'button[name="{name}"]')
@@ -88,12 +95,16 @@ class DeadlineApp:
         try:
             self.button(button_name).press()
             self.dialog().wait_detached(timeout=5)
-            self.proc.wait(timeout=5)
+            # Drain stdout/stderr so a full pipe can't block process exit.
+            self.proc.communicate(timeout=5)
             return
         except (xa11y.XA11yError, subprocess.TimeoutExpired):
             pass
         self.proc.kill()
-        self.proc.wait()
+        try:
+            self.proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 class ConfigDialog(DeadlineApp):
