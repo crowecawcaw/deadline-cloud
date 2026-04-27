@@ -23,16 +23,30 @@ _T = TypeVar("_T", bound="DeadlineApp")
 def _terminate(proc: subprocess.Popen, timeout: float = 5.0) -> None:
     """Ensure a subprocess is reaped.
 
-    Sends SIGKILL (``kill()``) and then polls until the OS delivers the exit
-    status. On POSIX ``kill()`` is non-blocking but the process remains a
-    zombie until ``wait()``; on Windows ``kill()`` calls TerminateProcess.
+    Sends SIGKILL to the process group so any dbus/AT-SPI child processes
+    spawned by the Qt app on Linux are also torn down. On POSIX ``kill()``
+    is non-blocking but the process remains a zombie until ``wait()``; on
+    Windows we fall back to Popen's own ``kill()`` which calls
+    TerminateProcess.
     """
     if proc.poll() is not None:
         return
-    try:
-        proc.kill()
-    except OSError:
-        pass
+    if sys.platform != "win32":
+        import os
+        import signal
+
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+    else:
+        try:
+            proc.kill()
+        except OSError:
+            pass
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -82,13 +96,19 @@ class DeadlineApp:
         # hangs during teardown (proc.kill followed by proc.wait never
         # returning). Diagnostics come from ``dump_tree`` against the live
         # accessibility tree instead.
-        proc = subprocess.Popen(
-            cmd,
+        #
+        # ``start_new_session`` puts the child into its own process group on
+        # POSIX so ``_terminate`` can SIGKILL the whole group and tear down
+        # any dbus / AT-SPI helpers Qt spawned alongside the main process.
+        popen_kwargs: dict = dict(
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
         )
+        if sys.platform != "win32":
+            popen_kwargs["start_new_session"] = True
+        proc = subprocess.Popen(cmd, **popen_kwargs)
         try:
             app = _find_app(proc.pid, baseline, timeout)
             instance = cls(proc, app)
