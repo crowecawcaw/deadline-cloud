@@ -68,7 +68,7 @@ def gui_submit(bundle_dir, submitter_env) -> Generator[SubmitterDialog, None, No
     with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
         # Wait for async farm/queue name resolution before asserting.
         app.locator(
-            'group[name="Deadline Cloud settings"] > static_text[name="TestFarm"]'
+            'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
         ).wait_visible(timeout=10)
         yield app
 
@@ -79,12 +79,12 @@ class TestSubmitterOpens:
 
     def test_farm_name_resolved(self, gui_submit: SubmitterDialog):
         assert gui_submit.locator(
-            'group[name="Deadline Cloud settings"] > static_text[name="TestFarm"]'
+            'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
         ).exists()
 
     def test_queue_name_resolved(self, gui_submit: SubmitterDialog):
         assert gui_submit.locator(
-            'group[name="Deadline Cloud settings"] > static_text[name="TestQueue"]'
+            'group[name="Deadline Cloud settings"] static_text[name="TestQueue"]'
         ).exists()
 
     def test_job_name_displayed(self, gui_submit: SubmitterDialog):
@@ -116,7 +116,7 @@ class TestExportBundle:
         job_history_dir = submitter_env["_JOB_HISTORY_DIR"]
         with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
             app.locator(
-                'group[name="Deadline Cloud settings"] > static_text[name="TestFarm"]'
+                'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
             ).wait_visible(timeout=10)
             app.export_bundle()
 

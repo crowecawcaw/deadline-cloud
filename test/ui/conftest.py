@@ -15,13 +15,10 @@ from typing import Iterator
 
 import pytest
 
-# Make the upstream mock-backend module importable (it lives under
-# `test/unit/deadline_client/` on mainline).
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unit" / "deadline_client"))
 # Allow test modules to `from helpers import ...` under --confcutdir.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mock_deadline_backend import MockDeadlineBackend, start_server  # noqa: E402
+from _common.mock_deadline_backend import MockDeadlineBackend, start_server  # noqa: E402
 
 # Strip botocore's `management.` host-prefix so the CLI subprocess talks
 # directly to 127.0.0.1. Mirrors the shim used in `test/cli_e2e/conftest.py`.
@@ -34,9 +31,9 @@ _ar._urljoin = _urljoin
 """
 
 
-@pytest.fixture
-def mock_backend() -> Iterator[tuple[MockDeadlineBackend, str]]:
-    """Fresh MockDeadlineBackend + HTTP server per test."""
+@pytest.fixture(scope="session")
+def _mock_backend_server() -> Iterator[tuple[MockDeadlineBackend, str]]:
+    """Session-scoped MockDeadlineBackend + HTTP server."""
     backend = MockDeadlineBackend()
     server, base_url, _ = start_server(backend)
     try:
@@ -44,6 +41,14 @@ def mock_backend() -> Iterator[tuple[MockDeadlineBackend, str]]:
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.fixture
+def mock_backend(_mock_backend_server) -> Iterator[tuple[MockDeadlineBackend, str]]:
+    """Per-test backend that clears state between tests."""
+    backend, base_url = _mock_backend_server
+    backend.clear()
+    yield backend, base_url
 
 
 @pytest.fixture
