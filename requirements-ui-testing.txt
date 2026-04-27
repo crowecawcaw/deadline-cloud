@@ -1,0 +1,5 @@
+pytest == 9.*
+pytest-timeout >= 2.3
+pytest-cov >= 4
+pytest-xdist >= 3
+xa11y == 0.7.*
