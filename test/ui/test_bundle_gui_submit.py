@@ -39,8 +39,8 @@ def bundle_dir(tmp_path) -> str:
 def submitter_env(deadline_env, tmp_path) -> dict:
     """Seed a farm + queue and point the deadline config at them."""
     backend, env = deadline_env
-    farm = backend.create_farm(displayName="TestFarm")
-    queue = backend.create_queue(farmId=farm["farmId"], displayName="TestQueue")
+    farm = backend.create_farm(displayName="TestFarm", description="")
+    queue = backend.create_queue(farmId=farm["farmId"], displayName="TestQueue", description="")
 
     job_history_dir = tmp_path / "job_history"
     config = env["DEADLINE_CONFIG_FILE_PATH"]
@@ -67,13 +67,9 @@ def submitter_env(deadline_env, tmp_path) -> dict:
 def gui_submit(bundle_dir, submitter_env) -> Generator[SubmitterDialog, None, None]:
     with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
         # Wait for async farm/queue name resolution before asserting.
-        try:
-            app.locator(
-                'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-            ).wait_visible(timeout=10)
-        except Exception:
-            app.dump_tree()
-            raise
+        app.locator(
+            'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
+        ).wait_visible(timeout=10)
         yield app
 
 
