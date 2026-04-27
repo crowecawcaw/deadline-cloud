@@ -67,9 +67,13 @@ def submitter_env(deadline_env, tmp_path) -> dict:
 def gui_submit(bundle_dir, submitter_env) -> Generator[SubmitterDialog, None, None]:
     with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
         # Wait for async farm/queue name resolution before asserting.
-        app.locator(
-            'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-        ).wait_visible(timeout=10)
+        try:
+            app.locator(
+                'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
+            ).wait_visible(timeout=10)
+        except Exception:
+            app.dump_tree()
+            raise
         yield app
 
 

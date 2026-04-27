@@ -95,6 +95,32 @@ class DeadlineApp:
     def button(self, name: str) -> xa11y.Locator:
         return self.locator(f'button[name="{name}"]')
 
+    def dump_tree(self) -> None:
+        """Print the accessibility tree to stderr for diagnostics."""
+
+        def walk(elt, depth=0):
+            try:
+                role = elt.role
+                name = elt.name or ""
+                value = getattr(elt, "value", None) or ""
+            except Exception as e:
+                sys.stderr.write(f"{'  ' * depth}<err: {e}>\n")
+                return
+            sys.stderr.write(f"{'  ' * depth}{role} name={name!r} value={value!r}\n")
+            try:
+                for child in elt.children():
+                    walk(child, depth + 1)
+            except Exception:
+                pass
+
+        sys.stderr.write("\n--- accessibility tree ---\n")
+        try:
+            for root in self._app.children():
+                walk(root)
+        except Exception as e:
+            sys.stderr.write(f"<tree error: {e}>\n")
+        sys.stderr.write("--- end tree ---\n")
+
     def close(self, button_name: str = "Cancel"):
         """Click a dismiss button then wait for the process to exit."""
         try:
