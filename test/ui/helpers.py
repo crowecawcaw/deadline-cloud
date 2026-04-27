@@ -87,23 +87,31 @@ class DeadlineApp:
         args: Sequence[str],
         env: Optional[dict] = None,
         timeout: float = STARTUP_TIMEOUT,
+        capture_stdio: bool = False,
+        dialog_name: Optional[str] = None,
     ) -> _T:
+        """Spawn ``deadline <args>`` and attach to its accessibility tree.
+
+        Args:
+            args: Argv after ``deadline`` (e.g. ``["bundle", "gui-submit", path]``).
+            env: Env vars for the subprocess.
+            timeout: Seconds to wait for the window + dialog to appear.
+            capture_stdio: When True, pipe stdout/stderr into the Popen so the
+                test can read them. Defaults to False (DEVNULL) because leaving
+                stdio connected to pytest's captured fds risks blocking on a
+                full write buffer during teardown.
+            dialog_name: Override the expected dialog window title. Used for
+                launches that set ``--submitter-name`` (which changes the title).
+        """
         cmd = [sys.executable, "-m", "deadline", *args]
         baseline = {a.name for a in xa11y.App.list()}
-        # Discard the subprocess's stdout/stderr. Letting them inherit from
-        # pytest's captured fds risks the child blocking on a full write
-        # buffer if the parent worker drains them slowly, which manifests as
-        # hangs during teardown (proc.kill followed by proc.wait never
-        # returning). Diagnostics come from ``dump_tree`` against the live
-        # accessibility tree instead.
-        #
         # ``start_new_session`` puts the child into its own process group on
         # POSIX so ``_terminate`` can SIGKILL the whole group and tear down
         # any dbus / AT-SPI helpers Qt spawned alongside the main process.
         popen_kwargs: dict = dict(
             env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture_stdio else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_stdio else subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
         )
         if sys.platform != "win32":
@@ -112,6 +120,8 @@ class DeadlineApp:
         try:
             app = _find_app(proc.pid, baseline, timeout)
             instance = cls(proc, app)
+            if dialog_name is not None:
+                instance._dialog_name = dialog_name  # type: ignore[attr-defined]
             instance.dialog().wait_visible(timeout=timeout)
             return instance
         except Exception:
@@ -127,13 +137,16 @@ class DeadlineApp:
     def locator(self, selector: str) -> xa11y.Locator:
         return self._app.locator(selector)
 
+    @property
+    def dialog_name(self) -> str:
+        return getattr(self, "_dialog_name", self.DIALOG)
+
     def dialog(self) -> xa11y.Locator:
         # Qt's top-level QDialog is exposed as a Dialog role on macOS/Linux,
         # but on Windows it often registers as a Window without IsDialog set.
+        name = self.dialog_name
         selector = (
-            f'window[name="{self.DIALOG}"]'
-            if sys.platform.startswith("win")
-            else f'dialog[name="{self.DIALOG}"]'
+            f'window[name="{name}"]' if sys.platform.startswith("win") else f'dialog[name="{name}"]'
         )
         return self.locator(selector)
 
@@ -200,24 +213,42 @@ class ConfigDialog(DeadlineApp):
         macOS/AT-SPI put it in ``name``; Windows UIA puts it in ``value`` while
         ``name`` is the buddy label (e.g. "Current logging level"). Try both.
         """
-        general = self.locator('group[name="General settings"]').element()
+        return self._combo_text(group="General settings", index=1)
 
-        def _iter_combo_boxes(elt):
-            try:
-                if elt.role == "combo_box":
-                    yield elt
-                for child in elt.children():
-                    yield from _iter_combo_boxes(child)
-            except Exception:
-                return
+    @property
+    def conflict_resolution(self) -> str:
+        return self._combo_text(group="General settings", index=0)
 
-        combos = list(_iter_combo_boxes(general))
-        # 1st = conflict resolution, 2nd = log level, 3rd = language
-        combo = combos[1]
+    def _combo_text(self, *, group: str, index: int) -> str:
+        """Return the visible text of the Nth combo box in a group.
+
+        General settings order: 0=conflict resolution, 1=log level, 2=language.
+        """
+        root = self.locator(f'group[name="{group}"]').element()
+        combos = list(_iter_by_role(root, "combo_box"))
+        combo = combos[index]
         value = getattr(combo, "value", None)
         if value:
             return value
-        return combo.name
+        return combo.name or ""
+
+    @property
+    def auth_profile_text(self) -> str:
+        """Text shown on the auth-status widget's profile button.
+
+        Returns the best-matching push_button text; the widget has a few
+        buttons (profile button, Log in, More info, Switch profile). The
+        profile button is the only one whose text is not one of those
+        fixed labels.
+        """
+        known = {"Log in", "Log out", "Switch profile", "More info"}
+        for btn in _iter_by_role(self._app, "push_button"):
+            name = btn.name or ""
+            if name and name not in known and name not in {"Ok", "Cancel", "Apply"}:
+                # Profile name shows either "(default)" or something containing
+                # a profile string — there's only one such button.
+                return name
+        return ""
 
 
 class SubmitterDialog(DeadlineApp):
@@ -226,8 +257,21 @@ class SubmitterDialog(DeadlineApp):
     DIALOG = "Deadline Cloud JobBundle Submitter"
 
     @classmethod
-    def open(cls, bundle_dir: str, env: Optional[dict] = None) -> "SubmitterDialog":
-        return cls.launch(["bundle", "gui-submit", bundle_dir], env=env)
+    def open(
+        cls,
+        bundle_dir: str,
+        env: Optional[dict] = None,
+        extra_args: Sequence[str] = (),
+        dialog_name: Optional[str] = None,
+        capture_stdio: bool = False,
+    ) -> "SubmitterDialog":
+        args = ["bundle", "gui-submit", *extra_args, bundle_dir]
+        return cls.launch(
+            args,
+            env=env,
+            dialog_name=dialog_name,
+            capture_stdio=capture_stdio,
+        )
 
     @property
     def job_name(self) -> str:
@@ -239,3 +283,52 @@ class SubmitterDialog(DeadlineApp):
         ok = self.button("OK")
         ok.wait_visible(timeout=10)
         ok.press()
+
+    def submit_and_ok(self, timeout: float = 30.0) -> None:
+        """Click Submit, wait for the success dialog, click Ok.
+
+        Uses the progress dialog's Ok button, which only appears once the
+        mock backend has acknowledged CreateJob and GetJob returns a
+        non-``CREATE_IN_PROGRESS`` status. Then waits for the submitter
+        process to exit.
+        """
+        self.button("Submit").press()
+        # Scope to the progress dialog so we don't match the parent
+        # submitter's Ok/Cancel buttons (Qt exposes both simultaneously).
+        ok = self._progress_button("Ok")
+        ok.wait_visible(timeout=timeout)
+        ok.press()
+
+    def submit_then_cancel(self, cancel_timeout: float = 10.0) -> None:
+        """Click Submit then immediately Cancel on the progress dialog.
+
+        Note: clicking Cancel only closes the progress dialog; the parent
+        submitter window stays open because ``job_id`` is ``None`` on
+        cancellation. Callers must close the submitter separately (e.g. by
+        exiting the ``with`` block, which triggers ``close("Cancel")``).
+        """
+        self.button("Submit").press()
+        cancel = self._progress_button("Cancel")
+        cancel.wait_visible(timeout=cancel_timeout)
+        cancel.press()
+
+    def _progress_button(self, name: str) -> xa11y.Locator:
+        """Locate a button inside the submission progress dialog."""
+        progress_title = "AWS Deadline Cloud submission"
+        dialog_selector = (
+            f'window[name="{progress_title}"]'
+            if sys.platform.startswith("win")
+            else f'dialog[name="{progress_title}"]'
+        )
+        return self.locator(f'{dialog_selector} button[name="{name}"]')
+
+
+def _iter_by_role(root, role: str):
+    """Depth-first traversal yielding elements whose role matches ``role``."""
+    try:
+        if getattr(root, "role", None) == role:
+            yield root
+        for child in root.children():
+            yield from _iter_by_role(child, role)
+    except Exception:
+        return

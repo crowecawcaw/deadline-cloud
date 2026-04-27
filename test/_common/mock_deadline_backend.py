@@ -115,6 +115,7 @@ class MockDeadlineBackend:
             "storage_profiles",
             "queue_read_credentials",
             "_injected_failures",
+            "create_job_delay",
         ):
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -556,6 +557,15 @@ class MockDeadlineBackend:
             **kwargs,
         }
         self._validate("CreateJob", params)
+
+        # Optional delay to make it possible for tests to reliably interact
+        # with the progress dialog (e.g. click Cancel) before CreateJob
+        # returns. Opt-in via ``backend.create_job_delay = <seconds>``.
+        delay = getattr(self, "create_job_delay", 0)
+        if delay:
+            import time as _time
+
+            _time.sleep(delay)
 
         # Parse the job template using openjd-model
         job_template = self._parse_template(template)
