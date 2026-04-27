@@ -20,6 +20,25 @@ STARTUP_TIMEOUT = 15.0
 _T = TypeVar("_T", bound="DeadlineApp")
 
 
+def _terminate(proc: subprocess.Popen, timeout: float = 5.0) -> None:
+    """Ensure a subprocess is reaped.
+
+    Sends SIGKILL (``kill()``) and then polls until the OS delivers the exit
+    status. On POSIX ``kill()`` is non-blocking but the process remains a
+    zombie until ``wait()``; on Windows ``kill()`` calls TerminateProcess.
+    """
+    if proc.poll() is not None:
+        return
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def _find_app(pid: int, baseline_names: set, timeout: float) -> xa11y.App:
     """Wait for an ``xa11y.App`` to appear for ``pid``.
 
@@ -57,20 +76,26 @@ class DeadlineApp:
     ) -> _T:
         cmd = [sys.executable, "-m", "deadline", *args]
         baseline = {a.name for a in xa11y.App.list()}
-        # Inherit stdout/stderr so pytest's capture surfaces subprocess diagnostics
-        # in the test report when launches or assertions fail.
-        proc = subprocess.Popen(cmd, env=env)
+        # Discard the subprocess's stdout/stderr. Letting them inherit from
+        # pytest's captured fds risks the child blocking on a full write
+        # buffer if the parent worker drains them slowly, which manifests as
+        # hangs during teardown (proc.kill followed by proc.wait never
+        # returning). Diagnostics come from ``dump_tree`` against the live
+        # accessibility tree instead.
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
         try:
             app = _find_app(proc.pid, baseline, timeout)
             instance = cls(proc, app)
             instance.dialog().wait_visible(timeout=timeout)
             return instance
         except Exception:
-            proc.kill()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
+            _terminate(proc)
             raise
 
     def __enter__(self):
@@ -122,19 +147,20 @@ class DeadlineApp:
         sys.stderr.write("--- end tree ---\n")
 
     def close(self, button_name: str = "Cancel"):
-        """Click a dismiss button then wait for the process to exit."""
+        """Click a dismiss button; fall back to killing the subprocess.
+
+        Tries the accessibility-driven path first so Qt can unwind cleanly,
+        but never blocks on it — if the dialog or process does not respond
+        within a few seconds we SIGKILL and reap unconditionally.
+        """
         try:
             self.button(button_name).press()
-            self.dialog().wait_detached(timeout=5)
-            self.proc.wait(timeout=5)
+            self.dialog().wait_detached(timeout=3)
+            self.proc.wait(timeout=3)
             return
         except (xa11y.XA11yError, subprocess.TimeoutExpired):
             pass
-        self.proc.kill()
-        try:
-            self.proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
+        _terminate(self.proc)
 
 
 class ConfigDialog(DeadlineApp):
@@ -148,11 +174,30 @@ class ConfigDialog(DeadlineApp):
 
     @property
     def log_level(self) -> str:
-        """Text shown in the log-level combo box."""
+        """Text shown in the log-level combo box.
+
+        Qt's QComboBox exposes the selected text differently per platform:
+        macOS/AT-SPI put it in ``name``; Windows UIA puts it in ``value`` while
+        ``name`` is the buddy label (e.g. "Current logging level"). Try both.
+        """
         general = self.locator('group[name="General settings"]').element()
-        combos = [c for c in general.children() if c.role == "combo_box"]
+
+        def _iter_combo_boxes(elt):
+            try:
+                if elt.role == "combo_box":
+                    yield elt
+                for child in elt.children():
+                    yield from _iter_combo_boxes(child)
+            except Exception:
+                return
+
+        combos = list(_iter_combo_boxes(general))
         # 1st = conflict resolution, 2nd = log level, 3rd = language
-        return combos[1].name
+        combo = combos[1]
+        value = getattr(combo, "value", None)
+        if value:
+            return value
+        return combo.name
 
 
 class SubmitterDialog(DeadlineApp):
