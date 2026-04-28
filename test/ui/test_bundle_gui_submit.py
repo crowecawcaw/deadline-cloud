@@ -84,6 +84,18 @@ class TestSubmitterOpens:
         assert gui_submit.job_name == "Test Render Job"
 
     def test_has_tabs(self, gui_submit: SubmitterDialog):
+        import xa11y
+
+        def _exists(selector: str) -> bool:
+            # xa11y on Windows occasionally raises PlatformError 0x80040201
+            # ("An event was unable to invoke any of the subscribers") from
+            # UIA subscribers on the tab widget; treat those as "not found"
+            # and rely on the other role fallbacks below to match.
+            try:
+                return gui_submit.locator(selector).exists()
+            except xa11y.PlatformError:
+                return False
+
         tab_group = gui_submit.locator("tab_group")
         assert tab_group.exists()
         for tab_name in (
@@ -92,11 +104,12 @@ class TestSubmitterOpens:
             "Job attachments",
             "Host requirements",
         ):
-            # Qt exposes tabs as radio_button on macOS, page_tab on Linux/Windows.
+            # Qt exposes tabs as radio_button on macOS, page_tab or tab on
+            # Linux/Windows.
             assert (
-                gui_submit.locator(f'radio_button[name="{tab_name}"]').exists()
-                or gui_submit.locator(f'page_tab[name="{tab_name}"]').exists()
-                or gui_submit.locator(f'tab[name="{tab_name}"]').exists()
+                _exists(f'radio_button[name="{tab_name}"]')
+                or _exists(f'page_tab[name="{tab_name}"]')
+                or _exists(f'tab[name="{tab_name}"]')
             ), f"Tab {tab_name!r} not found"
 
     def test_has_submit_and_export_buttons(self, gui_submit: SubmitterDialog):

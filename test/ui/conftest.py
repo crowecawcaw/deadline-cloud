@@ -94,6 +94,14 @@ def deadline_env(tmp_path: Path, mock_backend) -> tuple[MockDeadlineBackend, dic
         # spam stderr with BrokenPipeError tracebacks that drown out real
         # test failures.
         "DEADLINE_CLOUD_TELEMETRY_OPT_OUT": "true",
+        # Force the subprocess's stdout/stderr to line-buffer (and flush
+        # on newline) so --output json tests that capture stdout via a
+        # subprocess pipe actually see the JSON payload written by
+        # ``click.echo`` before the subprocess terminates. Without this,
+        # Python detects the non-TTY destination and switches stdout to
+        # block buffering, so the final JSON can stay in the in-process
+        # buffer and be lost when we SIGKILL on shutdown.
+        "PYTHONUNBUFFERED": "1",
         "PYTHONPATH": str(shim_dir) + os.pathsep + os.environ.get("PYTHONPATH", ""),
     }
     return backend, env
