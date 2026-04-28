@@ -365,15 +365,37 @@ class SubmitterDialog(DeadlineApp):
         non-``CREATE_IN_PROGRESS`` status.
         """
         self.button("Submit").press()
-        # Scope to the progress dialog so we don't match the parent
-        # submitter's Ok/Cancel buttons (Qt exposes both simultaneously).
-        ok = self._progress_button("Ok")
-        try:
-            ok.wait_visible(timeout=timeout)
-        except Exception:
-            self.dump_tree()
-            raise
-        ok.press()
+        # After a successful submission the progress dialog's button_box
+        # switches from the initial Cancel button to either an Ok button
+        # (success) or a Close button (failure). Poll for whichever one
+        # appears first so that a failed-submit test surfaces a more
+        # informative error than ``wait_visible("Ok")`` timing out.
+        deadline = time.monotonic() + timeout
+        last_err: Optional[Exception] = None
+        while time.monotonic() < deadline:
+            for name in ("Ok", "OK"):
+                try:
+                    btn = self._progress_button(name)
+                    if btn.exists():
+                        btn.press()
+                        return
+                except Exception as exc:  # noqa: BLE001
+                    last_err = exc
+            close_btn = self._progress_button("Close")
+            try:
+                if close_btn.exists():
+                    self.dump_tree()
+                    raise AssertionError(
+                        "Submission progress dialog shows Close (failure) instead of Ok"
+                    )
+            except xa11y.XA11yError as exc:
+                last_err = exc
+            time.sleep(0.2)
+        self.dump_tree()
+        raise TimeoutError(
+            f"Progress dialog's Ok button did not appear within {timeout}s. "
+            f"Last locator error: {last_err!r}"
+        )
 
     def submit_then_cancel(self, cancel_timeout: float = CANCEL_TIMEOUT) -> None:
         """Click Submit then immediately Cancel on the progress dialog.
