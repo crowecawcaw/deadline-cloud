@@ -92,17 +92,20 @@ class TestSharedJobSettingsControls:
         ), "No spin_button with the default Priority value of 50 found"
 
     def test_initial_state_combo_is_present(self, gui_submit: SubmitterDialog) -> None:
-        # Same label/value split: the combo_box's accessible name is its
-        # selected item (READY) on macOS/Linux, while the "Initial state"
-        # label sits next to it.
+        # Same label/value split: the combo_box's accessible attributes
+        # vary by backend. On macOS/Linux the selected item is on ``name``
+        # ("READY" / "SUSPENDED"), on Windows it's on ``value`` while
+        # ``name`` is the parent group ("Job Properties").
         assert gui_submit.locator('static_text[name="Initial state"]').exists(), (
             "Initial state label not found"
         )
-        assert (
-            gui_submit.locator('combo_box[name="READY"]').exists()
-            or gui_submit.locator('combo_box[name="SUSPENDED"]').exists()
-            or gui_submit.locator('combo_box[name="Initial state"]').exists()
-        ), "Initial state combo box not found"
+        valid_states = {"READY", "SUSPENDED"}
+        combos = gui_submit.elements_by_role("combo_box")
+        assert any(
+            (getattr(c, "name", None) or "") in valid_states
+            or (getattr(c, "value", None) or "") in valid_states
+            for c in combos
+        ), f"No combo_box with Initial state value (READY/SUSPENDED) among {len(combos)} combos"
 
 
 class TestHostRequirementsControls:
@@ -132,10 +135,26 @@ class TestJobAttachmentsTab:
 
 
 def _activate_tab(app: SubmitterDialog, tab_name: str) -> None:
-    """Click the named tab across the platform role variants."""
+    """Click the named tab across the platform role variants.
+
+    xa11y on Windows occasionally raises ``PlatformError 0x80040201``
+    ("An event was unable to invoke any of the subscribers") when pressing
+    a tab — this appears to be a flaky UIA event-subscriber issue on the
+    tab widget, not a real failure. Swallow it and retry/fall through to
+    the next role.
+    """
+    import xa11y
+
+    last_err: Exception | None = None
     for role in ("radio_button", "page_tab", "tab"):
         loc = app.locator(f'{role}[name="{tab_name}"]')
         if loc.exists():
-            loc.press()
-            return
+            try:
+                loc.press()
+                return
+            except xa11y.PlatformError as exc:
+                last_err = exc
+                continue
+    if last_err is not None:
+        raise AssertionError(f"Tab {tab_name!r} matched but press failed: {last_err!r}")
     raise AssertionError(f"Tab {tab_name!r} not found via any role")

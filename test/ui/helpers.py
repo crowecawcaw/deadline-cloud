@@ -24,7 +24,7 @@ import xa11y
 # substantially slower than a developer workstation, and a too-tight
 # ceiling masks failures as timeouts instead of failing fast.
 STARTUP_TIMEOUT = 15.0
-CLOSE_TIMEOUT = 3.0
+CLOSE_TIMEOUT = 10.0
 TERMINATE_TIMEOUT = 3.0
 # How long to wait for ``CreateJob`` + ``GetJob`` polling to complete
 # through the local mock before the success dialog's Ok button appears.
@@ -363,39 +363,62 @@ class SubmitterDialog(DeadlineApp):
         Uses the progress dialog's Ok button, which only appears once the
         mock backend has acknowledged CreateJob and GetJob returns a
         non-``CREATE_IN_PROGRESS`` status.
+
+        The progress dialog mutates its bottom-row buttons between three
+        states:
+          * ``Cancel`` while the worker thread is running,
+          * ``Ok`` after a successful submission, and
+          * ``Close`` after a failed one.
+        We can't just ``wait_visible('Ok')`` because on Windows the Qt
+        dialog's title-bar decoration also registers a ``Close`` button
+        (the window X) at the same depth as the dialog, which would
+        cause a raw selector match to spuriously report "failed" state.
+        Instead, poll the status_label text to distinguish success from
+        failure, then press the corresponding button.
         """
         self.button("Submit").press()
-        # After a successful submission the progress dialog's button_box
-        # switches from the initial Cancel button to either an Ok button
-        # (success) or a Close button (failure). Poll for whichever one
-        # appears first so that a failed-submit test surfaces a more
-        # informative error than ``wait_visible("Ok")`` timing out.
         deadline = time.monotonic() + timeout
-        last_err: Optional[Exception] = None
+        status = ""
         while time.monotonic() < deadline:
-            for name in ("Ok", "OK"):
-                try:
-                    btn = self._progress_button(name)
-                    if btn.exists():
-                        btn.press()
-                        return
-                except Exception as exc:  # noqa: BLE001
-                    last_err = exc
-            close_btn = self._progress_button("Close")
-            try:
-                if close_btn.exists():
-                    self.dump_tree()
-                    raise AssertionError(
-                        "Submission progress dialog shows Close (failure) instead of Ok"
-                    )
-            except xa11y.XA11yError as exc:
-                last_err = exc
+            status = self._progress_status_label_text()
+            if status and status != "Preparing files...":
+                break
             time.sleep(0.2)
+        if status == "Submission complete":
+            for ok_name in ("Ok", "OK"):
+                btn = self._progress_button(ok_name)
+                if btn.exists():
+                    btn.press()
+                    return
+            self.dump_tree()
+            raise AssertionError("Submission complete but could not find Ok/OK button to press")
+        if status in ("Submission error", "Submission canceled"):
+            self.dump_tree()
+            raise AssertionError(f"Submission failed: progress dialog status is {status!r}")
         self.dump_tree()
         raise TimeoutError(
-            f"Progress dialog's Ok button did not appear within {timeout}s. "
-            f"Last locator error: {last_err!r}"
+            f"Progress dialog did not reach a terminal state within {timeout}s. "
+            f"Last status_label: {status!r}"
         )
+
+    def _progress_status_label_text(self) -> str:
+        """Return the progress dialog's status_label text, or ""."""
+        terminal_labels = {
+            "Submission complete",
+            "Submission error",
+            "Submission canceled",
+        }
+        # Iterate the progress dialog's children to find the status label.
+        # The QLabel is a direct child of the QDialog and exposes its text
+        # via ``name``/``value`` on static_text elements, but under Windows
+        # UIA it can also come through on an unnamed text_field's value.
+        for elt in _iter_by_role(self._app, "static_text"):
+            name = (getattr(elt, "name", "") or "").strip()
+            if name == "Preparing files...":
+                return name
+            if name in terminal_labels:
+                return name
+        return ""
 
     def submit_then_cancel(self, cancel_timeout: float = CANCEL_TIMEOUT) -> None:
         """Click Submit then immediately Cancel on the progress dialog.
