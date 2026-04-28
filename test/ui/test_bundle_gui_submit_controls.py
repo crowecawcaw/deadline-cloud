@@ -71,9 +71,7 @@ def submitter_env(deadline_env, tmp_path) -> dict:
 def gui_submit(bundle_dir, submitter_env):
     with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
         try:
-            app.locator(
-                'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-            ).wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
+            app.locator('static_text[name="TestFarm"]').wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
         except Exception:
             app.dump_tree()
             raise

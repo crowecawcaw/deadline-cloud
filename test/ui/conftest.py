@@ -88,6 +88,12 @@ def deadline_env(tmp_path: Path, mock_backend) -> tuple[MockDeadlineBackend, dic
         "AWS_SECRET_ACCESS_KEY": "testing",
         "AWS_DEFAULT_REGION": "us-west-2",
         "DEADLINE_CONFIG_FILE_PATH": str(config_file),
+        # Tests run against an in-process mock that does not implement the
+        # telemetry endpoint; leaving the default on causes the client's
+        # background thread to POST /2023-10-12/telemetry, get 404s, and
+        # spam stderr with BrokenPipeError tracebacks that drown out real
+        # test failures.
+        "DEADLINE_CLOUD_TELEMETRY_OPT_OUT": "true",
         "PYTHONPATH": str(shim_dir) + os.pathsep + os.environ.get("PYTHONPATH", ""),
     }
     return backend, env

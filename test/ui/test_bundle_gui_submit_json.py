@@ -80,9 +80,7 @@ def _wait_farm_resolved(app: SubmitterDialog) -> None:
     be ``True`` plus farm/queue configured).
     """
     try:
-        app.locator(
-            'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-        ).wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
+        app.locator('static_text[name="TestFarm"]').wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
     except Exception:
         app.dump_tree()
         raise

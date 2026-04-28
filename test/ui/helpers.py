@@ -340,7 +340,11 @@ class SubmitterDialog(DeadlineApp):
         # Scope to the progress dialog so we don't match the parent
         # submitter's Ok/Cancel buttons (Qt exposes both simultaneously).
         ok = self._progress_button("Ok")
-        ok.wait_visible(timeout=timeout)
+        try:
+            ok.wait_visible(timeout=timeout)
+        except Exception:
+            self.dump_tree()
+            raise
         ok.press()
 
     def submit_then_cancel(self, cancel_timeout: float = CANCEL_TIMEOUT) -> None:
@@ -353,7 +357,11 @@ class SubmitterDialog(DeadlineApp):
         """
         self.button("Submit").press()
         cancel = self._progress_button("Cancel")
-        cancel.wait_visible(timeout=cancel_timeout)
+        try:
+            cancel.wait_visible(timeout=cancel_timeout)
+        except Exception:
+            self.dump_tree()
+            raise
         cancel.press()
 
     def _progress_button(self, name: str) -> xa11y.Locator:

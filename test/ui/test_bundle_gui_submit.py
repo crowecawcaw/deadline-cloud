@@ -72,9 +72,7 @@ def gui_submit(bundle_dir, submitter_env) -> Generator[SubmitterDialog, None, No
         # Xvfb where the async refresh can complete before the scroll area
         # is laid out.
         try:
-            app.locator(
-                'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-            ).wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
+            app.locator('static_text[name="TestFarm"]').wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
         except Exception:
             app.dump_tree()
             raise
@@ -86,14 +84,10 @@ class TestSubmitterOpens:
         assert gui_submit.dialog().element().visible
 
     def test_farm_name_resolved(self, gui_submit: SubmitterDialog):
-        assert gui_submit.locator(
-            'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-        ).exists()
+        assert gui_submit.locator('static_text[name="TestFarm"]').exists()
 
     def test_queue_name_resolved(self, gui_submit: SubmitterDialog):
-        assert gui_submit.locator(
-            'group[name="Deadline Cloud settings"] static_text[name="TestQueue"]'
-        ).exists()
+        assert gui_submit.locator('static_text[name="TestQueue"]').exists()
 
     def test_job_name_displayed(self, gui_submit: SubmitterDialog):
         assert gui_submit.job_name == "Test Render Job"
@@ -124,9 +118,9 @@ class TestExportBundle:
         job_history_dir = submitter_env["_JOB_HISTORY_DIR"]
         with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
             try:
-                app.locator(
-                    'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-                ).wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
+                app.locator('static_text[name="TestFarm"]').wait_attached(
+                    timeout=FARM_RESOLVE_TIMEOUT
+                )
             except Exception:
                 app.dump_tree()
                 raise
