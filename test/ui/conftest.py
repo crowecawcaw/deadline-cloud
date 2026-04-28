@@ -19,6 +19,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _common.mock_deadline_backend import MockDeadlineBackend, start_server  # noqa: E402
+from helpers import reap_all  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reap_ui_subprocesses() -> Iterator[None]:
+    """Kill any GUI subprocesses still alive at test end.
+
+    Tests that forget ``with ... as app`` or whose ``try/finally`` fails to
+    run would otherwise leave ``deadline`` subprocesses hanging around in
+    the macOS dock (and on the pid table everywhere). Belt-and-suspenders:
+    ``helpers.reap_all`` is also registered via ``atexit``.
+    """
+    yield
+    reap_all()
+
 
 # Strip botocore's `management.` host-prefix so the CLI subprocess talks
 # directly to 127.0.0.1. Mirrors the shim used in `test/cli_e2e/conftest.py`.

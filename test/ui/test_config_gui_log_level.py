@@ -61,14 +61,9 @@ class TestConfigGuiOpens:
     @pytest.mark.parametrize("button", ["Ok", "Cancel"])
     def test_button_exits_cleanly(self, deadline_env, button: str):
         _, env = deadline_env
-        app = ConfigDialog.open(env=env)
-        try:
+        with ConfigDialog.open(env=env) as app:
             app.button(button).press()
-            assert app.proc.wait(timeout=10) == 0
-        finally:
-            if app.proc.poll() is None:
-                app.proc.kill()
-                app.proc.wait()
+            assert app.proc.wait(timeout=3) == 0
 
 
 class TestLogLevelRoundTrip:

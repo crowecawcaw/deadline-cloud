@@ -73,7 +73,7 @@ def gui_submit(bundle_dir, submitter_env):
         try:
             app.locator(
                 'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-            ).wait_attached(timeout=15)
+            ).wait_attached(timeout=5)
         except Exception:
             app.dump_tree()
             raise

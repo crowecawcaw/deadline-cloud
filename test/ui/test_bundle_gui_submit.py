@@ -74,7 +74,7 @@ def gui_submit(bundle_dir, submitter_env) -> Generator[SubmitterDialog, None, No
         try:
             app.locator(
                 'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-            ).wait_attached(timeout=10)
+            ).wait_attached(timeout=5)
         except Exception:
             app.dump_tree()
             raise
@@ -126,7 +126,7 @@ class TestExportBundle:
             try:
                 app.locator(
                     'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-                ).wait_attached(timeout=10)
+                ).wait_attached(timeout=5)
             except Exception:
                 app.dump_tree()
                 raise

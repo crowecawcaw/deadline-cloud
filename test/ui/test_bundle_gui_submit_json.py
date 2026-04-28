@@ -82,7 +82,7 @@ def _wait_farm_resolved(app: SubmitterDialog) -> None:
     try:
         app.locator(
             'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-        ).wait_attached(timeout=15)
+        ).wait_attached(timeout=5)
     except Exception:
         app.dump_tree()
         raise
@@ -117,23 +117,18 @@ class TestOutputJsonSuccess:
         self, bundle_dir, submitter_env, deadline_env
     ) -> None:
         backend, _ = deadline_env
-        app = SubmitterDialog.open(
+        with SubmitterDialog.open(
             bundle_dir,
             env=submitter_env,
             extra_args=["--output", "json"],
             capture_stdio=True,
-        )
-        try:
+        ) as app:
             _wait_farm_resolved(app)
             app.submit_and_ok()
             # With no --submitter-name, the submitter does not auto-close
-            # on success; close it ourselves.
+            # on success; close it ourselves to drain stdout.
             app.close("Cancel")
-            stdout, _ = app.proc.communicate(timeout=10)
-        finally:
-            if app.proc.poll() is None:
-                app.proc.kill()
-                app.proc.wait()
+            stdout, _ = app.proc.communicate(timeout=3)
 
         text = stdout.decode() if isinstance(stdout, bytes) else stdout
         payload = _last_json_object(text)
@@ -149,24 +144,19 @@ class TestOutputJsonCancel:
     def test_json_output_reports_canceled(self, bundle_dir, submitter_env, deadline_env) -> None:
         backend, _ = deadline_env
         # Force CreateJob to stall briefly so we have time to click Cancel.
-        backend.create_job_delay = 5.0
-        app = SubmitterDialog.open(
+        backend.create_job_delay = 3.0
+        with SubmitterDialog.open(
             bundle_dir,
             env=submitter_env,
             extra_args=["--output", "json"],
             capture_stdio=True,
-        )
-        try:
+        ) as app:
             _wait_farm_resolved(app)
             app.submit_then_cancel()
             # The main submitter window stays open after canceling the
-            # progress dialog; close it so the subprocess exits.
+            # progress dialog; close() dismisses it so the subprocess exits.
             app.close("Cancel")
-            stdout, _ = app.proc.communicate(timeout=15)
-        finally:
-            if app.proc.poll() is None:
-                app.proc.kill()
-                app.proc.wait()
+            stdout, _ = app.proc.communicate(timeout=5)
 
         text = stdout.decode() if isinstance(stdout, bytes) else stdout
         payload = _last_json_object(text)
@@ -191,21 +181,16 @@ class TestSubmitterName:
         """With --submitter-name set, close-on-success is enabled and the
         whole subprocess exits after clicking Ok on the progress dialog."""
         dialog_title = "Deadline Cloud Testing Submitter"
-        app = SubmitterDialog.open(
+        with SubmitterDialog.open(
             bundle_dir,
             env=submitter_env,
             extra_args=["--submitter-name", "Testing"],
             dialog_name=dialog_title,
-        )
-        try:
+        ) as app:
             _wait_farm_resolved(app)
             app.submit_and_ok()
-            rc = app.proc.wait(timeout=15)
+            rc = app.proc.wait(timeout=5)
             assert rc == 0, f"unexpected exit code {rc}"
-        finally:
-            if app.proc.poll() is None:
-                app.proc.kill()
-                app.proc.wait()
 
 
 def _last_json_object(text: str) -> dict:

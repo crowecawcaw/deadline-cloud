@@ -8,26 +8,50 @@ can drive the real CLI through the accessibility tree.
 
 from __future__ import annotations
 
+import atexit
 import subprocess
 import sys
 import time
+import weakref
 from typing import Optional, Sequence, TypeVar
 
 import xa11y
 
-STARTUP_TIMEOUT = 15.0
+# All times are in seconds. These are tuned for local mock-backend runs:
+# the GUI binds to localhost HTTP, no real AWS calls happen, and Qt
+# startup under xa11y is typically 1-3s. CI on Xvfb is a bit slower but
+# still well under these ceilings.
+STARTUP_TIMEOUT = 5.0
+CLOSE_TIMEOUT = 2.0
+TERMINATE_TIMEOUT = 2.0
+# How long to wait for ``CreateJob`` + one ``GetJob`` to complete through
+# the local mock before the success dialog's Ok button appears.
+SUBMIT_TIMEOUT = 8.0
+CANCEL_TIMEOUT = 3.0
+# How long to wait for the async farm/queue name refresh to land in the
+# accessibility tree after the submitter window opens.
+FARM_RESOLVE_TIMEOUT = 5.0
+# How long to wait for the export-bundle success dialog.
+EXPORT_TIMEOUT = 3.0
 
 _T = TypeVar("_T", bound="DeadlineApp")
 
+# Track every process we launch so we can reap orphans at interpreter exit
+# (or in the ``_reap_orphans`` fixture) even if a test forgets to clean up.
+_LIVE_PROCS: "weakref.WeakSet[subprocess.Popen]" = weakref.WeakSet()
 
-def _terminate(proc: subprocess.Popen, timeout: float = 5.0) -> None:
-    """Ensure a subprocess is reaped.
 
-    Sends SIGKILL to the process group so any dbus/AT-SPI child processes
-    spawned by the Qt app on Linux are also torn down. On POSIX ``kill()``
-    is non-blocking but the process remains a zombie until ``wait()``; on
-    Windows we fall back to Popen's own ``kill()`` which calls
-    TerminateProcess.
+def _register(proc: subprocess.Popen) -> None:
+    _LIVE_PROCS.add(proc)
+
+
+def _terminate(proc: subprocess.Popen, timeout: float = TERMINATE_TIMEOUT) -> None:
+    """SIGKILL a subprocess (and its process group on POSIX) and reap it.
+
+    On POSIX the subprocess is started with ``start_new_session=True``, so
+    SIGKILL'ing the group also kills any dbus / AT-SPI / LaunchServices
+    helpers Qt spawned. On Windows ``Popen.kill()`` calls TerminateProcess
+    which is synchronous enough for our purposes.
     """
     if proc.poll() is not None:
         return
@@ -51,6 +75,18 @@ def _terminate(proc: subprocess.Popen, timeout: float = 5.0) -> None:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         pass
+
+
+def reap_all() -> None:
+    """Terminate any subprocesses still tracked in ``_LIVE_PROCS``.
+
+    Exposed both for the pytest session fixture and the atexit hook.
+    """
+    for proc in list(_LIVE_PROCS):
+        _terminate(proc)
+
+
+atexit.register(reap_all)
 
 
 def _find_app(pid: int, baseline_names: set, timeout: float) -> xa11y.App:
@@ -117,6 +153,7 @@ class DeadlineApp:
         if sys.platform != "win32":
             popen_kwargs["start_new_session"] = True
         proc = subprocess.Popen(cmd, **popen_kwargs)
+        _register(proc)
         try:
             app = _find_app(proc.pid, baseline, timeout)
             instance = cls(proc, app)
@@ -180,17 +217,18 @@ class DeadlineApp:
         sys.stderr.write("--- end tree ---\n")
 
     def close(self, button_name: str = "Cancel"):
-        """Click a dismiss button; fall back to killing the subprocess.
+        """Click a dismiss button; always ensure the subprocess is reaped.
 
         Tries the accessibility-driven path first so Qt can unwind cleanly,
-        but never blocks on it — if the dialog or process does not respond
-        within a few seconds we SIGKILL and reap unconditionally.
+        but never blocks on it — if the dialog or process doesn't respond
+        within a couple of seconds we SIGKILL the process group
+        unconditionally. ``_terminate`` is a no-op when the process has
+        already exited, so this is safe to call in either order.
         """
         try:
             self.button(button_name).press()
-            self.dialog().wait_detached(timeout=3)
-            self.proc.wait(timeout=3)
-            return
+            self.dialog().wait_detached(timeout=CLOSE_TIMEOUT)
+            self.proc.wait(timeout=CLOSE_TIMEOUT)
         except (xa11y.XA11yError, subprocess.TimeoutExpired):
             pass
         _terminate(self.proc)
@@ -281,16 +319,15 @@ class SubmitterDialog(DeadlineApp):
         """Click 'Export bundle' and dismiss the confirmation dialog."""
         self.button("Export bundle").press()
         ok = self.button("OK")
-        ok.wait_visible(timeout=10)
+        ok.wait_visible(timeout=EXPORT_TIMEOUT)
         ok.press()
 
-    def submit_and_ok(self, timeout: float = 30.0) -> None:
+    def submit_and_ok(self, timeout: float = SUBMIT_TIMEOUT) -> None:
         """Click Submit, wait for the success dialog, click Ok.
 
         Uses the progress dialog's Ok button, which only appears once the
         mock backend has acknowledged CreateJob and GetJob returns a
-        non-``CREATE_IN_PROGRESS`` status. Then waits for the submitter
-        process to exit.
+        non-``CREATE_IN_PROGRESS`` status.
         """
         self.button("Submit").press()
         # Scope to the progress dialog so we don't match the parent
@@ -299,7 +336,7 @@ class SubmitterDialog(DeadlineApp):
         ok.wait_visible(timeout=timeout)
         ok.press()
 
-    def submit_then_cancel(self, cancel_timeout: float = 10.0) -> None:
+    def submit_then_cancel(self, cancel_timeout: float = CANCEL_TIMEOUT) -> None:
         """Click Submit then immediately Cancel on the progress dialog.
 
         Note: clicking Cancel only closes the progress dialog; the parent
