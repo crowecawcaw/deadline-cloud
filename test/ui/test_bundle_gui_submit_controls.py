@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from helpers import FARM_RESOLVE_TIMEOUT, SubmitterDialog
+from helpers import SubmitterDialog
 
 SAMPLE_TEMPLATE = {
     "specificationVersion": "jobtemplate-2023-09",
@@ -70,11 +70,7 @@ def submitter_env(deadline_env, tmp_path) -> dict:
 @pytest.fixture
 def gui_submit(bundle_dir, submitter_env):
     with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
-        try:
-            app.locator('static_text[name="TestFarm"]').wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
-        except Exception:
-            app.dump_tree()
-            raise
+        app.wait_farm_resolved()
         yield app
 
 

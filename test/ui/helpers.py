@@ -322,6 +322,34 @@ class SubmitterDialog(DeadlineApp):
     def job_name(self) -> str:
         return self.locator('text_field[name="Name"]').element().value or ""
 
+    def wait_farm_resolved(
+        self,
+        farm_name: str = "TestFarm",
+        timeout: float = FARM_RESOLVE_TIMEOUT,
+    ) -> None:
+        """Block until the async farm/queue name refresh has populated the UI.
+
+        Without this, ``Submit`` is disabled because the submitter's
+        ``api_availability`` + farm/queue resolution hasn't completed.
+
+        Uses ``tree_contains_text`` rather than an xa11y ``wait_attached``
+        locator because the Qt → UIA tree on Windows wraps the farm-name
+        label in an extra ``group[name="Deadline Cloud settings"]``, and
+        xa11y's descendant match + tree-staleness semantics there make
+        ``wait_attached`` flake on otherwise-healthy dialogs. Falling back
+        to a manual poll over the already-walked tree is portable.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.tree_contains_text(farm_name):
+                return
+            time.sleep(0.25)
+        self.dump_tree()
+        raise TimeoutError(
+            f"Farm name {farm_name!r} did not appear in the submitter's "
+            f"accessibility tree within {timeout}s"
+        )
+
     def export_bundle(self) -> None:
         """Click 'Export bundle' and dismiss the confirmation dialog."""
         self.button("Export bundle").press()

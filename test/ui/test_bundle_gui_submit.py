@@ -10,7 +10,7 @@ from typing import Generator
 
 import pytest
 
-from helpers import FARM_RESOLVE_TIMEOUT, SubmitterDialog
+from helpers import SubmitterDialog
 
 SAMPLE_TEMPLATE = {
     "specificationVersion": "jobtemplate-2023-09",
@@ -66,16 +66,7 @@ def submitter_env(deadline_env, tmp_path) -> dict:
 @pytest.fixture
 def gui_submit(bundle_dir, submitter_env) -> Generator[SubmitterDialog, None, None]:
     with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
-        # Wait for async farm/queue name resolution before asserting.
-        # ``wait_attached`` checks tree membership; ``wait_visible`` also
-        # requires the element to be on-screen, which is unreliable under
-        # Xvfb where the async refresh can complete before the scroll area
-        # is laid out.
-        try:
-            app.locator('static_text[name="TestFarm"]').wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
-        except Exception:
-            app.dump_tree()
-            raise
+        app.wait_farm_resolved()
         yield app
 
 
@@ -84,10 +75,10 @@ class TestSubmitterOpens:
         assert gui_submit.dialog().element().visible
 
     def test_farm_name_resolved(self, gui_submit: SubmitterDialog):
-        assert gui_submit.locator('static_text[name="TestFarm"]').exists()
+        assert gui_submit.tree_contains_text("TestFarm")
 
     def test_queue_name_resolved(self, gui_submit: SubmitterDialog):
-        assert gui_submit.locator('static_text[name="TestQueue"]').exists()
+        assert gui_submit.tree_contains_text("TestQueue")
 
     def test_job_name_displayed(self, gui_submit: SubmitterDialog):
         assert gui_submit.job_name == "Test Render Job"
@@ -117,13 +108,7 @@ class TestExportBundle:
     def test_export_creates_bundle(self, bundle_dir, submitter_env):
         job_history_dir = submitter_env["_JOB_HISTORY_DIR"]
         with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
-            try:
-                app.locator('static_text[name="TestFarm"]').wait_attached(
-                    timeout=FARM_RESOLVE_TIMEOUT
-                )
-            except Exception:
-                app.dump_tree()
-                raise
+            app.wait_farm_resolved()
             app.export_bundle()
 
             assert os.path.isdir(job_history_dir), "Job history dir was not created"

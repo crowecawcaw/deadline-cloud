@@ -20,7 +20,7 @@ import os
 
 import pytest
 
-from helpers import FARM_RESOLVE_TIMEOUT, SubmitterDialog
+from helpers import SubmitterDialog
 
 SAMPLE_TEMPLATE = {
     "specificationVersion": "jobtemplate-2023-09",
@@ -73,19 +73,6 @@ def submitter_env(deadline_env, tmp_path) -> dict:
     return env
 
 
-def _wait_farm_resolved(app: SubmitterDialog) -> None:
-    """Block until the async farm/queue refresh has populated the UI.
-
-    Without this, Submit is disabled (it requires ``api_availability`` to
-    be ``True`` plus farm/queue configured).
-    """
-    try:
-        app.locator('static_text[name="TestFarm"]').wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
-    except Exception:
-        app.dump_tree()
-        raise
-
-
 class TestSubmitJobSuccess:
     """A successful submission hits the mock backend and writes a bundle."""
 
@@ -95,7 +82,7 @@ class TestSubmitJobSuccess:
         backend, _ = deadline_env
         job_history_dir = submitter_env["_JOB_HISTORY_DIR"]
         with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
-            _wait_farm_resolved(app)
+            app.wait_farm_resolved()
             app.submit_and_ok()
 
         assert backend.call_counts.get("CreateJob", 0) == 1, backend.call_counts
@@ -121,7 +108,7 @@ class TestOutputJsonSuccess:
             extra_args=["--output", "json"],
             capture_stdio=True,
         ) as app:
-            _wait_farm_resolved(app)
+            app.wait_farm_resolved()
             app.submit_and_ok()
             # With no --submitter-name, the submitter does not auto-close
             # on success; close it ourselves to drain stdout.
@@ -149,7 +136,7 @@ class TestOutputJsonCancel:
             extra_args=["--output", "json"],
             capture_stdio=True,
         ) as app:
-            _wait_farm_resolved(app)
+            app.wait_farm_resolved()
             app.submit_then_cancel()
             # The main submitter window stays open after canceling the
             # progress dialog; close() dismisses it so the subprocess exits.
@@ -185,7 +172,7 @@ class TestSubmitterName:
             extra_args=["--submitter-name", "Testing"],
             dialog_name=dialog_title,
         ) as app:
-            _wait_farm_resolved(app)
+            app.wait_farm_resolved()
             app.submit_and_ok()
             rc = app.proc.wait(timeout=5)
             assert rc == 0, f"unexpected exit code {rc}"
