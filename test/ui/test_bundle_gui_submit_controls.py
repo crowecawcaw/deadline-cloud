@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from helpers import SubmitterDialog
+from helpers import FARM_RESOLVE_TIMEOUT, SubmitterDialog
 
 SAMPLE_TEMPLATE = {
     "specificationVersion": "jobtemplate-2023-09",
@@ -73,7 +73,7 @@ def gui_submit(bundle_dir, submitter_env):
         try:
             app.locator(
                 'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-            ).wait_attached(timeout=5)
+            ).wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
         except Exception:
             app.dump_tree()
             raise
@@ -84,16 +84,30 @@ class TestSharedJobSettingsControls:
     """Priority and initial state controls exist and have expected defaults."""
 
     def test_priority_spin_box_is_present(self, gui_submit: SubmitterDialog) -> None:
-        # Qt spin boxes are exposed as spin_button on most platforms.
-        assert (
-            gui_submit.locator('spin_button[name="Priority"]').exists()
-            or gui_submit.locator('text_field[name="Priority"]').exists()
-        ), "Priority spin box not found"
+        # Qt's QSpinBox exposes its parent widget's name via accessibility,
+        # not its label text. The "Priority" static_text sits next to the
+        # spin box in the QFormLayout, which is enough to prove the control
+        # is rendered. We also check that the default priority value (50)
+        # is reachable via some spin_button in the dialog's subtree.
+        assert gui_submit.locator('static_text[name="Priority"]').exists(), (
+            "Priority label not found"
+        )
+        assert any(
+            (getattr(sb, "value", "") or "") == "50"
+            for sb in gui_submit.elements_by_role("spin_button")
+        ), "No spin_button with the default Priority value of 50 found"
 
     def test_initial_state_combo_is_present(self, gui_submit: SubmitterDialog) -> None:
+        # Same label/value split: the combo_box's accessible name is its
+        # selected item (READY) on macOS/Linux, while the "Initial state"
+        # label sits next to it.
+        assert gui_submit.locator('static_text[name="Initial state"]').exists(), (
+            "Initial state label not found"
+        )
         assert (
-            gui_submit.locator('combo_box[name="Initial state"]').exists()
-            or gui_submit.locator('combo_box[name="READY"]').exists()
+            gui_submit.locator('combo_box[name="READY"]').exists()
+            or gui_submit.locator('combo_box[name="SUSPENDED"]').exists()
+            or gui_submit.locator('combo_box[name="Initial state"]').exists()
         ), "Initial state combo box not found"
 
 

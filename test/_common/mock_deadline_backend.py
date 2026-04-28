@@ -9,6 +9,7 @@ See docs/design/deadline-tests-mock-backend.md for design details.
 from __future__ import annotations
 import json as _json
 import re as _re
+import sys as _sys
 import threading as _threading
 import traceback as _traceback
 from datetime import datetime, timedelta, timezone
@@ -1204,6 +1205,11 @@ def _make_handler(routes, validator, backend):
                         500, {"message": str(exc)}, error_code="InternalServerException"
                     )
                 return
+            # Log 404s at stderr so a debugging CI run surfaces which path
+            # the client hit without going through the mock's HTTP response
+            # (which BrokenPipes if the client already disconnected).
+            _sys.stderr.write(f"[mock-backend] 404 {method} {parsed.path}\n")
+            _sys.stderr.flush()
             self._send_json(
                 404,
                 {"message": f"No route for {method} {parsed.path}"},

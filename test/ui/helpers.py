@@ -17,22 +17,30 @@ from typing import Optional, Sequence, TypeVar
 
 import xa11y
 
-# All times are in seconds. These are tuned for local mock-backend runs:
-# the GUI binds to localhost HTTP, no real AWS calls happen, and Qt
-# startup under xa11y is typically 1-3s. CI on Xvfb is a bit slower but
-# still well under these ceilings.
-STARTUP_TIMEOUT = 5.0
-CLOSE_TIMEOUT = 2.0
-TERMINATE_TIMEOUT = 2.0
-# How long to wait for ``CreateJob`` + one ``GetJob`` to complete through
-# the local mock before the success dialog's Ok button appears.
-SUBMIT_TIMEOUT = 8.0
-CANCEL_TIMEOUT = 3.0
+# All times are in seconds. These are tuned for mock-backend runs over
+# localhost HTTP, where no real AWS calls happen. The ceilings are
+# deliberately generous on top of the typical durations because Qt/
+# AT-SPI startup under Xvfb on Linux CI and Windows UIA can both be
+# substantially slower than a developer workstation, and a too-tight
+# ceiling masks failures as timeouts instead of failing fast.
+STARTUP_TIMEOUT = 15.0
+CLOSE_TIMEOUT = 3.0
+TERMINATE_TIMEOUT = 3.0
+# How long to wait for ``CreateJob`` + ``GetJob`` polling to complete
+# through the local mock before the success dialog's Ok button appears.
+# The submitter has a 0.5s initial_delay + doubling backoff in its
+# create-job waiter, so a single poll cycle costs ~1.5-2s on top of
+# mock latency. 20s covers that plus progress-dialog paint.
+SUBMIT_TIMEOUT = 20.0
+# The Cancel button appears on the progress dialog immediately after
+# clicking Submit, but under Xvfb the dialog paint is delayed.
+CANCEL_TIMEOUT = 10.0
 # How long to wait for the async farm/queue name refresh to land in the
-# accessibility tree after the submitter window opens.
-FARM_RESOLVE_TIMEOUT = 5.0
+# accessibility tree after the submitter window opens. The refresh is
+# a chain of 2-3 HTTP roundtrips + a Qt signal hop.
+FARM_RESOLVE_TIMEOUT = 10.0
 # How long to wait for the export-bundle success dialog.
-EXPORT_TIMEOUT = 3.0
+EXPORT_TIMEOUT = 10.0
 
 _T = TypeVar("_T", bound="DeadlineApp")
 
@@ -174,6 +182,23 @@ class DeadlineApp:
     def locator(self, selector: str) -> xa11y.Locator:
         return self._app.locator(selector)
 
+    def elements_by_role(self, role: str) -> list:
+        """Return every element in the app's accessibility tree with the
+        given ``role`` (e.g. ``"spin_button"``), depth-first."""
+        return list(_iter_by_role(self._app, role))
+
+    def tree_contains_text(self, needle: str) -> bool:
+        """True if any element in the app's tree has ``needle`` in its
+        accessible ``name`` or ``value``.
+
+        Useful for cross-platform checks where the same Qt widget exposes
+        its text on different attributes and/or different roles depending
+        on the accessibility backend (macOS AXAPI vs Linux AT-SPI vs
+        Windows UIA). Callers should only reach for this when a precise
+        selector is not platform-portable.
+        """
+        return any(_walk_contains_text(root, needle) for root in self._app.children())
+
     @property
     def dialog_name(self) -> str:
         return getattr(self, "_dialog_name", self.DIALOG)
@@ -270,24 +295,6 @@ class ConfigDialog(DeadlineApp):
             return value
         return combo.name or ""
 
-    @property
-    def auth_profile_text(self) -> str:
-        """Text shown on the auth-status widget's profile button.
-
-        Returns the best-matching push_button text; the widget has a few
-        buttons (profile button, Log in, More info, Switch profile). The
-        profile button is the only one whose text is not one of those
-        fixed labels.
-        """
-        known = {"Log in", "Log out", "Switch profile", "More info"}
-        for btn in _iter_by_role(self._app, "push_button"):
-            name = btn.name or ""
-            if name and name not in known and name not in {"Ok", "Cancel", "Apply"}:
-                # Profile name shows either "(default)" or something containing
-                # a profile string — there's only one such button.
-                return name
-        return ""
-
 
 class SubmitterDialog(DeadlineApp):
     """Page object for ``deadline bundle gui-submit``."""
@@ -369,3 +376,23 @@ def _iter_by_role(root, role: str):
             yield from _iter_by_role(child, role)
     except Exception:
         return
+
+
+def _walk_contains_text(root, needle: str) -> bool:
+    """True iff some element under ``root`` has ``needle`` in its name/value.
+
+    Swallows per-element errors (e.g. the element was reparented mid-walk)
+    rather than aborting the whole search, because the accessibility tree
+    can mutate while we're iterating it.
+    """
+    try:
+        for field in ("name", "value"):
+            text = getattr(root, field, None) or ""
+            if needle in text:
+                return True
+        for child in root.children():
+            if _walk_contains_text(child, needle):
+                return True
+    except Exception:
+        return False
+    return False

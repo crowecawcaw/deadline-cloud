@@ -20,7 +20,7 @@ import os
 
 import pytest
 
-from helpers import SubmitterDialog
+from helpers import FARM_RESOLVE_TIMEOUT, SubmitterDialog
 
 SAMPLE_TEMPLATE = {
     "specificationVersion": "jobtemplate-2023-09",
@@ -82,7 +82,7 @@ def _wait_farm_resolved(app: SubmitterDialog) -> None:
     try:
         app.locator(
             'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-        ).wait_attached(timeout=5)
+        ).wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
     except Exception:
         app.dump_tree()
         raise

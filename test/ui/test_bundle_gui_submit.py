@@ -10,7 +10,7 @@ from typing import Generator
 
 import pytest
 
-from helpers import SubmitterDialog
+from helpers import FARM_RESOLVE_TIMEOUT, SubmitterDialog
 
 SAMPLE_TEMPLATE = {
     "specificationVersion": "jobtemplate-2023-09",
@@ -74,7 +74,7 @@ def gui_submit(bundle_dir, submitter_env) -> Generator[SubmitterDialog, None, No
         try:
             app.locator(
                 'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-            ).wait_attached(timeout=5)
+            ).wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
         except Exception:
             app.dump_tree()
             raise
@@ -126,7 +126,7 @@ class TestExportBundle:
             try:
                 app.locator(
                     'group[name="Deadline Cloud settings"] static_text[name="TestFarm"]'
-                ).wait_attached(timeout=5)
+                ).wait_attached(timeout=FARM_RESOLVE_TIMEOUT)
             except Exception:
                 app.dump_tree()
                 raise

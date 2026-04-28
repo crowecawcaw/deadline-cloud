@@ -56,13 +56,14 @@ class TestConfigGuiSettingsSections:
     def test_auth_status_widget_shows_default_profile(self, deadline_env):
         _, env = deadline_env
         with ConfigDialog.open(env=env) as app:
-            # With no explicit profile set, the default is "(default)".
-            # The auth status widget shows this text on its profile button.
-            # (Also appears in the Global settings combo, so checking the
-            # whole tree for a matching button covers either location.)
-            profile_text = app.auth_profile_text
-            assert "(default)" in profile_text or profile_text != "", (
-                f"Expected profile name on auth widget, got {profile_text!r}"
+            # With no explicit profile set, the default AWS profile name
+            # is "(default)". It should surface somewhere in the auth
+            # status widget's subtree — which role Qt exposes that text
+            # on is platform-dependent (push_button on Linux/Windows UIA,
+            # combo_box on macOS when the widget is in a CONFIGURATION_ERROR
+            # state because fake creds can't sign a real STS call).
+            assert app.tree_contains_text("(default)"), (
+                "'(default)' profile name not found anywhere in the auth status widget"
             )
 
 
