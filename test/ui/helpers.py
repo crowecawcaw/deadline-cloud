@@ -241,22 +241,92 @@ class DeadlineApp:
             sys.stderr.write(f"<tree error: {e}>\n")
         sys.stderr.write("--- end tree ---\n")
 
-    def close(self, button_name: str = "Cancel"):
-        """Click a dismiss button; always ensure the subprocess is reaped.
+    def close(self, button_name: str = "Cancel") -> None:
+        """Press a dismiss button and wait for the subprocess to exit.
 
-        Tries the accessibility-driven path first so Qt can unwind cleanly,
-        but never blocks on it — if the dialog or process doesn't respond
-        within a couple of seconds we SIGKILL the process group
-        unconditionally. ``_terminate`` is a no-op when the process has
-        already exited, so this is safe to call in either order.
+        The submitter main window has no ``Cancel`` button (only Settings,
+        Help, Submit, and Export bundle), so tests that want a clean
+        shutdown must rely on the window-level ``Close`` button — Windows
+        exposes one on the title bar, and macOS exposes the traffic-light
+        close under an ``AXCloseButton`` subrole that xa11y surfaces as
+        ``button[name="close button"]``. On Linux under AT-SPI neither is
+        reliably exposed, so we fall back to sending ``SIGTERM`` to the
+        process group. The test-only ``sitecustomize.py`` shim set up in
+        ``conftest.py`` installs a ``SIGTERM`` handler in the subprocess
+        that calls ``QApplication.quit()``, so Qt's event loop exits and
+        the CLI gets a chance to run ``_print_response`` + flush stdout
+        before the interpreter exits.
+
+        Always reaps the subprocess with ``SIGKILL`` as the last resort.
         """
+        # Try the specified button first, then the window-level Close
+        # affordance. ``exists()`` on xa11y Locators is guarded with
+        # ``xa11y.XA11yError`` (covers ``PlatformError`` via inheritance)
+        # because Windows UIA occasionally raises on transient queries
+        # (see https://github.com/xa11y/xa11y/issues/169).
+        clicked = False
+        for candidate in (button_name, "Close", "close button"):
+            try:
+                btn = self.button(candidate)
+                if btn.exists():
+                    btn.press()
+                    clicked = True
+                    break
+            except xa11y.XA11yError:
+                continue
+        if not clicked:
+            # No button matched — fall back to a graceful signal so the
+            # Qt event loop can unwind and flush stdout.
+            self._signal_terminate()
+
         try:
-            self.button(button_name).press()
             self.dialog().wait_detached(timeout=CLOSE_TIMEOUT)
             self.proc.wait(timeout=CLOSE_TIMEOUT)
         except (xa11y.XA11yError, subprocess.TimeoutExpired):
-            pass
+            # Dialog still visible or process still running — signal
+            # again in case the button press was lost in a modal loop,
+            # and give Qt one more CLOSE_TIMEOUT window to flush stdout
+            # before SIGKILL.
+            self._signal_terminate()
+            try:
+                self.proc.wait(timeout=CLOSE_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                pass
         _terminate(self.proc)
+
+    def _signal_terminate(self) -> None:
+        """Ask the subprocess to shut down gracefully via OS signals.
+
+        POSIX: ``SIGTERM`` to the whole process group. The subprocess's
+        ``sitecustomize.py`` (see ``conftest.py``) installs a handler
+        that calls ``QApplication.quit()``, so ``app.exec()`` returns,
+        ``_print_response`` runs, stdout is flushed and the interpreter
+        exits with code 0.
+
+        Windows: ``proc.terminate()`` (``TerminateProcess``). There is
+        no portable way to ask a Qt process on Windows to unwind
+        cleanly through a signal, so this is best-effort only — the
+        JSON-capture tests rely on the accessibility-driven Close
+        button path working on Windows.
+        """
+        if self.proc.poll() is not None:
+            return
+        if sys.platform != "win32":
+            import os
+            import signal
+
+            try:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    self.proc.terminate()
+                except OSError:
+                    pass
+        else:
+            try:
+                self.proc.terminate()
+            except OSError:
+                pass
 
 
 class ConfigDialog(DeadlineApp):
