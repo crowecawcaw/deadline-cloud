@@ -100,6 +100,21 @@ def last_json_object(text: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Accessibility selector helpers
+# ---------------------------------------------------------------------------
+
+
+def _dialog_selector(name: str) -> str:
+    """Return the xa11y selector for a Qt dialog with the given *name*.
+
+    Qt's top-level QDialog is exposed as ``dialog`` on macOS/Linux but
+    ``window`` on Windows UIA.
+    """
+    role = "window" if sys.platform.startswith("win") else "dialog"
+    return f'{role}[name="{name}"]'
+
+
+# ---------------------------------------------------------------------------
 # Process management
 # ---------------------------------------------------------------------------
 _T = TypeVar("_T", bound="DeadlineApp")
@@ -110,16 +125,20 @@ def _register(proc: subprocess.Popen) -> None:
     _LIVE_PROCS.add(proc)
 
 
-def _terminate(proc: subprocess.Popen, timeout: float = TERMINATE_TIMEOUT) -> None:
-    """SIGKILL a subprocess (and its process group on POSIX) and reap it."""
+def _send_signal_to_proc(proc: subprocess.Popen, sig: int) -> None:
+    """Send *sig* to the subprocess's process group (POSIX) or call
+    ``kill()``/``terminate()`` (Windows).
+
+    On POSIX the subprocess is started with ``start_new_session=True``, so
+    signalling the group also reaches any dbus / AT-SPI helpers Qt spawned.
+    """
     if proc.poll() is not None:
         return
     if sys.platform != "win32":
         import os
-        import signal
 
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            os.killpg(os.getpgid(proc.pid), sig)
         except (ProcessLookupError, PermissionError, OSError):
             try:
                 proc.kill()
@@ -127,9 +146,23 @@ def _terminate(proc: subprocess.Popen, timeout: float = TERMINATE_TIMEOUT) -> No
                 pass
     else:
         try:
-            proc.kill()
+            # Windows has no POSIX signals; kill() calls TerminateProcess
+            # for SIGKILL, terminate() for SIGTERM (best-effort).
+            import signal
+
+            if sig == signal.SIGKILL:
+                proc.kill()
+            else:
+                proc.terminate()
         except OSError:
             pass
+
+
+def _terminate(proc: subprocess.Popen, timeout: float = TERMINATE_TIMEOUT) -> None:
+    """SIGKILL a subprocess and reap it."""
+    import signal
+
+    _send_signal_to_proc(proc, signal.SIGKILL)
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -268,11 +301,7 @@ class DeadlineApp:
         return getattr(self, "_dialog_name", self.DIALOG)
 
     def dialog(self) -> xa11y.Locator:
-        name = self.dialog_name
-        selector = (
-            f'window[name="{name}"]' if sys.platform.startswith("win") else f'dialog[name="{name}"]'
-        )
-        return self.locator(selector)
+        return self.locator(_dialog_selector(self.dialog_name))
 
     def button(self, name: str) -> xa11y.Locator:
         return self.locator(f'button[name="{name}"]')
@@ -333,25 +362,10 @@ class DeadlineApp:
         _terminate(self.proc)
 
     def _signal_terminate(self) -> None:
-        """Ask the subprocess to shut down gracefully via OS signals."""
-        if self.proc.poll() is not None:
-            return
-        if sys.platform != "win32":
-            import os
-            import signal
+        """Ask the subprocess to shut down gracefully via SIGTERM."""
+        import signal
 
-            try:
-                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError):
-                try:
-                    self.proc.terminate()
-                except OSError:
-                    pass
-        else:
-            try:
-                self.proc.terminate()
-            except OSError:
-                pass
+        _send_signal_to_proc(self.proc, signal.SIGTERM)
 
 
 class ConfigDialog(DeadlineApp):
@@ -386,6 +400,7 @@ class SubmitterDialog(DeadlineApp):
     """Page object for ``deadline bundle gui-submit``."""
 
     DIALOG = "Deadline Cloud JobBundle Submitter"
+    _PROGRESS_TITLE = "AWS Deadline Cloud submission"
 
     @classmethod
     def open(
@@ -403,6 +418,10 @@ class SubmitterDialog(DeadlineApp):
             dialog_name=dialog_name,
             capture_stdio=capture_stdio,
         )
+
+    @property
+    def _progress_selector(self) -> str:
+        return _dialog_selector(self._PROGRESS_TITLE)
 
     @property
     def job_name(self) -> str:
@@ -487,32 +506,20 @@ class SubmitterDialog(DeadlineApp):
 
     def dismiss_progress_close(self, timeout: float = CANCEL_TIMEOUT) -> None:
         """Wait for the progress dialog to close after cancel."""
-        progress_title = "AWS Deadline Cloud submission"
-        dialog_selector = (
-            f'window[name="{progress_title}"]'
-            if sys.platform.startswith("win")
-            else f'dialog[name="{progress_title}"]'
-        )
         try:
-            close = self.locator(f'{dialog_selector} button[name="Close"]')
+            close = self.locator(f'{self._progress_selector} button[name="Close"]')
             close.wait_visible(timeout=timeout)
             close.press()
         except xa11y.XA11yError:
             pass
         try:
-            self.locator(dialog_selector).wait_detached(timeout=timeout)
+            self.locator(self._progress_selector).wait_detached(timeout=timeout)
         except xa11y.XA11yError:
             pass
 
     def _progress_button(self, name: str) -> xa11y.Locator:
         """Locate a button inside the submission progress dialog."""
-        progress_title = "AWS Deadline Cloud submission"
-        dialog_selector = (
-            f'window[name="{progress_title}"]'
-            if sys.platform.startswith("win")
-            else f'dialog[name="{progress_title}"]'
-        )
-        return self.locator(f'{dialog_selector} button[name="{name}"]')
+        return self.locator(f'{self._progress_selector} button[name="{name}"]')
 
 
 # ---------------------------------------------------------------------------
