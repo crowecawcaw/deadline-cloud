@@ -480,29 +480,3 @@ These are the manual test cases for the client software release cycle, covering 
 | Verify 'Load a different job bundle' button in GUI Submitter | Launch GUI Submitter using `deadline bundle gui-submit --browse`, select a job bundle. Verify correct defaults/details. Hit 'Load a different job bundle' button and select a second job bundle. Verify correct defaults/details for the second bundle. | Requires the native file browser, which cannot be driven from xa11y. |
 | Test Deadline Cloud release candidate against currently released DCC Submitter | A Blender manual install might be easiest. Build deadline-cloud from the release candidate branch and pip install it into the submitter dependencies instead of the latest in PyPi. | |
 
-The following manual cases are now covered by automated UI tests in `test/ui/` and `test/cli_e2e/`:
-
-* `deadline config gui` dialog loads and workstation settings round-trip from
-  CLI writes to the GUI — `test/ui/test_config_gui_settings.py`,
-  `test/ui/test_config_gui_log_level.py`.
-* `deadline auth login` against a non-DCM AWS profile reports the "only
-  supported for AWS Profiles created by Deadline Cloud monitor" error —
-  `test/cli_e2e/test_auth.py::test_cli_auth_login_without_monitor_profile_reports_error`.
-* Authenticating against an AWS profile shows the profile name in the config
-  GUI's auth-status widget — `test/ui/test_config_gui_settings.py`.
-* Submitting a render job via `deadline bundle gui-submit` creates a job
-  (mock-backend CreateJob) and a job-history bundle —
-  `test/ui/test_bundle_gui_submit_json.py::TestSubmitJobSuccess`.
-* `deadline bundle gui-submit --output json` emits
-  `{"status":"SUBMITTED","jobId":..,"jobHistoryBundleDirectory":..}` on
-  success and `{"status":"CANCELED"}` on cancel —
-  `test/ui/test_bundle_gui_submit_json.py::TestOutputJsonSuccess` /
-  `TestOutputJsonCancel`.
-* `deadline bundle gui-submit --submitter-name Testing` sets the window
-  title and exits the process after a successful submission —
-  `test/ui/test_bundle_gui_submit_json.py::TestSubmitterName`.
-* Representative submitter dialog controls (priority spin box, initial
-  state combo, host-requirements radio buttons, job-attachments tab,
-  tabs) are present and reachable —
-  `test/ui/test_bundle_gui_submit.py`,
-  `test/ui/test_bundle_gui_submit_controls.py`.
