@@ -143,17 +143,15 @@ def test_get_queue_user_boto3_session_no_profile(fresh_deadline_config):
 
 
 def test_check_deadline_api_available(fresh_deadline_config):
-    with patch.object(api._session, "get_boto3_client") as boto3_client_mock, patch.object(
-        api._session, "get_user_and_identity_store_id", return_value=(None, None)
-    ):
-        boto3_client_mock.return_value.list_farms.return_value = {"farms": []}
+    with patch.object(api._session, "get_boto3_session") as session_mock:
+        session_mock().client("deadline").list_farms.return_value = {"farms": []}
 
         # Call the function under test
         result = api.check_deadline_api_available()
 
         assert result is True
         # It should have called list_farms to check the API
-        boto3_client_mock.return_value.list_farms.assert_called_once_with(maxResults=1)
+        session_mock().client("deadline").list_farms.assert_called_once_with(maxResults=1)
 
 
 def test_check_deadline_api_available_injects_principal_id(fresh_deadline_config):
@@ -172,17 +170,15 @@ def test_check_deadline_api_available_injects_principal_id(fresh_deadline_config
 
 
 def test_check_deadline_api_available_fails(fresh_deadline_config):
-    with patch.object(api._session, "get_boto3_client") as boto3_client_mock, patch.object(
-        api._session, "get_user_and_identity_store_id", return_value=(None, None)
-    ):
-        boto3_client_mock.return_value.list_farms.side_effect = Exception()
+    with patch.object(api._session, "get_boto3_session") as session_mock:
+        session_mock().client("deadline").list_farms.side_effect = Exception()
 
         # Call the function under test
         result = api.check_deadline_api_available()
 
         assert result is False
         # It should have called list_farms with to check the API
-        boto3_client_mock.return_value.list_farms.assert_called_once_with(maxResults=1)
+        session_mock().client("deadline").list_farms.assert_called_once_with(maxResults=1)
 
 
 def test_get_session_client_caching():
