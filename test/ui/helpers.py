@@ -146,11 +146,10 @@ def _send_signal_to_proc(proc: subprocess.Popen, sig: int) -> None:
                 pass
     else:
         try:
-            # Windows has no POSIX signals; kill() calls TerminateProcess
-            # for SIGKILL, terminate() for SIGTERM (best-effort).
-            import signal
-
-            if sig == signal.SIGKILL:
+            # Windows has no POSIX signals; map to kill()/terminate().
+            # signal.SIGKILL (9) doesn't exist on Windows, so compare
+            # against the integer directly.
+            if sig == 9:  # SIGKILL
                 proc.kill()
             else:
                 proc.terminate()
@@ -160,9 +159,17 @@ def _send_signal_to_proc(proc: subprocess.Popen, sig: int) -> None:
 
 def _terminate(proc: subprocess.Popen, timeout: float = TERMINATE_TIMEOUT) -> None:
     """SIGKILL a subprocess and reap it."""
-    import signal
+    if proc.poll() is not None:
+        return
+    if sys.platform != "win32":
+        import signal
 
-    _send_signal_to_proc(proc, signal.SIGKILL)
+        _send_signal_to_proc(proc, signal.SIGKILL)
+    else:
+        try:
+            proc.kill()
+        except OSError:
+            pass
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
