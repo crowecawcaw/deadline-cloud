@@ -138,6 +138,11 @@ class TestOutputJsonCancel:
         ) as app:
             app.wait_farm_resolved()
             app.submit_then_cancel()
+            # submit_then_cancel presses Cancel on the progress dialog,
+            # which transitions its button to Close. Dismiss it so
+            # close() below doesn't accidentally press the progress
+            # dialog's Close instead of the submitter's title-bar Close.
+            app.dismiss_progress_close()
             # The main submitter window stays open after canceling the
             # progress dialog; close() dismisses it so the subprocess exits.
             app.close("Cancel")
