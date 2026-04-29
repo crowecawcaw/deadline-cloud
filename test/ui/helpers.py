@@ -242,51 +242,46 @@ class DeadlineApp:
         sys.stderr.write("--- end tree ---\n")
 
     def close(self, button_name: str = "Cancel") -> None:
-        """Press a dismiss button and wait for the subprocess to exit.
+        """Dismiss the dialog and reap the subprocess.
 
-        The submitter main window has no ``Cancel`` button (only Settings,
-        Help, Submit, and Export bundle), so tests that want a clean
-        shutdown must rely on the window-level ``Close`` button — Windows
-        exposes one on the title bar, and macOS exposes the traffic-light
-        close under an ``AXCloseButton`` subrole that xa11y surfaces as
-        ``button[name="close button"]``. On Linux under AT-SPI neither is
-        reliably exposed, so we fall back to sending ``SIGTERM`` to the
-        process group. The test-only ``sitecustomize.py`` shim set up in
-        ``conftest.py`` installs a ``SIGTERM`` handler in the subprocess
-        that calls ``QApplication.quit()``, so Qt's event loop exits and
-        the CLI gets a chance to run ``_print_response`` + flush stdout
-        before the interpreter exits.
-
-        Always reaps the subprocess with ``SIGKILL`` as the last resort.
+        Strategy (in order):
+        1. Try pressing the named button (e.g. Cancel/Ok) scoped to the
+           main dialog, then platform close affordances (title-bar Close
+           on Windows, traffic-light "close button" on macOS).
+        2. If no button was found or pressed, send SIGTERM (POSIX) or
+           TerminateProcess (Windows). The sitecustomize shim installs a
+           SIGTERM→QApplication.quit() handler so the CLI can flush
+           stdout before exiting.
+        3. Wait briefly for the process to exit. Skip accessibility
+           queries once the process is dead — on Linux, querying AT-SPI
+           after the subprocess exits blocks for the D-Bus reply timeout
+           (~25 s per call), which cascades into pytest-timeout failures.
+        4. SIGKILL as last resort via ``_terminate``.
         """
-        # Try the specified button first, then the window-level Close
-        # affordance. ``exists()`` on xa11y Locators is guarded with
-        # ``xa11y.XA11yError`` (covers ``PlatformError`` via inheritance)
-        # because Windows UIA occasionally raises on transient queries
-        # (see https://github.com/xa11y/xa11y/issues/169).
-        clicked = False
+        if self.proc.poll() is not None:
+            _terminate(self.proc)
+            return
+
+        # Try accessibility-driven close. Scoped to the main dialog so
+        # we don't hit a lingering progress-dialog button on Windows.
         for candidate in (button_name, "Close", "close button"):
+            if self.proc.poll() is not None:
+                break
             try:
-                btn = self.button(candidate)
+                btn = self.dialog().descendant(f'button[name="{candidate}"]')
                 if btn.exists():
                     btn.press()
-                    clicked = True
                     break
             except xa11y.XA11yError:
                 continue
-        if not clicked:
-            # No button matched — fall back to a graceful signal so the
-            # Qt event loop can unwind and flush stdout.
+        else:
+            # No button found — graceful signal.
             self._signal_terminate()
 
+        # Give the process a moment to exit cleanly.
         try:
-            self.dialog().wait_detached(timeout=CLOSE_TIMEOUT)
             self.proc.wait(timeout=CLOSE_TIMEOUT)
-        except (xa11y.XA11yError, subprocess.TimeoutExpired):
-            # Dialog still visible or process still running — signal
-            # again in case the button press was lost in a modal loop,
-            # and give Qt one more CLOSE_TIMEOUT window to flush stdout
-            # before SIGKILL.
+        except subprocess.TimeoutExpired:
             self._signal_terminate()
             try:
                 self.proc.wait(timeout=CLOSE_TIMEOUT)
