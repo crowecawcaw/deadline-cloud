@@ -1,84 +1,60 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Shared fixtures for `test/ui/` — launches the real `deadline` GUI as a
+Shared fixtures for ``test/ui/`` — launches the real ``deadline`` GUI as a
 subprocess pointed at an in-process MockDeadlineBackend and drives it
 through the accessibility tree via xa11y.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
-from typing import Iterator
+from typing import Generator, Iterator
 
 import pytest
 
-# Allow test modules to `from helpers import ...` under --confcutdir.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _common.mock_deadline_backend import MockDeadlineBackend, start_server  # noqa: E402
-from helpers import reap_all  # noqa: E402
+from helpers import SAMPLE_TEMPLATE, SubmitterDialog, reap_all  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def _reap_ui_subprocesses() -> Iterator[None]:
-    """Kill any GUI subprocesses still alive at test end.
-
-    Tests that forget ``with ... as app`` or whose ``try/finally`` fails to
-    run would otherwise leave ``deadline`` subprocesses hanging around in
-    the macOS dock (and on the pid table everywhere). Belt-and-suspenders:
-    ``helpers.reap_all`` is also registered via ``atexit``.
-    """
+    """Kill any GUI subprocesses still alive at test end."""
     yield
     reap_all()
 
 
-# Subprocess shim run before the CLI imports. Three responsibilities:
+# ---------------------------------------------------------------------------
+# Subprocess shim — injected via PYTHONPATH/sitecustomize.py
+# ---------------------------------------------------------------------------
+# Two responsibilities:
 #
 #   1. Strip botocore's ``management.`` host-prefix so the CLI subprocess
 #      talks directly to 127.0.0.1 (mirrors ``test/cli_e2e/conftest.py``).
-#   2. Stub ``TelemetryClient.get_account_id`` so the background telemetry
-#      thread doesn't hit the real STS endpoint with the fake AWS creds
-#      the fixture sets. On failure, the production code ``print()``s an
-#      ``InvalidClientTokenId`` message to **stdout**, which pollutes the
-#      capture used by the ``--output json`` tests. Stubbing here (not in
-#      production) keeps the fix test-scoped.
-#   3. Install a POSIX ``SIGTERM`` handler that calls
+#   2. Install a POSIX ``SIGTERM`` handler that calls
 #      ``QApplication.quit()`` so tests can ask a running ``deadline``
 #      subprocess to unwind cleanly (run ``_print_response``, flush
-#      stdout) before exiting. By default Python's SIGTERM handler
-#      terminates the process immediately, so the CLI's trailing
-#      ``click.echo(json.dumps(...))`` never runs and the ``--output
-#      json`` tests see empty stdout.
+#      stdout) before exiting. A no-op QTimer ensures Python's signal
+#      handler fires inside Qt's C++ event loop.
+#
+# Telemetry is disabled via DEADLINE_CLOUD_TELEMETRY_OPT_OUT=true in the
+# env (see ``deadline_env`` below), so no telemetry patching is needed.
 _SITECUSTOMIZE = """
-# Test shim: runs before the CLI imports. Keep imports lazy — this file
-# gets loaded by every Python subprocess whose PYTHONPATH starts with
-# this directory, including the non-GUI ``deadline config get/set``
-# subprocesses our tests use as helpers.
 import botocore.awsrequest as _ar
 _orig_urljoin = _ar._urljoin
 def _urljoin(endpoint_url, url_path, host_prefix):
     return _orig_urljoin(endpoint_url, url_path, None)
 _ar._urljoin = _urljoin
 
-try:
-    from deadline.client.api import _telemetry as _t
-
-    def _stub_get_account_id(self, boto3_session):
-        return None
-
-    _t.TelemetryClient.get_account_id = _stub_get_account_id
-except Exception:
-    pass
-
 import signal as _signal
 
 
 def _on_sigterm(signum, frame):
-    # Ask the Qt event loop to exit so the CLI's trailing
-    # ``_print_response`` can run + flush stdout before exit.
     try:
         from qtpy.QtWidgets import QApplication as _QApp
         _inst = _QApp.instance()
@@ -97,23 +73,16 @@ except (ValueError, OSError):
     pass
 
 # Qt's event loop blocks in C++, so Python signal handlers only fire at
-# bytecode boundaries — which don't happen inside ``app.exec()`` unless
-# something forces a Python callback. Arrange for a no-op 100ms
-# ``QTimer`` to start alongside any ``QApplication`` the CLI
-# instantiates, giving Python a regular chance to run pending signal
-# handlers. Deferred via a ``sys.meta_path`` finder so non-GUI CLI
-# subprocesses (``deadline config get/set`` helpers) don't pay the Qt
-# import cost at interpreter startup.
+# bytecode boundaries. A no-op QTimer gives Python a regular chance to
+# run pending signal handlers inside app.exec(). Deferred via
+# sys.meta_path so non-GUI subprocesses don't pay the Qt import cost.
 import sys as _sys
 
 
 class _QtPyPostImportPatcher:
-    \"\"\"Patch QApplication.__init__ the first time qtpy.QtWidgets is imported.\"\"\"
-
     def find_spec(self, fullname, path, target=None):
         if fullname != "qtpy.QtWidgets":
             return None
-        # Unhook before importing so find_spec isn't called recursively.
         try:
             _sys.meta_path.remove(self)
         except ValueError:
@@ -134,13 +103,16 @@ class _QtPyPostImportPatcher:
             self._sigterm_pulse.start()
 
         _qw.QApplication.__init__ = _qa_init
-        # Returning None lets the normal import machinery find the
-        # already-loaded module via sys.modules.
         return None
 
 
 _sys.meta_path.insert(0, _QtPyPostImportPatcher())
 """
+
+
+# ---------------------------------------------------------------------------
+# Mock backend fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="session")
@@ -166,7 +138,7 @@ def mock_backend(_mock_backend_server) -> Iterator[tuple[MockDeadlineBackend, st
 @pytest.fixture
 def deadline_env(tmp_path: Path, mock_backend) -> tuple[MockDeadlineBackend, dict]:
     """Env vars pointing the GUI subprocess at the mock backend with an
-    isolated HOME and config file. Returns (backend, env)."""
+    isolated HOME and config file. Returns ``(backend, env)``."""
     backend, deadline_url = mock_backend
 
     config_file = tmp_path / "deadline.config"
@@ -185,21 +157,58 @@ def deadline_env(tmp_path: Path, mock_backend) -> tuple[MockDeadlineBackend, dic
         "AWS_SECRET_ACCESS_KEY": "testing",
         "AWS_DEFAULT_REGION": "us-west-2",
         "DEADLINE_CONFIG_FILE_PATH": str(config_file),
-        # Belt-and-braces: opt out of telemetry so the client's
-        # background thread never tries to hit ``/2023-10-12/telemetry``
-        # (not implemented by the mock — 404s can cascade into
-        # BrokenPipes on stderr). The sitecustomize shim above also
-        # stubs ``TelemetryClient.get_account_id`` so the stdout of the
-        # ``--output json`` tests isn't polluted by STS-call failures.
         "DEADLINE_CLOUD_TELEMETRY_OPT_OUT": "true",
-        # Force the subprocess's stdout/stderr to line-buffer (and flush
-        # on newline) so --output json tests that capture stdout via a
-        # subprocess pipe actually see the JSON payload written by
-        # ``click.echo`` before the subprocess terminates. Without this,
-        # Python detects the non-TTY destination and switches stdout to
-        # block buffering, so the final JSON can stay in the in-process
-        # buffer and be lost when we SIGKILL on shutdown.
         "PYTHONUNBUFFERED": "1",
         "PYTHONPATH": str(shim_dir) + os.pathsep + os.environ.get("PYTHONPATH", ""),
     }
     return backend, env
+
+
+# ---------------------------------------------------------------------------
+# Shared submitter fixtures (used by test_bundle_gui_submit*.py)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def bundle_dir(tmp_path) -> str:
+    """Create a minimal job bundle directory."""
+    d = tmp_path / "bundle"
+    d.mkdir()
+    (d / "template.json").write_text(json.dumps(SAMPLE_TEMPLATE))
+    return str(d)
+
+
+@pytest.fixture
+def submitter_env(deadline_env, tmp_path) -> dict:
+    """Seed a farm + queue and point the deadline config at them."""
+    backend, env = deadline_env
+    farm = backend.create_farm(displayName="TestFarm", description="")
+    queue = backend.create_queue(farmId=farm["farmId"], displayName="TestQueue", description="")
+
+    job_history_dir = tmp_path / "job_history"
+    config = env["DEADLINE_CONFIG_FILE_PATH"]
+    with open(config, "w") as f:
+        f.write(
+            "[defaults]\n"
+            "aws_profile_name = (default)\n"
+            "\n"
+            "[profile-(default) defaults]\n"
+            f"farm_id = {farm['farmId']}\n"
+            "\n"
+            f"[profile-(default) {farm['farmId']} defaults]\n"
+            f"queue_id = {queue['queueId']}\n"
+            "\n"
+            "[profile-(default) settings]\n"
+            f"job_history_dir = {job_history_dir}\n"
+        )
+
+    env["_JOB_HISTORY_DIR"] = str(job_history_dir)
+    return env
+
+
+@pytest.fixture
+def gui_submit(bundle_dir, submitter_env) -> Generator[SubmitterDialog, None, None]:
+    """Open the submitter dialog with farm/queue resolved."""
+    with SubmitterDialog.open(bundle_dir, env=submitter_env) as app:
+        app.wait_farm_resolved()
+        yield app

@@ -9,6 +9,7 @@ can drive the real CLI through the accessibility tree.
 from __future__ import annotations
 
 import atexit
+import json
 import subprocess
 import sys
 import time
@@ -17,35 +18,91 @@ from typing import Optional, Sequence, TypeVar
 
 import xa11y
 
-# All times are in seconds. These are tuned for mock-backend runs over
-# localhost HTTP, where no real AWS calls happen. The ceilings are
-# deliberately generous on top of the typical durations because Qt/
-# AT-SPI startup under Xvfb on Linux CI and Windows UIA can both be
-# substantially slower than a developer workstation, and a too-tight
-# ceiling masks failures as timeouts instead of failing fast.
+# ---------------------------------------------------------------------------
+# Timeouts (seconds)
+# ---------------------------------------------------------------------------
+# Tuned for mock-backend runs over localhost HTTP. Generous ceilings
+# because Qt/AT-SPI startup under Xvfb on Linux CI and Windows UIA can
+# be substantially slower than a developer workstation.
 STARTUP_TIMEOUT = 15.0
 CLOSE_TIMEOUT = 10.0
 TERMINATE_TIMEOUT = 3.0
-# How long to wait for ``CreateJob`` + ``GetJob`` polling to complete
-# through the local mock before the success dialog's Ok button appears.
-# The submitter has a 0.5s initial_delay + doubling backoff in its
-# create-job waiter, so a single poll cycle costs ~1.5-2s on top of
-# mock latency. 20s covers that plus progress-dialog paint.
 SUBMIT_TIMEOUT = 20.0
-# The Cancel button appears on the progress dialog immediately after
-# clicking Submit, but under Xvfb the dialog paint is delayed.
 CANCEL_TIMEOUT = 10.0
-# How long to wait for the async farm/queue name refresh to land in the
-# accessibility tree after the submitter window opens. The refresh is
-# a chain of 2-3 HTTP roundtrips + a Qt signal hop.
 FARM_RESOLVE_TIMEOUT = 10.0
-# How long to wait for the export-bundle success dialog.
 EXPORT_TIMEOUT = 10.0
 
-_T = TypeVar("_T", bound="DeadlineApp")
+# ---------------------------------------------------------------------------
+# Shared test data
+# ---------------------------------------------------------------------------
+SAMPLE_TEMPLATE = {
+    "specificationVersion": "jobtemplate-2023-09",
+    "name": "Test Render Job",
+    "description": "A test job for UI verification",
+    "steps": [
+        {
+            "name": "RenderStep",
+            "script": {
+                "actions": {"onRun": {"command": "bash", "args": ["-c", "echo hello"]}},
+            },
+        }
+    ],
+}
 
-# Track every process we launch so we can reap orphans at interpreter exit
-# (or in the ``_reap_orphans`` fixture) even if a test forgets to clean up.
+# ---------------------------------------------------------------------------
+# CLI helpers
+# ---------------------------------------------------------------------------
+
+
+def cli_get(env: dict, setting: str) -> str:
+    """Read a deadline config setting via the CLI subprocess."""
+    return subprocess.check_output(
+        ["deadline", "config", "get", setting], env=env, text=True, stderr=subprocess.DEVNULL
+    ).strip()
+
+
+def cli_set(env: dict, setting: str, value: str) -> None:
+    """Write a deadline config setting via the CLI subprocess."""
+    subprocess.check_call(
+        ["deadline", "config", "set", setting, value],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def last_json_object(text: str) -> dict:
+    """Return the last JSON object found in *text*.
+
+    ``deadline bundle gui-submit --output json`` prints a single object at
+    the end of the run. Other libraries may log to stdout; this helper
+    tolerates them by scanning for every ``{...}`` block that
+    ``json.JSONDecoder.raw_decode`` can parse and returning the last one.
+    """
+    decoder = json.JSONDecoder()
+    last: dict | None = None
+    i = 0
+    while i < len(text):
+        if text[i] != "{":
+            i += 1
+            continue
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            i += 1
+            continue
+        if isinstance(obj, dict):
+            last = obj
+        i = end
+    if last is None:
+        raise AssertionError(f"No JSON object found in stdout: {text!r}")
+    return last
+
+
+# ---------------------------------------------------------------------------
+# Process management
+# ---------------------------------------------------------------------------
+_T = TypeVar("_T", bound="DeadlineApp")
 _LIVE_PROCS: "weakref.WeakSet[subprocess.Popen]" = weakref.WeakSet()
 
 
@@ -54,13 +111,7 @@ def _register(proc: subprocess.Popen) -> None:
 
 
 def _terminate(proc: subprocess.Popen, timeout: float = TERMINATE_TIMEOUT) -> None:
-    """SIGKILL a subprocess (and its process group on POSIX) and reap it.
-
-    On POSIX the subprocess is started with ``start_new_session=True``, so
-    SIGKILL'ing the group also kills any dbus / AT-SPI / LaunchServices
-    helpers Qt spawned. On Windows ``Popen.kill()`` calls TerminateProcess
-    which is synchronous enough for our purposes.
-    """
+    """SIGKILL a subprocess (and its process group on POSIX) and reap it."""
     if proc.poll() is not None:
         return
     if sys.platform != "win32":
@@ -86,10 +137,7 @@ def _terminate(proc: subprocess.Popen, timeout: float = TERMINATE_TIMEOUT) -> No
 
 
 def reap_all() -> None:
-    """Terminate any subprocesses still tracked in ``_LIVE_PROCS``.
-
-    Exposed both for the pytest session fixture and the atexit hook.
-    """
+    """Terminate any subprocesses still tracked in ``_LIVE_PROCS``."""
     for proc in list(_LIVE_PROCS):
         _terminate(proc)
 
@@ -98,7 +146,7 @@ atexit.register(reap_all)
 
 
 def _find_app(pid: int, baseline_names: set, timeout: float) -> xa11y.App:
-    """Wait for an ``xa11y.App`` to appear for ``pid``.
+    """Wait for an ``xa11y.App`` to appear for *pid*.
 
     Falls back to matching by name because AT-SPI on Linux sometimes reports
     the wrong PID (typically 1) for child processes.
@@ -114,6 +162,11 @@ def _find_app(pid: int, baseline_names: set, timeout: float) -> xa11y.App:
                 return xa11y.App.by_name(a.name)
         time.sleep(0.25)
     raise TimeoutError(f"No accessibility app found for PID {pid}")
+
+
+# ---------------------------------------------------------------------------
+# Page objects
+# ---------------------------------------------------------------------------
 
 
 class DeadlineApp:
@@ -134,24 +187,9 @@ class DeadlineApp:
         capture_stdio: bool = False,
         dialog_name: Optional[str] = None,
     ) -> _T:
-        """Spawn ``deadline <args>`` and attach to its accessibility tree.
-
-        Args:
-            args: Argv after ``deadline`` (e.g. ``["bundle", "gui-submit", path]``).
-            env: Env vars for the subprocess.
-            timeout: Seconds to wait for the window + dialog to appear.
-            capture_stdio: When True, pipe stdout/stderr into the Popen so the
-                test can read them. Defaults to False (DEVNULL) because leaving
-                stdio connected to pytest's captured fds risks blocking on a
-                full write buffer during teardown.
-            dialog_name: Override the expected dialog window title. Used for
-                launches that set ``--submitter-name`` (which changes the title).
-        """
+        """Spawn ``deadline <args>`` and attach to its accessibility tree."""
         cmd = [sys.executable, "-m", "deadline", *args]
         baseline = {a.name for a in xa11y.App.list()}
-        # ``start_new_session`` puts the child into its own process group on
-        # POSIX so ``_terminate`` can SIGKILL the whole group and tear down
-        # any dbus / AT-SPI helpers Qt spawned alongside the main process.
         popen_kwargs: dict = dict(
             env=env,
             stdout=subprocess.PIPE if capture_stdio else subprocess.DEVNULL,
@@ -183,29 +221,53 @@ class DeadlineApp:
         return self._app.locator(selector)
 
     def elements_by_role(self, role: str) -> list:
-        """Return every element in the app's accessibility tree with the
-        given ``role`` (e.g. ``"spin_button"``), depth-first."""
+        """Return every element with the given *role*, depth-first."""
         return list(_iter_by_role(self._app, role))
 
     def tree_contains_text(self, needle: str) -> bool:
-        """True if any element in the app's tree has ``needle`` in its
-        accessible ``name`` or ``value``.
-
-        Useful for cross-platform checks where the same Qt widget exposes
-        its text on different attributes and/or different roles depending
-        on the accessibility backend (macOS AXAPI vs Linux AT-SPI vs
-        Windows UIA). Callers should only reach for this when a precise
-        selector is not platform-portable.
-        """
+        """True if any element in the tree has *needle* in its name or value."""
         return any(_walk_contains_text(root, needle) for root in self._app.children())
+
+    def tab_exists(self, tab_name: str) -> bool:
+        """True if a tab with *tab_name* exists under any platform role.
+
+        Qt exposes tabs as ``radio_button`` on macOS, ``page_tab`` or
+        ``tab`` on Linux/Windows. xa11y on Windows occasionally raises
+        ``PlatformError 0x80040201``; treat those as "not found".
+        """
+        for role in ("radio_button", "page_tab", "tab"):
+            try:
+                if self.locator(f'{role}[name="{tab_name}"]').exists():
+                    return True
+            except xa11y.PlatformError:
+                continue
+        return False
+
+    def activate_tab(self, tab_name: str) -> None:
+        """Click the named tab, trying each platform role variant.
+
+        xa11y on Windows occasionally raises ``PlatformError 0x80040201``
+        when pressing a tab; swallow it and fall through to the next role.
+        """
+        last_err: Exception | None = None
+        for role in ("radio_button", "page_tab", "tab"):
+            loc = self.locator(f'{role}[name="{tab_name}"]')
+            if loc.exists():
+                try:
+                    loc.press()
+                    return
+                except xa11y.PlatformError as exc:
+                    last_err = exc
+                    continue
+        if last_err is not None:
+            raise AssertionError(f"Tab {tab_name!r} matched but press failed: {last_err!r}")
+        raise AssertionError(f"Tab {tab_name!r} not found via any role")
 
     @property
     def dialog_name(self) -> str:
         return getattr(self, "_dialog_name", self.DIALOG)
 
     def dialog(self) -> xa11y.Locator:
-        # Qt's top-level QDialog is exposed as a Dialog role on macOS/Linux,
-        # but on Windows it often registers as a Window without IsDialog set.
         name = self.dialog_name
         selector = (
             f'window[name="{name}"]' if sys.platform.startswith("win") else f'dialog[name="{name}"]'
@@ -242,28 +304,11 @@ class DeadlineApp:
         sys.stderr.write("--- end tree ---\n")
 
     def close(self, button_name: str = "Cancel") -> None:
-        """Dismiss the dialog and reap the subprocess.
-
-        Strategy (in order):
-        1. Try pressing the named button (e.g. Cancel/Ok) scoped to the
-           main dialog, then platform close affordances (title-bar Close
-           on Windows, traffic-light "close button" on macOS).
-        2. If no button was found or pressed, send SIGTERM (POSIX) or
-           TerminateProcess (Windows). The sitecustomize shim installs a
-           SIGTERM→QApplication.quit() handler so the CLI can flush
-           stdout before exiting.
-        3. Wait briefly for the process to exit. Skip accessibility
-           queries once the process is dead — on Linux, querying AT-SPI
-           after the subprocess exits blocks for the D-Bus reply timeout
-           (~25 s per call), which cascades into pytest-timeout failures.
-        4. SIGKILL as last resort via ``_terminate``.
-        """
+        """Dismiss the dialog and reap the subprocess."""
         if self.proc.poll() is not None:
             _terminate(self.proc)
             return
 
-        # Try accessibility-driven close. Scoped to the main dialog so
-        # we don't hit a lingering progress-dialog button on Windows.
         for candidate in (button_name, "Close", "close button"):
             if self.proc.poll() is not None:
                 break
@@ -275,10 +320,8 @@ class DeadlineApp:
             except xa11y.XA11yError:
                 continue
         else:
-            # No button found — graceful signal.
             self._signal_terminate()
 
-        # Give the process a moment to exit cleanly.
         try:
             self.proc.wait(timeout=CLOSE_TIMEOUT)
         except subprocess.TimeoutExpired:
@@ -290,20 +333,7 @@ class DeadlineApp:
         _terminate(self.proc)
 
     def _signal_terminate(self) -> None:
-        """Ask the subprocess to shut down gracefully via OS signals.
-
-        POSIX: ``SIGTERM`` to the whole process group. The subprocess's
-        ``sitecustomize.py`` (see ``conftest.py``) installs a handler
-        that calls ``QApplication.quit()``, so ``app.exec()`` returns,
-        ``_print_response`` runs, stdout is flushed and the interpreter
-        exits with code 0.
-
-        Windows: ``proc.terminate()`` (``TerminateProcess``). There is
-        no portable way to ask a Qt process on Windows to unwind
-        cleanly through a signal, so this is best-effort only — the
-        JSON-capture tests rely on the accessibility-driven Close
-        button path working on Windows.
-        """
+        """Ask the subprocess to shut down gracefully via OS signals."""
         if self.proc.poll() is not None:
             return
         if sys.platform != "win32":
@@ -335,12 +365,6 @@ class ConfigDialog(DeadlineApp):
 
     @property
     def log_level(self) -> str:
-        """Text shown in the log-level combo box.
-
-        Qt's QComboBox exposes the selected text differently per platform:
-        macOS/AT-SPI put it in ``name``; Windows UIA puts it in ``value`` while
-        ``name`` is the buddy label (e.g. "Current logging level"). Try both.
-        """
         return self._combo_text(group="General settings", index=1)
 
     @property
@@ -348,10 +372,7 @@ class ConfigDialog(DeadlineApp):
         return self._combo_text(group="General settings", index=0)
 
     def _combo_text(self, *, group: str, index: int) -> str:
-        """Return the visible text of the Nth combo box in a group.
-
-        General settings order: 0=conflict resolution, 1=log level, 2=language.
-        """
+        """Return the visible text of the Nth combo box in a group."""
         root = self.locator(f'group[name="{group}"]').element()
         combos = list(_iter_by_role(root, "combo_box"))
         combo = combos[index]
@@ -392,18 +413,7 @@ class SubmitterDialog(DeadlineApp):
         farm_name: str = "TestFarm",
         timeout: float = FARM_RESOLVE_TIMEOUT,
     ) -> None:
-        """Block until the async farm/queue name refresh has populated the UI.
-
-        Without this, ``Submit`` is disabled because the submitter's
-        ``api_availability`` + farm/queue resolution hasn't completed.
-
-        Uses ``tree_contains_text`` rather than an xa11y ``wait_attached``
-        locator because the Qt → UIA tree on Windows wraps the farm-name
-        label in an extra ``group[name="Deadline Cloud settings"]``, and
-        xa11y's descendant match + tree-staleness semantics there make
-        ``wait_attached`` flake on otherwise-healthy dialogs. Falling back
-        to a manual poll over the already-walked tree is portable.
-        """
+        """Block until the async farm/queue name refresh has populated the UI."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.tree_contains_text(farm_name):
@@ -423,24 +433,7 @@ class SubmitterDialog(DeadlineApp):
         ok.press()
 
     def submit_and_ok(self, timeout: float = SUBMIT_TIMEOUT) -> None:
-        """Click Submit, wait for the success dialog, click Ok.
-
-        Uses the progress dialog's Ok button, which only appears once the
-        mock backend has acknowledged CreateJob and GetJob returns a
-        non-``CREATE_IN_PROGRESS`` status.
-
-        The progress dialog mutates its bottom-row buttons between three
-        states:
-          * ``Cancel`` while the worker thread is running,
-          * ``Ok`` after a successful submission, and
-          * ``Close`` after a failed one.
-        We can't just ``wait_visible('Ok')`` because on Windows the Qt
-        dialog's title-bar decoration also registers a ``Close`` button
-        (the window X) at the same depth as the dialog, which would
-        cause a raw selector match to spuriously report "failed" state.
-        Instead, poll the status_label text to distinguish success from
-        failure, then press the corresponding button.
-        """
+        """Click Submit, wait for success, click Ok."""
         self.button("Submit").press()
         deadline = time.monotonic() + timeout
         status = ""
@@ -473,10 +466,6 @@ class SubmitterDialog(DeadlineApp):
             "Submission error",
             "Submission canceled",
         }
-        # Iterate the progress dialog's children to find the status label.
-        # The QLabel is a direct child of the QDialog and exposes its text
-        # via ``name``/``value`` on static_text elements, but under Windows
-        # UIA it can also come through on an unnamed text_field's value.
         for elt in _iter_by_role(self._app, "static_text"):
             name = (getattr(elt, "name", "") or "").strip()
             if name == "Preparing files...":
@@ -486,13 +475,7 @@ class SubmitterDialog(DeadlineApp):
         return ""
 
     def submit_then_cancel(self, cancel_timeout: float = CANCEL_TIMEOUT) -> None:
-        """Click Submit then immediately Cancel on the progress dialog.
-
-        Note: clicking Cancel only closes the progress dialog; the parent
-        submitter window stays open because ``job_id`` is ``None`` on
-        cancellation. Callers must close the submitter separately (e.g. by
-        exiting the ``with`` block, which triggers ``close("Cancel")``).
-        """
+        """Click Submit then immediately Cancel on the progress dialog."""
         self.button("Submit").press()
         cancel = self._progress_button("Cancel")
         try:
@@ -503,15 +486,7 @@ class SubmitterDialog(DeadlineApp):
         cancel.press()
 
     def dismiss_progress_close(self, timeout: float = CANCEL_TIMEOUT) -> None:
-        """Wait for the progress dialog to close after cancel.
-
-        After ``submit_then_cancel`` presses Cancel, the progress dialog's
-        ``closeEvent`` cancels the worker thread, waits for it to finish,
-        and then closes the dialog. On macOS/Linux the dialog closes
-        itself; on Windows it stays open with a Close button. Handle both
-        by trying to press Close first, then waiting for the dialog to
-        leave the accessibility tree.
-        """
+        """Wait for the progress dialog to close after cancel."""
         progress_title = "AWS Deadline Cloud submission"
         dialog_selector = (
             f'window[name="{progress_title}"]'
@@ -540,8 +515,13 @@ class SubmitterDialog(DeadlineApp):
         return self.locator(f'{dialog_selector} button[name="{name}"]')
 
 
+# ---------------------------------------------------------------------------
+# Tree-walking utilities
+# ---------------------------------------------------------------------------
+
+
 def _iter_by_role(root, role: str):
-    """Depth-first traversal yielding elements whose role matches ``role``."""
+    """Depth-first traversal yielding elements whose role matches *role*."""
     try:
         if getattr(root, "role", None) == role:
             yield root
@@ -552,12 +532,7 @@ def _iter_by_role(root, role: str):
 
 
 def _walk_contains_text(root, needle: str) -> bool:
-    """True iff some element under ``root`` has ``needle`` in its name/value.
-
-    Swallows per-element errors (e.g. the element was reparented mid-walk)
-    rather than aborting the whole search, because the accessibility tree
-    can mutate while we're iterating it.
-    """
+    """True iff some element under *root* has *needle* in its name/value."""
     try:
         for field in ("name", "value"):
             text = getattr(root, field, None) or ""
