@@ -507,10 +507,10 @@ class SubmitterDialog(DeadlineApp):
 
         After ``submit_then_cancel`` presses Cancel, the progress dialog's
         ``closeEvent`` cancels the worker thread, waits for it to finish,
-        and then closes the dialog. This can take a moment — call this
-        before ``close()`` so the progress dialog's transient Close button
-        doesn't collide with the submitter's title-bar Close in the
-        accessibility tree.
+        and then closes the dialog. On macOS/Linux the dialog closes
+        itself; on Windows it stays open with a Close button. Handle both
+        by trying to press Close first, then waiting for the dialog to
+        leave the accessibility tree.
         """
         progress_title = "AWS Deadline Cloud submission"
         dialog_selector = (
@@ -518,6 +518,12 @@ class SubmitterDialog(DeadlineApp):
             if sys.platform.startswith("win")
             else f'dialog[name="{progress_title}"]'
         )
+        try:
+            close = self.locator(f'{dialog_selector} button[name="Close"]')
+            close.wait_visible(timeout=timeout)
+            close.press()
+        except xa11y.XA11yError:
+            pass
         try:
             self.locator(dialog_selector).wait_detached(timeout=timeout)
         except xa11y.XA11yError:
