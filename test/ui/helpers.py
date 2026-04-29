@@ -503,21 +503,25 @@ class SubmitterDialog(DeadlineApp):
         cancel.press()
 
     def dismiss_progress_close(self, timeout: float = CANCEL_TIMEOUT) -> None:
-        """Wait for and press the progress dialog's Close button.
+        """Wait for the progress dialog to close after cancel.
 
-        After ``submit_then_cancel``, the progress dialog transitions its
-        button from Cancel → Close. This helper dismisses it so that a
-        subsequent ``close()`` on the main submitter window doesn't
-        accidentally match the progress dialog's Close button (which is a
-        descendant of the submitter window in the accessibility tree).
+        After ``submit_then_cancel`` presses Cancel, the progress dialog's
+        ``closeEvent`` cancels the worker thread, waits for it to finish,
+        and then closes the dialog. This can take a moment — call this
+        before ``close()`` so the progress dialog's transient Close button
+        doesn't collide with the submitter's title-bar Close in the
+        accessibility tree.
         """
-        close = self._progress_button("Close")
+        progress_title = "AWS Deadline Cloud submission"
+        dialog_selector = (
+            f'window[name="{progress_title}"]'
+            if sys.platform.startswith("win")
+            else f'dialog[name="{progress_title}"]'
+        )
         try:
-            close.wait_visible(timeout=timeout)
-        except Exception:
-            self.dump_tree()
-            raise
-        close.press()
+            self.locator(dialog_selector).wait_detached(timeout=timeout)
+        except xa11y.XA11yError:
+            pass
 
     def _progress_button(self, name: str) -> xa11y.Locator:
         """Locate a button inside the submission progress dialog."""
