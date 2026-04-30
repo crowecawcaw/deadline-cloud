@@ -160,9 +160,7 @@ def test_cli_auth_status_json(fresh_deadline_config):
         api, "get_boto3_session", new=session_mock
     ), patch.object(
         api, "check_authentication_status", return_value=api.AwsAuthenticationStatus.AUTHENTICATED
-    ), patch.object(
-        api, "check_deadline_api_available", return_value=False
-    ):
+    ), patch.object(api, "check_deadline_api_available", return_value=False):
         # The profile name
         session_mock().profile_name = profile_name
         # This configuration includes the IdC profile
