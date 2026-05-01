@@ -59,7 +59,9 @@ from ._job_helpers import (
 )
 from ._job_download_helpers import (
     JSON_MSG_TYPE_PROGRESS,
+    MatchPathsBy,
     _download_mapped_manifests,
+    _normalize_filters,
     _resolve_conflict_resolution,
     _resolve_storage_profiles,
     _transform_manifests_to_absolute_paths,
@@ -67,6 +69,7 @@ from ._job_download_helpers import (
 from ....job_attachments._path_mapping import _generate_path_mapping_rules
 from ....job_attachments.download import (
     OutputDownloader,
+    filter_manifests,
     get_output_manifests_by_asset_root,
 )
 
@@ -499,6 +502,8 @@ def _download_job_output(
     task_id: Optional[str],
     is_json_format: bool = False,
     ignore_storage_profiles: bool = False,
+    include_patterns: Optional[list[str]] = None,
+    match_paths_by: MatchPathsBy = MatchPathsBy.LOCAL,
 ):
     """
     Starts the download of job output and handles the progress reporting callback.
@@ -548,6 +553,8 @@ def _download_job_output(
         for manifest in job_attachments_manifests:
             root_path_format_mapping[manifest["rootPath"]] = manifest["rootPathFormat"]
 
+    # When --match-paths-by JOB is set, filter against the job paths.
+    # Otherwise, filtering happens later against workstation paths.
     job_output_downloader = OutputDownloader(
         s3_settings=JobAttachmentS3Settings(**queue["jobAttachmentSettings"]),
         farm_id=farm_id,
@@ -557,6 +564,7 @@ def _download_job_output(
         task_id=task_id,
         session_action_id=session_action_id,
         session=queue_role_session,
+        include_filters=include_patterns if match_paths_by == MatchPathsBy.JOB else None,
     )
 
     def _check_and_warn_long_output_paths(
@@ -603,9 +611,13 @@ def _download_job_output(
                 session_action_id=session_action_id,
                 session=queue_role_session,
             )
+            if include_patterns and match_paths_by == MatchPathsBy.JOB:
+                manifests_by_root = filter_manifests(manifests_by_root, include_patterns)
             mapped_manifests = _transform_manifests_to_absolute_paths(
                 manifests_by_root, rules, resolved.job_profile.osFamily
             )
+            if include_patterns and match_paths_by != MatchPathsBy.JOB:
+                mapped_manifests = filter_manifests(mapped_manifests, include_patterns)
             if mapped_manifests:
                 download_summary = _download_mapped_manifests(
                     mapped_manifests=mapped_manifests,
@@ -712,6 +724,15 @@ def _download_job_output(
                 job_output_downloader.set_root_path(asset_roots[index], str(Path(confirmed_root)))
             output_paths_by_root = job_output_downloader.get_output_paths_by_root()
             _check_and_warn_long_output_paths(output_paths_by_root)
+
+    # Apply include filters against workstation paths (default behavior).
+    # When --match-paths-by JOB is set, filtering was already applied at the job level.
+    if include_patterns and match_paths_by != MatchPathsBy.JOB:
+        job_output_downloader.apply_include_filters(include_patterns)
+        output_paths_by_root = job_output_downloader.get_output_paths_by_root()
+        if output_paths_by_root == {}:
+            click.echo(_get_no_output_message(is_json_format))
+            return
 
     if not is_json_format:
         # Create and print a summary of all the paths to download
@@ -967,6 +988,22 @@ def _assert_valid_path(path: str) -> None:
 @click.option("--step-id", help="The step to use.")
 @click.option("--task-id", help="The task to use.")
 @click.option(
+    "-i",
+    "--include",
+    multiple=True,
+    help="Glob pattern or relative path for files to include in download. Matched against "
+    "the full path (root + relative). Supports *, ?, [seq]. A trailing / matches all "
+    "files under that directory. Repeatable",
+)
+@click.option(
+    "--match-paths-by",
+    type=click.Choice(["JOB", "LOCAL"], case_sensitive=False),
+    default="LOCAL",
+    help="Control which paths --include filters are matched against. "
+    "JOB matches against the paths recorded at job submission. "
+    "LOCAL matches against the local download paths (the default).",
+)
+@click.option(
     "--ignore-storage-profiles",
     is_flag=True,
     help="Ignores the storage profile configuration. Only use if the job was "
@@ -1007,7 +1044,15 @@ def _assert_valid_path(path: str) -> None:
     "parsed/consumed by custom scripts.",
 )
 @_handle_error
-def job_download_output(step_id, task_id, output, ignore_storage_profiles, **args):
+def job_download_output(
+    step_id,
+    task_id,
+    output,
+    ignore_storage_profiles,
+    include,
+    match_paths_by,
+    **args,
+):
     """
     Download the output of a Deadline Cloud job that was saved as job
     attachments.
@@ -1017,6 +1062,8 @@ def job_download_output(step_id, task_id, output, ignore_storage_profiles, **arg
     """
     if task_id and not step_id:
         raise click.UsageError("Missing option '--step-id' required with '--task-id'")
+
+    include_patterns = _normalize_filters(list(include)) or None
 
     # Get a temporary config object with the standard options handled
     config = _apply_cli_options_to_config(
@@ -1038,6 +1085,8 @@ def job_download_output(step_id, task_id, output, ignore_storage_profiles, **arg
             task_id=task_id,
             is_json_format=is_json_format,
             ignore_storage_profiles=ignore_storage_profiles,
+            include_patterns=include_patterns,
+            match_paths_by=MatchPathsBy(match_paths_by),
         )
     except Exception as e:
         if is_json_format:
