@@ -297,10 +297,10 @@ def _list_farms_for_auth_probe(config: Optional[ConfigParser] = None) -> None:
     Raises whatever exception the underlying boto3 call raises; callers are
     responsible for exception handling.
     """
+    from ._list_apis import _apply_principal_id_filter
+
     list_farm_params: dict = {"maxResults": 1}
-    user_id, _ = get_user_and_identity_store_id(config=config)
-    if user_id:
-        list_farm_params["principalId"] = str(user_id)
+    _apply_principal_id_filter(list_farm_params, config=config)
     get_boto3_client("deadline", config=config).list_farms(**list_farm_params)
 
 
