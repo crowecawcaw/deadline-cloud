@@ -103,6 +103,23 @@ class _QtPyPostImportPatcher:
             self._sigterm_pulse.start()
 
         _qw.QApplication.__init__ = _qa_init
+
+        # Stub QFileDialog.getExistingDirectory: when the test points
+        # DEADLINE_TEST_NEXT_BUNDLE_DIR_FILE at a file, return its contents
+        # (or "" for cancel — the call sites already handle that).
+        import os as _os
+
+        def _stub_get_existing_dir(*args, **kwargs):
+            ctl = _os.environ.get("DEADLINE_TEST_NEXT_BUNDLE_DIR_FILE")
+            if not ctl:
+                return ""
+            try:
+                with open(ctl) as _f:
+                    return _f.read().strip()
+            except OSError:
+                return ""
+
+        _qw.QFileDialog.getExistingDirectory = staticmethod(_stub_get_existing_dir)
         return None
 
 
@@ -176,6 +193,17 @@ def bundle_dir(tmp_path) -> str:
     d.mkdir()
     (d / "template.json").write_text(json.dumps(SAMPLE_TEMPLATE))
     return str(d)
+
+
+@pytest.fixture
+def bundle_picker_file(deadline_env, tmp_path) -> Path:
+    """Wire up the QFileDialog stub: tests write a bundle path to this file
+    and the next click on a "browse for directory" button reads it back."""
+    _backend, env = deadline_env
+    ctl = tmp_path / "next_bundle_dir.txt"
+    ctl.write_text("")
+    env["DEADLINE_TEST_NEXT_BUNDLE_DIR_FILE"] = str(ctl)
+    return ctl
 
 
 @pytest.fixture

@@ -458,6 +458,36 @@ class SubmitterDialog(DeadlineApp):
         ok.wait_visible(timeout=EXPORT_TIMEOUT)
         ok.press()
 
+    def load_different_bundle(
+        self,
+        next_bundle_dir: str,
+        picker_file: str,
+        expected_name: str,
+        button_label: str = "Load Bundle",
+        timeout: float = FARM_RESOLVE_TIMEOUT,
+    ) -> None:
+        """Click the load-bundle button and wait for the dialog to refresh.
+
+        Writes *next_bundle_dir* to *picker_file* so the subprocess's stubbed
+        ``QFileDialog.getExistingDirectory`` returns it, then clicks
+        *button_label* and polls until the Name field shows *expected_name*.
+        """
+        with open(picker_file, "w") as f:
+            f.write(next_bundle_dir)
+        self.button(button_label).press()
+        deadline = time.monotonic() + timeout
+        last = ""
+        while time.monotonic() < deadline:
+            last = self.job_name
+            if last == expected_name:
+                return
+            time.sleep(0.25)
+        self.dump_tree()
+        raise AssertionError(
+            f"Job name did not refresh to {expected_name!r} within {timeout}s; "
+            f"last value was {last!r}"
+        )
+
     def submit_and_ok(self, timeout: float = SUBMIT_TIMEOUT) -> None:
         """Click Submit, wait for success, click Ok."""
         self.button("Submit").press()
