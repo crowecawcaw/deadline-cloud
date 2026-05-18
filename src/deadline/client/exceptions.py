@@ -43,3 +43,15 @@ class NonValidInputError(Exception):
 
 class ManifestOutdatedError(Exception):
     """Error for when local files are different from version captured in manifest"""
+
+
+class JobAttachmentUploadFailed(DeadlineOperationError):
+    """Error raised when uploading job attachments to S3 fails."""
+
+    def __init__(self, asset_path: str, reason: str = ""):
+        message = f"Failed to upload {asset_path}"
+        if reason:
+            message = f"{message}: {reason}"
+        super().__init__(message)
+        self.asset_path = asset_path
+        self.reason = reason
