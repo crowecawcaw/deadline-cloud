@@ -43,3 +43,16 @@ class NonValidInputError(Exception):
 
 class ManifestOutdatedError(Exception):
     """Error for when local files are different from version captured in manifest"""
+
+
+class S3UploadConflictError(DeadlineOperationError):
+    """Raised when an S3 upload conflicts with an existing object."""
+
+    def __init__(self, bucket: str, key: str, etag: str = ""):
+        message = f"Conflict uploading to s3://{bucket}/{key}"
+        if etag:
+            message += f" (etag={etag})"
+        super().__init__(message)
+        self.bucket = bucket
+        self.key = key
+        self.etag = etag
