@@ -39,7 +39,7 @@ jobs:
       # The agent step never sees IAM credentials — only AWS_BEARER_TOKEN_BEDROCK.
       - name: Configure AWS credentials (OIDC, pre-step)
         id: aws
-        uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b630b1aff5d5dde0e6f380 # v5.0.0
+        uses: aws-actions/configure-aws-credentials@a03048d87541d1d9fcf2ecf528a4a65ba9bd7838 # v5.0.0
         with:
           role-to-assume: ${{ secrets.BEDROCK_ROLE_ARN }}
           aws-region: us-west-2
