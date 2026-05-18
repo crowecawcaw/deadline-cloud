@@ -74,8 +74,6 @@ jobs:
         with:
           use_bedrock: "true"
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Test-only: enable verbose logs while we iterate. Remove before prod.
-          show_full_output: "true"
           prompt: |
             Review this pull request for AWS Deadline Cloud. Focus on correctness,
             security issues, and obvious bugs. Post inline comments on specific
