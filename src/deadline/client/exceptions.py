@@ -43,3 +43,16 @@ class NonValidInputError(Exception):
 
 class ManifestOutdatedError(Exception):
     """Error for when local files are different from version captured in manifest"""
+
+
+class WorkerHeartbeatTimeoutError(DeadlineOperationTimedOut):
+    """Raised when a worker fails to heartbeat within the configured window."""
+
+    def __init__(self, worker_id: str, last_heartbeat_seconds: float):
+        message = (
+            f"Worker {worker_id} has not sent a heartbeat in "
+            f"{last_heartbeat_seconds:.0f} seconds"
+        )
+        super().__init__(message)
+        self.worker_id = worker_id
+        self.last_heartbeat_seconds = last_heartbeat_seconds
