@@ -1,0 +1,74 @@
+name: Claude PR Review (collect)
+
+# Stage 1 of 2: runs in PR context (fork or same-repo). Has no secrets when
+# triggered by a fork PR — that's the point. We only collect untrusted inputs
+# and pass them via artifact to the workflow_run-triggered review job.
+#
+# CRITICAL: do NOT checkout the PR head. We only fetch metadata + diff via the
+# GitHub API. Anything we write to the artifact is treated as untrusted by the
+# downstream workflow.
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: claude-review-collect-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    name: Collect PR context
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write PR metadata and diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p pr-context
+
+          jq -n \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg base_sha "$BASE_SHA" \
+            --arg head_repo "$HEAD_REPO" \
+            --arg base_repo "$BASE_REPO" \
+            --argjson is_fork "$IS_FORK" \
+            '{pr_number:$pr_number, head_sha:$head_sha, base_sha:$base_sha, head_repo:$head_repo, base_repo:$base_repo, is_fork:$is_fork}' \
+            > pr-context/pr_meta.json
+
+          # Fetch the unified diff via API. Read-only; doesn't checkout PR code.
+          gh api \
+            -H "Accept: application/vnd.github.v3.diff" \
+            "repos/${BASE_REPO}/pulls/${PR_NUMBER}" \
+            > pr-context/pr.diff
+
+          # Truncate diff to a sane size to bound model input.
+          head -c 200000 pr-context/pr.diff > pr-context/pr.diff.truncated
+          mv pr-context/pr.diff.truncated pr-context/pr.diff
+
+          ls -la pr-context/
+          echo "--- pr_meta.json ---"
+          cat pr-context/pr_meta.json
+          echo "--- diff size ---"
+          wc -c pr-context/pr.diff
+
+      - name: Upload PR context artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: pr-context
+          path: pr-context/
+          retention-days: 1
+          if-no-files-found: error

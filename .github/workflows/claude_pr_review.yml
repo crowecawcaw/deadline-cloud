@@ -1,0 +1,155 @@
+name: Claude PR Review
+
+# Stage 2 of 2: triggered by completion of "Claude PR Review (collect)".
+# Runs in base-repo context with secrets, regardless of whether the PR
+# came from a fork. Downloads the diff artifact (untrusted input), checks
+# out the PR head into a subdirectory (read-only — never executed), mints
+# a Bedrock bearer token, and runs claude-code-action to post comments.
+#
+# Safety: the workspace root stays on the base ref. The PR head goes
+# into pr-head/ via persist-credentials:false. We never run any script
+# from pr-head/ — no npm install, no pip install, no contributor scripts.
+# Symlinks under pr-head/ are stripped post-checkout so the agent can't
+# escape that directory via cat.
+
+on:
+  workflow_run:
+    workflows: ["Claude PR Review (collect)"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    name: Claude review
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout base ref
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Download PR context artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: pr-context
+          path: pr-context/
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse PR metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER=$(jq -r '.pr_number' pr-context/pr_meta.json)
+          HEAD_SHA=$(jq -r '.head_sha' pr-context/pr_meta.json)
+          IS_FORK=$(jq -r '.is_fork' pr-context/pr_meta.json)
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "is_fork=$IS_FORK" >> "$GITHUB_OUTPUT"
+          echo "Reviewing PR #$PR_NUMBER (head=$HEAD_SHA, fork=$IS_FORK)"
+
+      # Read-only checkout of PR head into a subdirectory. The agent can read
+      # these files but our --allowedTools surface forbids executing them.
+      - name: Checkout PR head (read-only)
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ steps.meta.outputs.head_sha }}
+          path: pr-head
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Strip symlinks from PR head
+        run: |
+          # A symlink under pr-head/ pointing outside it could let the agent
+          # read base-ref code or arbitrary runner files. Delete them all.
+          find pr-head -type l -print -delete
+
+      # Mint a short-lived Bedrock bearer token from a dedicated IAM role.
+      # The agent step never sees IAM credentials — only AWS_BEARER_TOKEN_BEDROCK.
+      - name: Configure AWS credentials (OIDC, pre-step)
+        id: aws
+        uses: aws-actions/configure-aws-credentials@a03048d87541d1d9fcf2ecf528a4a65ba9bd7838 # v5.0.0
+        with:
+          role-to-assume: ${{ secrets.BEDROCK_ROLE_ARN }}
+          aws-region: us-west-2
+          role-duration-seconds: 900
+
+      - name: Mint short-term Bedrock bearer token
+        env:
+          AWS_REGION: us-west-2
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet aws-bedrock-token-generator
+          TOKEN=$(python3 -c "from aws_bedrock_token_generator import provide_token; print(provide_token())")
+          echo "::add-mask::$TOKEN"
+          echo "AWS_BEARER_TOKEN_BEDROCK=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Discard IAM credentials before agent step
+        run: |
+          {
+            echo "AWS_ACCESS_KEY_ID="
+            echo "AWS_SECRET_ACCESS_KEY="
+            echo "AWS_SESSION_TOKEN="
+            echo "AWS_DEFAULT_REGION=us-west-2"
+            echo "AWS_REGION=us-west-2"
+          } >> "$GITHUB_ENV"
+
+      - name: Claude PR review
+        uses: anthropics/claude-code-action@d2b7d924ec4af238380e490a0d57ce6bcc85ce8d # v1.0.123
+        env:
+          AWS_BEARER_TOKEN_BEDROCK: ${{ env.AWS_BEARER_TOKEN_BEDROCK }}
+          PR_NUMBER: ${{ steps.meta.outputs.pr_number }}
+          PR_HEAD_SHA: ${{ steps.meta.outputs.head_sha }}
+          PR_DIFF_PATH: ${{ github.workspace }}/pr-context/pr.diff
+        with:
+          use_bedrock: "true"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are reviewing pull request #${{ steps.meta.outputs.pr_number }}
+            in ${{ github.repository }} (head SHA ${{ steps.meta.outputs.head_sha }}).
+
+            Inputs available to you:
+            - $PR_DIFF_PATH — the unified diff for this PR.
+            - pr-head/ — read-only checkout of the PR head. Use this to look
+              up call sites, related files, tests, and surrounding code.
+              DO NOT attempt to execute anything from pr-head/.
+
+            Start by reading $PR_DIFF_PATH. Then explore pr-head/ as needed
+            for context. Analyze for correctness, security, and obvious bugs.
+
+            Post at most a handful of inline comments on the most important
+            lines using:
+
+              gh api -X POST repos/${{ github.repository }}/pulls/${{ steps.meta.outputs.pr_number }}/comments \
+                -f body="..." \
+                -f commit_id="${{ steps.meta.outputs.head_sha }}" \
+                -f path="..." \
+                -F line=N \
+                -f side="RIGHT"
+
+            Do NOT approve, do NOT request changes, do NOT post a top-level
+            summary unless something is genuinely serious. Comments are
+            advisory only. After posting your comments, stop.
+          claude_args: |
+            --model us.anthropic.claude-sonnet-4-5-20250929-v1:0
+            --max-turns 50
+            --add-dir pr-head
+            --allowedTools "Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(gh api:*),Read,Glob,Grep"
