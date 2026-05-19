@@ -1,12 +1,12 @@
 name: Claude PR Review (collect)
 
 # Stage 1 of 2: runs in PR context (fork or same-repo). Has no secrets when
-# triggered by a fork PR — that's the point. We only collect untrusted inputs
-# and pass them via artifact to the workflow_run-triggered review job.
+# triggered by a fork PR — that's the point. We only capture trusted PR
+# metadata (number, SHAs, head repo) and pass it through an artifact to the
+# workflow_run-triggered review job.
 #
-# CRITICAL: do NOT checkout the PR head. We only fetch metadata + diff via the
-# GitHub API. Anything we write to the artifact is treated as untrusted by the
-# downstream workflow.
+# CRITICAL: do NOT checkout the PR head. The downstream workflow does that
+# itself, into a read-only subdirectory.
 
 on:
   pull_request:
@@ -26,9 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Write PR metadata and diff
+      - name: Write PR metadata
         env:
-          GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -49,21 +48,8 @@ jobs:
             '{pr_number:$pr_number, head_sha:$head_sha, base_sha:$base_sha, head_repo:$head_repo, base_repo:$base_repo, is_fork:$is_fork}' \
             > pr-context/pr_meta.json
 
-          # Fetch the unified diff via API. Read-only; doesn't checkout PR code.
-          gh api \
-            -H "Accept: application/vnd.github.v3.diff" \
-            "repos/${BASE_REPO}/pulls/${PR_NUMBER}" \
-            > pr-context/pr.diff
-
-          # Truncate diff to a sane size to bound model input.
-          head -c 200000 pr-context/pr.diff > pr-context/pr.diff.truncated
-          mv pr-context/pr.diff.truncated pr-context/pr.diff
-
-          ls -la pr-context/
           echo "--- pr_meta.json ---"
           cat pr-context/pr_meta.json
-          echo "--- diff size ---"
-          wc -c pr-context/pr.diff
 
       - name: Upload PR context artifact
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

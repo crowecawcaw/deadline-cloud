@@ -2,9 +2,10 @@ name: Claude PR Review
 
 # Stage 2 of 2: triggered by completion of "Claude PR Review (collect)".
 # Runs in base-repo context with secrets, regardless of whether the PR
-# came from a fork. Downloads the diff artifact (untrusted input), checks
-# out the PR head into a subdirectory (read-only — never executed), mints
-# a Bedrock bearer token, and runs claude-code-action to post comments.
+# came from a fork. Downloads the PR metadata artifact, checks out the
+# PR head into a subdirectory (read-only — never executed), fetches the
+# base SHA so the agent can compute the diff itself, mints a Bedrock
+# bearer token, and runs claude-code-action to post comments.
 #
 # Safety: the workspace root stays on the base ref. The PR head goes
 # into pr-head/ via persist-credentials:false. We never run any script
@@ -53,20 +54,21 @@ jobs:
 
       - name: Parse PR metadata
         id: meta
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           PR_NUMBER=$(jq -r '.pr_number' pr-context/pr_meta.json)
           HEAD_SHA=$(jq -r '.head_sha' pr-context/pr_meta.json)
+          BASE_SHA=$(jq -r '.base_sha' pr-context/pr_meta.json)
           IS_FORK=$(jq -r '.is_fork' pr-context/pr_meta.json)
           echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
           echo "is_fork=$IS_FORK" >> "$GITHUB_OUTPUT"
-          echo "Reviewing PR #$PR_NUMBER (head=$HEAD_SHA, fork=$IS_FORK)"
+          echo "Reviewing PR #$PR_NUMBER (head=$HEAD_SHA, base=$BASE_SHA, fork=$IS_FORK)"
 
       # Read-only checkout of PR head into a subdirectory. The agent can read
       # these files but our --allowedTools surface forbids executing them.
+      # fetch-depth: 0 so we can also fetch the base SHA below for `git diff`.
       - name: Checkout PR head (read-only)
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -74,7 +76,19 @@ jobs:
           ref: ${{ steps.meta.outputs.head_sha }}
           path: pr-head
           persist-credentials: false
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Fetch base SHA into pr-head/
+        env:
+          BASE_REPO: ${{ github.repository }}
+          BASE_SHA: ${{ steps.meta.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          # Add the base repo as a remote and fetch only the base commit so
+          # `git diff $BASE_SHA..HEAD` works inside pr-head/.
+          cd pr-head
+          git remote add base "https://github.com/${BASE_REPO}.git"
+          git fetch --depth=1 base "$BASE_SHA"
 
       - name: Strip symlinks from PR head
         run: |
@@ -118,25 +132,24 @@ jobs:
           AWS_BEARER_TOKEN_BEDROCK: ${{ env.AWS_BEARER_TOKEN_BEDROCK }}
           PR_NUMBER: ${{ steps.meta.outputs.pr_number }}
           PR_HEAD_SHA: ${{ steps.meta.outputs.head_sha }}
-          PR_DIFF_PATH: ${{ github.workspace }}/pr-context/pr.diff
+          PR_BASE_SHA: ${{ steps.meta.outputs.base_sha }}
         with:
           use_bedrock: "true"
           github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
             You are reviewing pull request #${{ steps.meta.outputs.pr_number }}
-            in ${{ github.repository }} (head SHA ${{ steps.meta.outputs.head_sha }}).
+            in ${{ github.repository }} (head SHA ${{ steps.meta.outputs.head_sha }},
+            base SHA ${{ steps.meta.outputs.base_sha }}).
 
-            Inputs available to you:
-            - $PR_DIFF_PATH — the unified diff for this PR.
-            - pr-head/ — read-only checkout of the PR head. Use this to look
-              up call sites, related files, tests, and surrounding code.
-              DO NOT attempt to execute anything from pr-head/.
+            The PR head is checked out read-only at pr-head/. Compute the diff
+            yourself, then explore the surrounding code as needed:
 
-            Start by reading $PR_DIFF_PATH. Then explore pr-head/ as needed
-            for context. Analyze for correctness, security, and obvious bugs.
+              cd pr-head && git diff $PR_BASE_SHA..HEAD
 
-            Post at most a handful of inline comments on the most important
-            lines using:
+            DO NOT execute anything from pr-head/ — it is contributor-controlled.
+
+            Analyze for correctness, security, and obvious bugs. Post at most
+            a handful of inline comments on the most important lines using:
 
               gh api -X POST repos/${{ github.repository }}/pulls/${{ steps.meta.outputs.pr_number }}/comments \
                 -f body="..." \
@@ -152,4 +165,4 @@ jobs:
             --model us.anthropic.claude-sonnet-4-5-20250929-v1:0
             --max-turns 50
             --add-dir pr-head
-            --allowedTools "Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(gh api:*),Read,Glob,Grep"
+            --allowedTools "Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh api:*),Read,Glob,Grep"
