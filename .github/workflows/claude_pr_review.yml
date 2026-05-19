@@ -2,11 +2,15 @@ name: Claude PR Review
 
 # Stage 2 of 2: triggered by completion of "Claude PR Review (collect)".
 # Runs in base-repo context with secrets, regardless of whether the PR
-# came from a fork. Downloads the diff artifact (untrusted input), mints
+# came from a fork. Downloads the diff artifact (untrusted input), checks
+# out the PR head into a subdirectory (read-only — never executed), mints
 # a Bedrock bearer token, and runs claude-code-action to post comments.
 #
-# CRITICAL: never checkout the PR head into the workspace. The action
-# only sees the diff text from the artifact.
+# Safety: the workspace root stays on the base ref. The PR head goes
+# into pr-head/ via persist-credentials:false. We never run any script
+# from pr-head/ — no npm install, no pip install, no contributor scripts.
+# Symlinks under pr-head/ are stripped post-checkout so the agent can't
+# escape that directory via cat.
 
 on:
   workflow_run:
@@ -61,6 +65,23 @@ jobs:
           echo "is_fork=$IS_FORK" >> "$GITHUB_OUTPUT"
           echo "Reviewing PR #$PR_NUMBER (head=$HEAD_SHA, fork=$IS_FORK)"
 
+      # Read-only checkout of PR head into a subdirectory. The agent can read
+      # these files but our --allowedTools surface forbids executing them.
+      - name: Checkout PR head (read-only)
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ steps.meta.outputs.head_sha }}
+          path: pr-head
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Strip symlinks from PR head
+        run: |
+          # A symlink under pr-head/ pointing outside it could let the agent
+          # read base-ref code or arbitrary runner files. Delete them all.
+          find pr-head -type l -print -delete
+
       # Mint a short-lived Bedrock bearer token from a dedicated IAM role.
       # The agent step never sees IAM credentials — only AWS_BEARER_TOKEN_BEDROCK.
       - name: Configure AWS credentials (OIDC, pre-step)
@@ -105,8 +126,14 @@ jobs:
             You are reviewing pull request #${{ steps.meta.outputs.pr_number }}
             in ${{ github.repository }} (head SHA ${{ steps.meta.outputs.head_sha }}).
 
-            The diff is at $PR_DIFF_PATH. Read it once, then analyze for
-            correctness issues, security issues, and obvious bugs.
+            Inputs available to you:
+            - $PR_DIFF_PATH — the unified diff for this PR.
+            - pr-head/ — read-only checkout of the PR head. Use this to look
+              up call sites, related files, tests, and surrounding code.
+              DO NOT attempt to execute anything from pr-head/.
+
+            Start by reading $PR_DIFF_PATH. Then explore pr-head/ as needed
+            for context. Analyze for correctness, security, and obvious bugs.
 
             Post at most a handful of inline comments on the most important
             lines using:
@@ -124,4 +151,5 @@ jobs:
           claude_args: |
             --model us.anthropic.claude-sonnet-4-5-20250929-v1:0
             --max-turns 50
-            --allowedTools "Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(gh api:*)"
+            --add-dir pr-head
+            --allowedTools "Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(gh api:*),Read,Glob,Grep"
