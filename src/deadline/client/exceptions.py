@@ -43,3 +43,17 @@ class NonValidInputError(Exception):
 
 class ManifestOutdatedError(Exception):
     """Error for when local files are different from version captured in manifest"""
+
+
+class AssetUploadInterruptedError(DeadlineOperationCanceled):
+    """Raised when an in-progress asset upload is interrupted by the user."""
+
+    def __init__(self, uploaded_bytes: int, total_bytes: int):
+        pct = (uploaded_bytes / total_bytes * 100) if total_bytes else 0
+        message = (
+            f"Asset upload interrupted at {uploaded_bytes}/{total_bytes} bytes "
+            f"({pct:.1f}%)"
+        )
+        super().__init__(message)
+        self.uploaded_bytes = uploaded_bytes
+        self.total_bytes = total_bytes
