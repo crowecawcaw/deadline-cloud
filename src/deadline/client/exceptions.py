@@ -43,3 +43,16 @@ class NonValidInputError(Exception):
 
 class ManifestOutdatedError(Exception):
     """Error for when local files are different from version captured in manifest"""
+
+
+class FarmConfigurationError(DeadlineOperationError):
+    """Raised when a farm's configuration is invalid or incomplete."""
+
+    def __init__(self, farm_id: str, field: str, value=None):
+        message = f"Invalid configuration for farm {farm_id}: field '{field}'"
+        if value is not None:
+            message += f" has unsupported value {value!r}"
+        super().__init__(message)
+        self.farm_id = farm_id
+        self.field = field
+        self.value = value
