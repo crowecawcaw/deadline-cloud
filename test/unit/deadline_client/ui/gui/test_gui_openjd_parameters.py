@@ -7,10 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-try:
-    from deadline.client.ui.widgets.openjd_parameters_widget import OpenJDParametersWidget
-except ImportError:
-    pytest.skip("GUI dependencies not available", allow_module_level=True)
+from deadline.client.ui.widgets.openjd_parameters_widget import OpenJDParametersWidget
 
 
 def _line_edit_param(name="MyString", default="hello"):
@@ -286,7 +283,7 @@ class TestOpenJDParametersWidget:
         widget = OpenJDParametersWidget(parameter_definitions=_grouped_params())
         qtbot.addWidget(widget)
 
-        groups = widget.findChildren(_JobTemplateGroupLayout)
+        groups: list = list(widget.findChildren(_JobTemplateGroupLayout))  # type: ignore[arg-type]
         assert len(groups) == 1
         assert groups[0].title() == "Resolution"
 
