@@ -22,6 +22,50 @@ coverage-enforced suite.
 
 Run: `hatch run test`
 
+### GUI unit tests (`test/unit/deadline_client/ui/gui/`)
+
+GUI unit tests validate the Qt-based submitter and settings dialogs
+using [pytest-qt](https://pytest-qt.readthedocs.io/) with an offscreen
+Qt platform (no display required). They run alongside all other unit
+tests as part of `hatch run test` and contribute to the unified coverage
+measurement.
+
+**When to write a GUI unit test:**
+
+- Adding or modifying a widget, dialog, or panel in `src/deadline/client/ui/`.
+- Changing user-facing behavior such as form validation, default values,
+  enabled/disabled state, or signal/slot wiring.
+- Fixing a bug in the UI layer — the test should reproduce the bug and
+  verify the fix.
+
+GUI unit tests are *not* required for cosmetic-only changes
+(stylesheets, spacing, icons) that do not alter functionality.
+
+**How to run:**
+
+```sh
+# Run all tests (includes GUI unit tests)
+$ hatch run test
+
+# Run only GUI unit tests
+$ hatch run test test/unit/deadline_client/ui/gui
+
+# Run a specific test file
+$ hatch run test test/unit/deadline_client/ui/gui/test_settings_dialogue.py
+
+# Run a specific test by name
+$ hatch run test -k "test_host_requirements"
+```
+
+**Expectations:**
+
+- Tests must pass in offscreen mode (`QT_QPA_PLATFORM=offscreen`) — no
+  real display or user interaction.
+- Tests should use the `mock_deadline_backend` fixture (see
+  `test/unit/deadline_client/ui/gui/conftest.py`) instead of mocking
+  individual API calls, to ensure realistic service behavior.
+- Coverage reports are written to `build/coverage/`.
+
 ## `test/cli_e2e/` — CLI end-to-end tests
 
 Subprocess-based tests that invoke the real `deadline` binary. **Nothing
@@ -61,9 +105,10 @@ dialog, submitter dialog) should have basic UI tests here to confirm it
 opens, displays the right data, and responds to user actions.
 
 Exhaustive widget-level testing (e.g. every combo-box option, every
-validation state) is better suited to a future `pytest-qt` suite, which
-can test Qt widgets in-process without rendering to the screen — faster
-and lighter weight, but lower fidelity.
+validation state) belongs in the `pytest-qt` suite at
+`test/unit/deadline_client/ui/gui/`, which tests Qt widgets in-process
+without rendering to the screen — faster and lighter weight, but lower
+fidelity.
 
 Run: `hatch run ui:test`
 
