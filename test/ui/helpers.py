@@ -24,7 +24,7 @@ import xa11y
 # Tuned for mock-backend runs over localhost HTTP. Generous ceilings
 # because Qt/AT-SPI startup under Xvfb on Linux CI and Windows UIA can
 # be substantially slower than a developer workstation.
-STARTUP_TIMEOUT = 15.0
+STARTUP_TIMEOUT = 45.0
 CLOSE_TIMEOUT = 10.0
 TERMINATE_TIMEOUT = 3.0
 SUBMIT_TIMEOUT = 20.0
