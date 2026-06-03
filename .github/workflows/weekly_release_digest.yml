@@ -1,0 +1,94 @@
+name: Weekly Release Digest
+
+# Posts "Last week in AWS Deadline Cloud" — a summary of the past week's releases
+# across the aws-deadline/* org — as a comment on a tracking issue, and optionally
+# to Slack. Summarization is done by Claude Opus on Amazon Bedrock.
+
+on:
+  # GitHub cron is always UTC. We don't track daylight saving here: 18:00 UTC
+  # on Tuesday is 10:00 PST in winter and 11:00 PDT in summer — close enough.
+  schedule:
+    - cron: "0 18 * * 2"   # Tuesday 18:00 UTC (~10am US Pacific)
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Trailing window in days"
+        required: false
+        default: "7"
+      issue_number:
+        description: "Issue to comment on (overrides the DIGEST_ISSUE_NUMBER variable)"
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write   # required for AWS OIDC role assumption
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    # AWS_PGP_KEY_SECRET_ROLE is an environment secret in the `release`
+    # environment, so the job must declare that environment to read it.
+    # DIGEST_ISSUE_NUMBER is also read from this environment.
+    environment: release
+    env:
+      # Mapped at job level so it can be tested in step `if:` conditions
+      # (a step's own env block is not available in its own `if:`).
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install boto3
+
+      - name: Configure AWS credentials (Bedrock)
+        # Reuses AWS_PGP_KEY_SECRET_ROLE — the same role the release-notes
+        # generator (reusable_bump.yml) assumes. Despite its name (it was
+        # created to read the PGP signing key from Secrets Manager), it also
+        # grants the bedrock:InvokeModel permission this digest needs, so we
+        # reuse it rather than provisioning a separate Bedrock role.
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PGP_KEY_SECRET_ROLE }}
+          aws-region: us-west-2
+          mask-aws-account-id: true
+
+      - name: Generate digest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYS: ${{ github.event.inputs.days || '7' }}
+        run: |
+          python3 .github/scripts/weekly_release_digest.py \
+            --days "$DAYS" \
+            --region us-west-2 \
+            --out digest.md \
+            --slack-out digest-slack.json
+          echo "----- generated comment -----"
+          cat digest.md
+
+      - name: Post comment to tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.inputs.issue_number || vars.DIGEST_ISSUE_NUMBER }}
+        run: |
+          if [ -z "$ISSUE" ]; then
+            echo "::error::No target issue. Set the DIGEST_ISSUE_NUMBER repo variable or pass issue_number."
+            exit 1
+          fi
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file digest.md
+
+      # Slack is optional: the step is skipped entirely unless the repo has the
+      # SLACK_WEBHOOK_URL secret set. Mapping the secret to an env var lets us
+      # test for its presence in `if:` (secrets can't be referenced there directly).
+      - name: Post to Slack (if webhook configured)
+        if: env.SLACK_WEBHOOK_URL != ''
+        run: |
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data @digest-slack.json \
+            "$SLACK_WEBHOOK_URL"
