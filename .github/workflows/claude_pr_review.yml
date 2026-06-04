@@ -1,0 +1,47 @@
+# Stage 2 caller for the Claude PR-review integration: the "review" workflow.
+#
+# Triggered by completion of the Stage-1 "collect" workflow. Because the trigger
+# is workflow_run, GitHub runs this file from the default branch (never a fork's
+# copy) and with this repo's secrets -- so a fork PR cannot alter the review
+# behavior, permissions, or credential setup.
+#
+# All the review logic (Bedrock auth, the pinned action, the restricted tool
+# surface, the read-only PR-head checkout, and per-run limits) lives in the
+# reusable workflow in aws-deadline/.github. This caller only forwards the
+# workflow_run identifiers and the role-ARN secret.
+name: Claude PR Review
+
+on:
+  workflow_run:
+    workflows: ["Claude PR Review (collect)"]
+    types:
+      - completed
+
+# Least privilege. The reusable workflow re-declares the same scopes on its job;
+# these are the ceiling for the called workflow.
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    # Only run if Stage 1 succeeded.
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    uses: aws-deadline/.github/.github/workflows/reusable_claude_pr_review.yml@mainline
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    with:
+      # Pin the artifact download to the run that triggered us.
+      collect_run_id: ${{ github.event.workflow_run.id }}
+      # Head repo from the server-populated workflow_run event payload.
+      head_repository: ${{ github.event.workflow_run.head_repository.full_name }}
+    secrets:
+      # OIDC role that can mint a Bedrock bearer token.
+      bedrock_role_arn: ${{ secrets.AWS_CLAUDE_PR_REVIEW_ROLE }}
