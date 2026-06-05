@@ -98,10 +98,16 @@ def _items(combo):
 
 
 def _select_by_data(combo, data):
-    """Select the combo entry whose itemData equals *data* (fires currentIndexChanged)."""
+    """Simulate a user picking the entry whose itemData equals *data*.
+
+    Sets the index AND emits ``activated`` (as a real dropdown pick does), because
+    selection persistence is now driven by ``activated`` -> ``user_selected``, not
+    by ``currentIndexChanged`` (which also fires on programmatic display-sync).
+    """
     index = combo.findData(data)
     assert index >= 0, f"{data!r} not found in {_items(combo)}"
     combo.setCurrentIndex(index)
+    combo.activated.emit(index)
 
 
 def _configure_profile(profile_name, *, farm_id="", queue_id=""):
@@ -271,7 +277,7 @@ class TestPersistence:
             and sp_combo.itemText(i) not in ("<refreshing>", "<none selected>")
         ]
         assert real, f"expected a real storage profile, got {_items(sp_combo)}"
-        sp_combo.setCurrentIndex(sp_combo.findData(real[0]))
+        _select_by_data(sp_combo, real[0])
         QApplication.processEvents()
 
         assert config_file.get_setting("settings.storage_profile_id") == real[0]
@@ -390,6 +396,44 @@ class TestProfileSwitch:
         assert widget.farm_box.box.currentData() == ""
         assert widget.queue_box.box.currentData() == ""
 
+    def test_roundtrip_AtoBtoA_preserves_each_profiles_selection(
+        self, qtbot, widget, seeded_backend
+    ):
+        """Regression: switching A -> B -> A must restore each profile's own farm/queue.
+
+        Farm/queue are profile-scoped in config. Returning to a profile must show
+        the value it had, never a blank or the other profile's value. This guards
+        the reported bug where an auto-select path cleared the stored selection on
+        switch.
+        """
+        backend, farm_a, queue_a = seeded_backend
+        farm_b = backend.create_farm(displayName="Farm B")["farmId"]
+        queue_b = backend.create_queue(farmId=farm_b, displayName="Queue B")["queueId"]
+
+        _configure_profile("profile-A", farm_id=farm_a, queue_id=queue_a)
+        controller = DeadlineUIController.getInstance()
+        with qtbot.waitSignal(controller.farms_updated, timeout=5000):
+            widget.refresh_setting_controls(deadline_authorized=True)
+        QApplication.processEvents()
+        assert widget.farm_box.box.currentData() == farm_a
+
+        # A -> B
+        _configure_profile("profile-B", farm_id=farm_b, queue_id=queue_b)
+        _switch_profile_and_refresh(qtbot, widget, "profile-B")
+        assert widget.farm_box.box.currentData() == farm_b
+        assert config_file.get_setting("defaults.farm_id") == farm_b
+        assert config_file.get_setting("defaults.queue_id") == queue_b
+
+        # B -> A : profile A's stored selection must come back intact.
+        _switch_profile_and_refresh(qtbot, widget, "profile-A")
+        assert config_file.get_setting("defaults.farm_id") == farm_a, "profile A's farm was cleared"
+        assert config_file.get_setting("defaults.queue_id") == queue_a, (
+            "profile A's queue was cleared"
+        )
+        assert widget.farm_box.box.currentData() == farm_a
+        QApplication.processEvents()
+        assert widget.queue_box.box.currentData() == queue_a
+
     def test_switch_to_profile_with_default_farm_selects_it(self, qtbot, widget, seeded_backend):
         """A new profile with a default farm/queue must select them."""
         backend, farm_id, queue_id = seeded_backend
@@ -428,9 +472,7 @@ class TestProfileSwitch:
         # refreshes. Wait for BOTH the farms and queues lists to land before
         # switching profiles -- otherwise an in-flight profile-A queues_updated can
         # arrive after the offline clear below and repopulate "Test Queue".
-        with qtbot.waitSignals(
-            [controller.farms_updated, controller.queues_updated], timeout=5000
-        ):
+        with qtbot.waitSignals([controller.farms_updated, controller.queues_updated], timeout=5000):
             widget.refresh_setting_controls(deadline_authorized=True)
         QApplication.processEvents()
         assert "Test Farm" in _items(widget.farm_box.box)

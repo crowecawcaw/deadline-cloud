@@ -22,7 +22,7 @@ from qtpy.QtWidgets import (  # type: ignore
 
 from .radio_button_widget import HoverRadioButton
 
-from ...config import config_file, get_setting, set_setting
+from ...config import config_file, get_setting
 from .._utils import tr
 from ..controllers import DeadlineUIController
 from ._deadline_list_combo_boxes import (
@@ -484,10 +484,6 @@ class DeadlineCloudSettingsWidget(QGroupBox):
         margins = self.layout.contentsMargins()
         self.layout.setContentsMargins(margins.left(), 6, margins.right(), 6)
 
-        # When True, the next queues_updated from the controller is the result of
-        # a farm change we initiated, so we continue the cascade to storage profiles.
-        self._awaiting_queues_for_cascade = False
-
         # Track the AWS profile so refresh_setting_controls can detect a profile switch
         # and re-derive the farm/queue selection from the new profile (clearing a stale
         # selection, or selecting the new profile's default) instead of keeping the old.
@@ -520,13 +516,17 @@ class DeadlineCloudSettingsWidget(QGroupBox):
         # Hidden until we confirm the selected queue has storage profiles.
         self._set_storage_profile_visible(False)
 
-        # User-initiated selection handlers.
-        self.farm_box.box.currentIndexChanged.connect(self._on_farm_changed)
-        self.queue_box.box.currentIndexChanged.connect(self._on_queue_changed)
-        self.storage_profile_box.box.currentIndexChanged.connect(self._on_storage_profile_changed)
+        # Route genuine selections (user picks + lone-resource auto-select) to the
+        # controller, which is the single owner of persistence and cascading. These
+        # do NOT fire on programmatic display-sync (refresh_selected_id), so syncing
+        # the combo to the stored value can't re-trigger a selection.
+        self.farm_box.user_selected.connect(self._controller.select_farm)
+        self.queue_box.user_selected.connect(self._controller.select_queue)
+        self.storage_profile_box.user_selected.connect(self._controller.select_storage_profile)
 
-        # Continue the farm -> queue -> storage cascade once the queue list lands.
-        self._controller.queues_updated.connect(self._on_queues_list_updated, Qt.QueuedConnection)
+        # The controller emits selection_changed after it persists a farm/queue, so
+        # the host dialog can reload queue parameters + refresh the Submit button.
+        self._controller.selection_changed.connect(self.selection_changed, Qt.QueuedConnection)
 
         # Recompute storage-profile visibility whenever its list changes.
         model = self.storage_profile_box.box.model()
@@ -561,83 +561,6 @@ class DeadlineCloudSettingsWidget(QGroupBox):
         """
         self._set_storage_profile_visible(self._has_real_storage_profiles())
 
-    def _resnapshot_config(self) -> None:
-        """Refresh each combo's cached config from the just-persisted settings.
-
-        Selections are persisted with the module-level ``set_setting`` (writing the
-        global config + disk), but the combos read farm/queue ids for their list
-        refreshes from the ``self.config`` snapshot captured at the last
-        ``refresh_setting_controls``. After a selection that snapshot is stale, so a
-        cascade would list resources for the previous farm/queue. Re-reading here
-        keeps the cascade reads in sync with what was just written.
-        """
-        config = config_file.read_config()
-        for box in (self.farm_box, self.queue_box, self.storage_profile_box):
-            box.set_config(config)
-
-    def _on_farm_changed(self, index: int) -> None:
-        if index < 0:
-            return
-        farm_id = self.farm_box.box.itemData(index)
-        if farm_id is None:
-            return
-        set_setting("defaults.farm_id", farm_id)
-        # The previously selected queue/storage profile belong to the old farm.
-        set_setting("defaults.queue_id", "")
-        set_setting("settings.storage_profile_id", "")
-        self.queue_box.clear_list()
-        self.storage_profile_box.clear_list()
-        self._set_storage_profile_visible(False)
-        # The combos list resources using the farm/queue ids in their cached config
-        # snapshot, so re-snapshot from the just-persisted settings before refreshing.
-        # Otherwise the cascade would re-list the OLD farm's queues.
-        self._resnapshot_config()
-        # Cascade: reload the queue list for the new farm, then storage profiles.
-        self._awaiting_queues_for_cascade = True
-        self.queue_box.refresh_list()
-        self.selection_changed.emit()
-
-    def _on_queue_changed(self, index: int) -> None:
-        if index < 0:
-            return
-        queue_id = self.queue_box.box.itemData(index)
-        if queue_id is None:
-            return
-        set_setting("defaults.queue_id", queue_id)
-        # The previously selected storage profile belongs to the old queue; clear it
-        # so a stale profile can't persist (or be re-shown as a raw id) when the new
-        # queue doesn't contain it.
-        set_setting("settings.storage_profile_id", "")
-        self.storage_profile_box.clear_list()
-        self._set_storage_profile_visible(False)
-        # Re-snapshot so the storage-profile list is fetched for the new queue, not
-        # the queue id in the stale cached snapshot.
-        self._resnapshot_config()
-        # Cascade: reload storage profiles for the newly selected queue.
-        self.storage_profile_box.refresh_list()
-        self.selection_changed.emit()
-
-    def _on_storage_profile_changed(self, index: int) -> None:
-        if index < 0:
-            return
-        storage_profile_id = self.storage_profile_box.box.itemData(index)
-        # A storage profile does not gate queue parameters or the Submit button,
-        # so there is no need to notify the parent here.
-        set_setting("settings.storage_profile_id", storage_profile_id or "")
-
-    def _on_queues_list_updated(self, queues_list) -> None:
-        """Continue the cascade after a farm change repopulated the queue list."""
-        if not self._awaiting_queues_for_cascade:
-            return
-        self._awaiting_queues_for_cascade = False
-        current_queue_id = self.queue_box.box.currentData()
-        if current_queue_id:
-            set_setting("defaults.queue_id", current_queue_id)
-            # Re-snapshot so storage profiles are fetched for this queue.
-            self._resnapshot_config()
-            self.storage_profile_box.refresh_list()
-            self.selection_changed.emit()
-
     def refresh_setting_controls(self, deadline_authorized):
         """
         Refreshes the controls for UI items that depend on the AWS Deadline Cloud API
@@ -649,6 +572,11 @@ class DeadlineCloudSettingsWidget(QGroupBox):
                     an AWS Deadline Cloud Status Widget.
         """
         config = config_file.read_config()
+
+        # Align the controller's cascade ids with what's persisted, so the queue/
+        # storage list fetches below use the current farm/queue (this refresh wasn't
+        # driven through select_*).
+        self._controller.sync_selection_state(config)
 
         # Detect an AWS profile switch. Farm/queue/storage settings are profile-scoped,
         # so on a switch the combos must reflect the NEW profile's stored defaults
