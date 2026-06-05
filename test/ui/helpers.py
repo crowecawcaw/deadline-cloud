@@ -410,6 +410,19 @@ class SubmitterDialog(DeadlineApp):
             f"accessibility tree within {timeout}s"
         )
 
+    def has_label(self, text: str) -> bool:
+        """True if a static_text label with the given *text* is present."""
+        return self.locator(f'static_text[name="{text}"]').exists()
+
+    def wait_text(self, needle: str, timeout: float = FARM_RESOLVE_TIMEOUT) -> bool:
+        """Poll the accessibility tree until *needle* appears, returning success."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.tree_contains_text(needle):
+                return True
+            time.sleep(0.25)
+        return False
+
     def export_bundle(self) -> None:
         """Click 'Export bundle' and dismiss the confirmation dialog."""
         self.button("Export bundle").press()

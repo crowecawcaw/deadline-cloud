@@ -381,3 +381,32 @@ def test_queue_not_overwritten_when_already_set(qtbot, fresh_deadline_config):
 
     assert get_setting(SETTING_QUEUE_ID) == "queue-existing"
     complete_spy.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tab selection changes must not re-list the resource combos
+# ---------------------------------------------------------------------------
+
+
+def test_tab_selection_change_does_not_refresh_farm_list(qtbot, fresh_deadline_config):
+    """Selecting a queue (or farm) on the tab must not re-list the farm combo.
+
+    A selection on the Shared job settings tab only needs to update the Submit
+    button and reload queue parameters; re-listing the combos would cause the
+    farm list to refresh whenever the user merely changes the queue.
+    """
+    auth = _AuthStatusStub(True)
+    dialog, _ = _build_dialog(qtbot, auth)
+
+    settings_box = dialog.shared_job_settings.deadline_cloud_settings_box
+    with patch.object(settings_box.farm_box, "refresh_list") as farm_refresh, patch.object(
+        settings_box.queue_box, "refresh_list"
+    ) as queue_refresh, patch.object(
+        dialog.shared_job_settings, "refresh_queue_parameters"
+    ) as refresh_qp:
+        settings_box.selection_changed.emit()
+
+    farm_refresh.assert_not_called()
+    queue_refresh.assert_not_called()
+    # The selection change should still reload queue parameters.
+    refresh_qp.assert_called_once()
