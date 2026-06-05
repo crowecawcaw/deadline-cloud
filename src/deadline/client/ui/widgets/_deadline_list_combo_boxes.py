@@ -71,11 +71,6 @@ class _DeadlineResourceListComboBoxController(QWidget):
         self.resource_name = resource_name
         self.config: Optional[ConfigParser] = None
         self._controller = DeadlineUIController.getInstance()
-        # When set, the next list update skips the lone-resource auto-select. Used on
-        # an AWS profile switch, where the selection must reflect the new profile's
-        # stored default exactly (cleared if it has none) rather than auto-picking a
-        # leftover single resource from the previous profile.
-        self.suppress_auto_select_once: bool = False
 
         self._build_ui()
 
@@ -141,12 +136,14 @@ class _DeadlineResourceListComboBoxController(QWidget):
 
             self.refresh_selected_id()
 
-        # If nothing is configured and exactly one resource is available, select it.
-        if self.suppress_auto_select_once:
-            # A profile switch must honor the new profile's stored default exactly,
-            # so skip auto-select for this single refresh cycle.
-            self.suppress_auto_select_once = False
-        elif self._auto_select_when_single:
+        # Unified selection rule, applied on every list update regardless of what
+        # triggered it (dialog open, profile switch, sign-in, manual refresh):
+        #   1. refresh_selected_id (above) selects the stored default if it's in the
+        #      list, otherwise falls back to "<none selected>".
+        #   2. if nothing is stored and exactly one resource is available, select it.
+        # _maybe_auto_select_single self-guards on a configured id, so it never
+        # overrides a stored default.
+        if self._auto_select_when_single:
             self._maybe_auto_select_single(items_list)
 
     def _on_user_activated(self, index: int) -> None:

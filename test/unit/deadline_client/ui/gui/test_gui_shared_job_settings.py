@@ -371,15 +371,21 @@ class TestCascade:
 
 
 class TestProfileSwitch:
-    """Switching AWS profiles must re-derive the farm/queue selection from the new
-    profile: clear them if the new profile has no default, or select the new
-    profile's default if it has one. (Settings are profile-scoped, so a stale
-    farm/queue from the old profile must never remain selected.)"""
+    """Switching AWS profiles re-derives the farm/queue selection for the new profile
+    using the unified rule: select the profile's stored default if available, else
+    auto-select the lone farm/queue if there's exactly one, else clear to <none>.
+    (Settings are profile-scoped, so a stale farm/queue from the old profile must
+    never remain selected.)"""
 
-    def test_switch_to_profile_without_default_farm_clears_selection(
+    def test_switch_to_profile_without_default_auto_selects_lone_farm(
         self, qtbot, widget, seeded_backend
     ):
-        """A new profile with no default farm must clear the old profile's farm/queue."""
+        """A new profile with no default but a single available farm auto-selects it.
+
+        The backend has exactly one farm, so per the unified rule the new profile
+        (which has no stored default) auto-selects that lone farm rather than
+        clearing to <none>.
+        """
         _, farm_id, queue_id = seeded_backend
         # Start on profile A with a default farm + queue selected.
         _configure_profile("profile-A", farm_id=farm_id, queue_id=queue_id)
@@ -392,6 +398,37 @@ class TestProfileSwitch:
         # Switch to profile B which has no default farm configured.
         _configure_profile("profile-B", farm_id="", queue_id="")
         _switch_profile_and_refresh(qtbot, widget, "profile-B")
+        QApplication.processEvents()
+
+        # Exactly one farm exists -> it is auto-selected (and persisted) for profile B.
+        assert widget.farm_box.box.currentData() == farm_id
+        assert config_file.get_setting("defaults.farm_id") == farm_id
+
+    def test_switch_to_profile_without_default_clears_when_multiple_farms(
+        self, qtbot, widget, seeded_backend
+    ):
+        """A new profile with no default and multiple farms clears to <none>.
+
+        With more than one farm there's no unambiguous choice, so the selection
+        clears rather than guessing.
+        """
+        backend, farm_id, queue_id = seeded_backend
+        # A second farm so the count is > 1 and nothing auto-selects.
+        backend.create_farm(displayName="Second Farm")
+
+        _configure_profile("profile-A", farm_id=farm_id, queue_id=queue_id)
+        controller = DeadlineUIController.getInstance()
+        # Drain BOTH the farm and queue refreshes before switching, so profile A's
+        # in-flight queue result can't land after the switch and auto-select under B.
+        with qtbot.waitSignals([controller.farms_updated, controller.queues_updated], timeout=5000):
+            widget.refresh_setting_controls(deadline_authorized=True)
+        QApplication.processEvents()
+        assert widget.farm_box.box.currentData() == farm_id
+
+        # Switch to profile B which has no default farm configured.
+        _configure_profile("profile-B", farm_id="", queue_id="")
+        _switch_profile_and_refresh(qtbot, widget, "profile-B")
+        QApplication.processEvents()
 
         assert widget.farm_box.box.currentData() == ""
         assert widget.queue_box.box.currentData() == ""
@@ -490,15 +527,15 @@ class TestProfileSwitch:
         assert "Test Queue" not in _items(widget.queue_box.box)
         assert widget.queue_box.box.currentData() == ""
 
-    def test_auto_select_not_suppressed_after_login_to_offline_profile(
+    def test_lone_farm_auto_selected_on_login_after_offline_switch(
         self, qtbot, widget, seeded_backend
     ):
-        """The one-shot auto-select suppression must not leak past an offline switch.
+        """Switching offline then logging in auto-selects the lone farm.
 
-        Switching to a profile that isn't logged in arms the auto-select
-        suppression but performs no list refresh (no API), so the flag is never
-        consumed. When the user then logs in to that profile, the lone available
-        farm must still be auto-selected -- the stale flag must not silently eat it.
+        Switching to a not-logged-in profile can't list farms, so the selection is
+        empty. Once the user logs in to that profile (which has no stored default),
+        the unified rule kicks in on the resulting list refresh and the sole farm
+        is auto-selected.
         """
         _, farm_id, _ = seeded_backend
         controller = DeadlineUIController.getInstance()
@@ -510,18 +547,19 @@ class TestProfileSwitch:
             widget.refresh_setting_controls(deadline_authorized=True)
         QApplication.processEvents()
 
-        # Switch to profile-B which is NOT logged in: this arms the suppression but
-        # never refreshes, so the one-shot flag is left set.
+        # Switch to profile-B which is NOT logged in: no API, so nothing is listed
+        # or selected.
         _configure_profile("profile-B", farm_id="", queue_id="")
         config_file.set_setting("defaults.aws_profile_name", "profile-B")
         widget.refresh_setting_controls(deadline_authorized=False)
         QApplication.processEvents()
         assert widget.farm_box.box.currentData() == ""
 
-        # Now log in to profile-B (same profile, so profile_changed is False). The
-        # sole farm must be auto-selected for the new profile that has no default.
+        # Now log in to profile-B. The sole farm is auto-selected for the new
+        # profile that has no stored default.
         with qtbot.waitSignal(controller.farms_updated, timeout=5000):
             widget.refresh_setting_controls(deadline_authorized=True)
         QApplication.processEvents()
 
         assert widget.farm_box.box.currentData() == farm_id
+        assert config_file.get_setting("defaults.farm_id") == farm_id
