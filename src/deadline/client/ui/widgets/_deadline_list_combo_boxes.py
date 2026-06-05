@@ -54,6 +54,14 @@ class _DeadlineResourceListComboBoxController(QWidget):
     # Emitted when the background refresh catches an exception
     background_exception = Signal(str, BaseException)
 
+    # Emitted with the resource id when the selection changes due to user intent:
+    # the user picking an item (Qt's ``activated``) or the lone-resource auto-select.
+    # NOT emitted by ``refresh_selected_id``, which only syncs the combo to display
+    # the already-persisted value. This split is what lets the host wire selection
+    # persistence to genuine selections without programmatic display updates
+    # spuriously re-triggering (and clobbering) it.
+    user_selected = Signal(str)
+
     # When True, if nothing is configured yet and the list resolves to exactly one
     # resource, that resource is selected automatically. Subclasses opt in. This lives
     # here - the single point every list refresh funnels through - so auto-select works
@@ -80,6 +88,10 @@ class _DeadlineResourceListComboBoxController(QWidget):
     def _build_ui(self) -> None:
         """Build the widget UI."""
         self.box = QComboBox(parent=self)
+        # ``activated`` fires only on user interaction, never on programmatic
+        # setCurrentIndex (unlike ``currentIndexChanged``), so display-sync via
+        # refresh_selected_id can't masquerade as a user selection.
+        self.box.activated.connect(self._on_user_activated)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.box, stretch=1)
@@ -132,15 +144,21 @@ class _DeadlineResourceListComboBoxController(QWidget):
             self.refresh_selected_id()
 
         # If nothing is configured and exactly one resource is available, select it.
-        # Done outside block_signals so currentIndexChanged fires and any connected
-        # dialog logic (e.g. cascading to the next resource) reacts as if the user
-        # had picked it.
         if self.suppress_auto_select_once:
             # A profile switch must honor the new profile's stored default exactly,
             # so skip auto-select for this single refresh cycle.
             self.suppress_auto_select_once = False
         elif self._auto_select_when_single:
             self._maybe_auto_select_single()
+
+    def _on_user_activated(self, index: int) -> None:
+        """Emit ``user_selected`` for a genuine user pick from the dropdown."""
+        if index < 0:
+            return
+        resource_id = self.box.itemData(index)
+        if resource_id is None:
+            return
+        self.user_selected.emit(resource_id)
 
     def _maybe_auto_select_single(self) -> None:
         """Select the sole available resource if none is configured yet.
@@ -156,17 +174,14 @@ class _DeadlineResourceListComboBoxController(QWidget):
         if len(real_ids) != 1:
             return
         index = self.box.findData(real_ids[0])
-        if index < 0:
-            return
-        # Not under block_signals: emitting currentIndexChanged is intentional so connected
-        # dialog logic (e.g. cascading to the next resource) reacts as if the user picked it.
-        if self.box.currentIndex() != index:
-            self.box.setCurrentIndex(index)
-        else:
-            # The lone item is already current — e.g. Qt auto-selected it at index 0 when it
-            # streamed in under block_signals (the incremental append path), so no
-            # currentIndexChanged fired. Emit it now so the cascade still runs.
-            self.box.currentIndexChanged.emit(index)
+        if index >= 0:
+            # Update the display under block_signals, then emit user_selected
+            # explicitly: auto-selecting the lone resource is treated as user intent
+            # (it persists + cascades) but ``activated`` does not fire for a
+            # programmatic setCurrentIndex, so we signal it ourselves.
+            with block_signals(self.box):
+                self.box.setCurrentIndex(index)
+            self.user_selected.emit(real_ids[0])
 
     def _add_items(self, items_list: List) -> None:
         """
