@@ -53,6 +53,11 @@ def seeded_backend(mock_deadline_backend):
     return backend, farm_id, queue_id
 
 
+# The single region all mock farms are reported under. Farm combo labels are
+# region-first ("(us-west-2) Test Farm") per the (region, farm_id) convention.
+MOCK_REGION = "us-west-2"
+
+
 @pytest.fixture
 def mock_api(seeded_backend):
     """Patch the list_* API functions the controller calls to use the mock backend."""
@@ -63,7 +68,20 @@ def mock_api(seeded_backend):
     def _strip_config(fn):
         return lambda **kw: fn(**{k: v for k, v in kw.items() if k != "config"})
 
+    def _fake_iter_farms_by_region(config=None):
+        # The multi-region streaming path replaces a single api.list_farms call with a
+        # per-region fan-out. Mirror it by yielding the backend's farms under one region;
+        # each farm dict carries its region per the streaming contract.
+        farms = [dict(farm, region=MOCK_REGION) for farm in deadline_mock.list_farms()["farms"]]
+        yield (MOCK_REGION, farms, None)
+
     with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "deadline.client.ui.controllers._deadline_controller._iter_farms_by_region",
+                side_effect=_fake_iter_farms_by_region,
+            )
+        )
         stack.enter_context(
             patch(
                 "deadline.client.api.list_farms",
@@ -97,6 +115,37 @@ def _items(combo):
     return [combo.itemText(i) for i in range(combo.count())]
 
 
+def _has_label_containing(combo, text):
+    """True if any combo item label contains *text*.
+
+    Farm labels are region-first ("(us-west-2) Test Farm"), so an exact-match check
+    on the bare display name would miss the region prefix.
+    """
+    return any(text in label for label in _items(combo))
+
+
+def _wait_for_farm(qtbot, widget, farm_id):
+    """Wait until a streamed farm has landed in the farm combo box with its real label.
+
+    Farms stream in per region (``farms_appended``) after ``refresh_farms`` first
+    emits ``farms_updated([])`` to clear, so a one-shot wait on ``farms_updated``
+    returns on the empty clear before any farm arrives. Poll the combo instead.
+
+    A farm that's the stored default also gets a *raw-id* placeholder row (text == the
+    id) inserted by ``refresh_selected_id`` before its region streams in, so require the
+    matched row to carry a real label (text != the raw id) — otherwise we'd return on the
+    placeholder, before "(region) Display Name" arrives.
+    """
+
+    def _real_label_present():
+        box = widget.farm_box.box
+        index = box.findData(farm_id)
+        return index >= 0 and box.itemText(index) != farm_id
+
+    qtbot.waitUntil(_real_label_present, timeout=5000)
+    QApplication.processEvents()
+
+
 def _select_by_data(combo, data):
     """Simulate a user picking the entry whose itemData equals *data*.
 
@@ -126,7 +175,11 @@ def _switch_profile_and_refresh(qtbot, widget, profile_name):
     """
     config_file.set_setting("defaults.aws_profile_name", profile_name)
     controller = DeadlineUIController.getInstance()
-    with qtbot.waitSignal(controller.farms_updated, timeout=5000):
+    # Farms stream in after refresh_farms emits farms_updated([]) to clear, so wait for
+    # the streaming load to finish (farms_loading -> False) rather than the empty clear.
+    with qtbot.waitSignal(
+        controller.farms_loading, timeout=5000, check_params_cb=lambda loading: loading is False
+    ):
         widget.refresh_setting_controls(deadline_authorized=True)
     QApplication.processEvents()
 
@@ -148,13 +201,12 @@ class TestSelectorLayout:
 
 
 class TestDropdownPopulation:
-    def test_farm_dropdown_populated_from_backend(self, qtbot, widget):
-        controller = DeadlineUIController.getInstance()
+    def test_farm_dropdown_populated_from_backend(self, qtbot, widget, seeded_backend):
+        _, farm_id, _ = seeded_backend
         widget.refresh_setting_controls(deadline_authorized=True)
-        with qtbot.waitSignal(controller.farms_updated, timeout=5000):
-            widget.farm_box.refresh_list()
-        QApplication.processEvents()
-        assert "Test Farm" in _items(widget.farm_box.box)
+        widget.farm_box.refresh_list()
+        _wait_for_farm(qtbot, widget, farm_id)
+        assert _has_label_containing(widget.farm_box.box, "Test Farm")
 
     def test_queue_dropdown_populated_from_backend(self, qtbot, widget, seeded_backend):
         _, farm_id, _ = seeded_backend
@@ -197,11 +249,9 @@ class TestPersistence:
         config_file.set_setting("defaults.queue_id", "queue-stale")
         config_file.set_setting("settings.storage_profile_id", "sp-stale")
 
-        controller = DeadlineUIController.getInstance()
         widget.refresh_setting_controls(deadline_authorized=True)
-        with qtbot.waitSignal(controller.farms_updated, timeout=5000):
-            widget.farm_box.refresh_list()
-        QApplication.processEvents()
+        widget.farm_box.refresh_list()
+        _wait_for_farm(qtbot, widget, empty_farm_id)
 
         with qtbot.waitSignal(widget.selection_changed, timeout=5000):
             _select_by_data(widget.farm_box.box, empty_farm_id)
@@ -325,9 +375,8 @@ class TestCascade:
 
         controller = DeadlineUIController.getInstance()
         widget.refresh_setting_controls(deadline_authorized=True)
-        with qtbot.waitSignal(controller.farms_updated, timeout=5000):
-            widget.farm_box.refresh_list()
-        QApplication.processEvents()
+        widget.farm_box.refresh_list()
+        _wait_for_farm(qtbot, widget, farm_id)
 
         # Selecting the farm should set the cascade flag and refresh queues, which
         # repopulates the queue combo from the backend.
@@ -361,6 +410,7 @@ class TestCascade:
         assert "Test Queue" in _items(widget.queue_box.box)
 
         # Now select farm B; the cascade must reload queues for farm B.
+        _wait_for_farm(qtbot, widget, farm_b)
         with qtbot.waitSignal(controller.queues_updated, timeout=5000):
             _select_by_data(widget.farm_box.box, farm_b)
         QApplication.processEvents()
@@ -371,20 +421,59 @@ class TestCascade:
 
 
 class TestProfileSwitch:
-    """Switching AWS profiles must re-derive the farm/queue selection from the new
-    profile: clear them if the new profile has no default, or select the new
-    profile's default if it has one. (Settings are profile-scoped, so a stale
-    farm/queue from the old profile must never remain selected.)"""
+    """Switching AWS profiles re-derives the farm/queue selection for the new profile
+    using the unified rule: select the profile's stored default if available, else
+    auto-select the lone farm/queue if there's exactly one, else clear to <none>.
+    (Settings are profile-scoped, so a stale farm/queue from the old profile must
+    never remain selected.)"""
 
-    def test_switch_to_profile_without_default_farm_clears_selection(
+    def test_switch_to_profile_without_default_auto_selects_lone_farm(
         self, qtbot, widget, seeded_backend
     ):
-        """A new profile with no default farm must clear the old profile's farm/queue."""
+        """A new profile with no default but a single available farm auto-selects it.
+
+        The backend has exactly one farm, so per the unified rule the new profile
+        (which has no stored default) auto-selects that lone farm rather than
+        clearing to <none>.
+        """
         _, farm_id, queue_id = seeded_backend
         # Start on profile A with a default farm + queue selected.
         _configure_profile("profile-A", farm_id=farm_id, queue_id=queue_id)
+        widget.refresh_setting_controls(deadline_authorized=True)
+        _wait_for_farm(qtbot, widget, farm_id)
+        assert widget.farm_box.box.currentData() == farm_id
+
+        # Switch to profile B which has no default farm configured.
+        _configure_profile("profile-B", farm_id="", queue_id="")
+        _switch_profile_and_refresh(qtbot, widget, "profile-B")
+        QApplication.processEvents()
+
+        # Exactly one farm exists -> it is auto-selected (and persisted) for profile B.
+        assert widget.farm_box.box.currentData() == farm_id
+        assert config_file.get_setting("defaults.farm_id") == farm_id
+
+    def test_switch_to_profile_without_default_clears_when_multiple_farms(
+        self, qtbot, widget, seeded_backend
+    ):
+        """A new profile with no default and multiple farms clears to <none>.
+
+        With more than one farm there's no unambiguous choice, so the selection
+        clears rather than guessing.
+        """
+        backend, farm_id, queue_id = seeded_backend
+        # A second farm so the count is > 1 and nothing auto-selects.
+        backend.create_farm(displayName="Second Farm")
+
+        _configure_profile("profile-A", farm_id=farm_id, queue_id=queue_id)
         controller = DeadlineUIController.getInstance()
-        with qtbot.waitSignal(controller.farms_updated, timeout=5000):
+        # Drain BOTH the streamed farm load (farms_loading -> False, fired only after every
+        # region has appended) and the queue refresh before switching, so profile A's
+        # in-flight farm/queue results can't land after the switch and repopulate under B.
+        with qtbot.waitSignals(
+            [controller.farms_loading, controller.queues_updated],
+            timeout=5000,
+            check_params_cbs=[lambda loading: loading is False, lambda *_: True],
+        ):
             widget.refresh_setting_controls(deadline_authorized=True)
         QApplication.processEvents()
         assert widget.farm_box.box.currentData() == farm_id
@@ -392,6 +481,7 @@ class TestProfileSwitch:
         # Switch to profile B which has no default farm configured.
         _configure_profile("profile-B", farm_id="", queue_id="")
         _switch_profile_and_refresh(qtbot, widget, "profile-B")
+        QApplication.processEvents()
 
         assert widget.farm_box.box.currentData() == ""
         assert widget.queue_box.box.currentData() == ""
@@ -469,13 +559,14 @@ class TestProfileSwitch:
         _configure_profile("profile-A", farm_id=farm_id, queue_id=queue_id)
         controller = DeadlineUIController.getInstance()
         # refresh_setting_controls kicks off async farm AND queue (and storage)
-        # refreshes. Wait for BOTH the farms and queues lists to land before
+        # refreshes. Wait for the queues list to land, plus the streamed farms (farms
+        # arrive via farms_appended after the initial farms_updated([]) clear), before
         # switching profiles -- otherwise an in-flight profile-A queues_updated can
         # arrive after the offline clear below and repopulate "Test Queue".
-        with qtbot.waitSignals([controller.farms_updated, controller.queues_updated], timeout=5000):
+        with qtbot.waitSignal(controller.queues_updated, timeout=5000):
             widget.refresh_setting_controls(deadline_authorized=True)
-        QApplication.processEvents()
-        assert "Test Farm" in _items(widget.farm_box.box)
+        _wait_for_farm(qtbot, widget, farm_id)
+        assert _has_label_containing(widget.farm_box.box, "Test Farm")
         assert "Test Queue" in _items(widget.queue_box.box)
 
         # Switch to profile B, which is NOT logged in (deadline_authorized=False).
@@ -485,43 +576,55 @@ class TestProfileSwitch:
         QApplication.processEvents()
 
         # The old profile's farms must be gone; nothing can be listed without login.
-        assert "Test Farm" not in _items(widget.farm_box.box)
+        assert not _has_label_containing(widget.farm_box.box, "Test Farm")
         assert widget.farm_box.box.currentData() == ""
         assert "Test Queue" not in _items(widget.queue_box.box)
         assert widget.queue_box.box.currentData() == ""
 
-    def test_auto_select_not_suppressed_after_login_to_offline_profile(
+    def test_lone_farm_auto_selected_on_login_after_offline_switch(
         self, qtbot, widget, seeded_backend
     ):
-        """The one-shot auto-select suppression must not leak past an offline switch.
+        """Switching offline then logging in auto-selects the lone farm.
 
-        Switching to a profile that isn't logged in arms the auto-select
-        suppression but performs no list refresh (no API), so the flag is never
-        consumed. When the user then logs in to that profile, the lone available
-        farm must still be auto-selected -- the stale flag must not silently eat it.
+        Switching to a not-logged-in profile can't list farms, so the selection is
+        empty. Once the user logs in to that profile (which has no stored default),
+        the unified rule kicks in on the resulting list refresh and the sole farm
+        is auto-selected.
         """
         _, farm_id, _ = seeded_backend
         controller = DeadlineUIController.getInstance()
 
         # Start on profile-A, logged in, with its farm already chosen (so no
-        # auto-select fires here to muddy the later assertion).
+        # auto-select fires here to muddy the later assertion). Wait for the farm stream
+        # to fully settle (farms_loading -> False) so no in-flight append lands after the
+        # offline switch below and repopulates the box.
         _configure_profile("profile-A", farm_id=farm_id, queue_id="")
-        with qtbot.waitSignal(controller.farms_updated, timeout=5000):
+        with qtbot.waitSignal(
+            controller.farms_loading,
+            timeout=5000,
+            check_params_cb=lambda loading: loading is False,
+        ):
             widget.refresh_setting_controls(deadline_authorized=True)
         QApplication.processEvents()
 
-        # Switch to profile-B which is NOT logged in: this arms the suppression but
-        # never refreshes, so the one-shot flag is left set.
+        # Switch to profile-B which is NOT logged in: no API, so nothing is listed
+        # or selected.
         _configure_profile("profile-B", farm_id="", queue_id="")
         config_file.set_setting("defaults.aws_profile_name", "profile-B")
         widget.refresh_setting_controls(deadline_authorized=False)
         QApplication.processEvents()
         assert widget.farm_box.box.currentData() == ""
 
-        # Now log in to profile-B (same profile, so profile_changed is False). The
-        # sole farm must be auto-selected for the new profile that has no default.
-        with qtbot.waitSignal(controller.farms_updated, timeout=5000):
+        # Now log in to profile-B. The sole farm is auto-selected for the new
+        # profile that has no stored default. Farms stream in after the clear, so wait
+        # for the streaming load to finish (farms_loading -> False) where auto-select runs.
+        with qtbot.waitSignal(
+            controller.farms_loading,
+            timeout=5000,
+            check_params_cb=lambda loading: loading is False,
+        ):
             widget.refresh_setting_controls(deadline_authorized=True)
         QApplication.processEvents()
 
         assert widget.farm_box.box.currentData() == farm_id
+        assert config_file.get_setting("defaults.farm_id") == farm_id

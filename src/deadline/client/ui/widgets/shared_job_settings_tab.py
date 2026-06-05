@@ -589,11 +589,11 @@ class DeadlineCloudSettingsWidget(QGroupBox):
         self._controller.sync_selection_state(config)
 
         # Detect an AWS profile switch. Farm/queue/storage settings are profile-scoped,
-        # so on a switch the combos must reflect the NEW profile's stored defaults
-        # exactly: clear the selection if the new profile has none, or select its
-        # default if it has one. Suppressing the lone-resource auto-select for this
-        # refresh prevents a single leftover farm/queue from the old profile being
-        # re-selected.
+        # so the combos must reflect the NEW profile. The combos apply the unified
+        # selection rule on each list update (stored default, else lone resource, else
+        # <none>); here we only need to drop the previous profile's stale list contents
+        # so they don't linger when the new profile can't be listed (e.g. not logged
+        # in yet).
         new_profile = get_setting("defaults.aws_profile_name", config=config)
         profile_changed = new_profile != self._current_aws_profile
         self._current_aws_profile = new_profile
@@ -601,16 +601,7 @@ class DeadlineCloudSettingsWidget(QGroupBox):
         for box in (self.farm_box, self.queue_box, self.storage_profile_box):
             box.set_config(config)
             if profile_changed:
-                # Drop the previous profile's list contents so they don't linger when
-                # the new profile can't be listed (e.g. it isn't logged in yet).
                 box.clear_list()
-                # Only arm the one-shot auto-select suppression when a list refresh
-                # will actually follow to consume it. If we're not authorized no
-                # refresh happens, so arming here would leave the flag set and
-                # silently suppress a legitimate auto-select on a later refresh
-                # (e.g. after the user logs in to this same profile).
-                if deadline_authorized:
-                    box.suppress_auto_select_once = True
             box.refresh_selected_id()
         if deadline_authorized:
             self.farm_box.refresh_list()
