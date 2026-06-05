@@ -6,7 +6,6 @@ A UI Widget containing the render setup tab
 
 from __future__ import annotations
 
-import sys
 from typing import Any, Dict, List, Optional
 
 from qtpy.QtCore import Qt, Signal  # type: ignore
@@ -14,7 +13,6 @@ from qtpy.QtWidgets import (  # type: ignore
     QComboBox,
     QFormLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QSpinBox,
@@ -24,12 +22,15 @@ from qtpy.QtWidgets import (  # type: ignore
 
 from .radio_button_widget import HoverRadioButton
 
-from ... import api
 from ...api._queue_parameters import _apply_deadline_cloud_v2_channel_migration
-from ...api._session import _resolve_region
-from ...config import get_setting
+from ...config import config_file, get_setting
 from .._utils import tr
-from ..controllers import AsyncTaskRunner, DeadlineUIController
+from ..controllers import DeadlineUIController
+from ._deadline_list_combo_boxes import (
+    DeadlineFarmListComboBoxController,
+    DeadlineQueueListComboBoxController,
+    DeadlineStorageProfileListComboBoxController,
+)
 from .openjd_parameters_widget import OpenJDParametersWidget
 
 
@@ -80,6 +81,10 @@ class SharedJobSettingsWidget(QWidget):  # pylint: disable=too-few-public-method
             initial_settings=initial_settings, parent=self
         )
         layout.addWidget(self.shared_job_properties_box)
+
+        # Breathing room between the Job Properties container and the Deadline Cloud
+        # settings group below it.
+        layout.addSpacing(12)
 
         self.deadline_cloud_settings_box = DeadlineCloudSettingsWidget(parent=self)
         layout.addWidget(self.deadline_cloud_settings_box)
@@ -455,14 +460,50 @@ class SharedJobPropertiesWidget(QGroupBox):  # pylint: disable=too-few-public-me
 
 class DeadlineCloudSettingsWidget(QGroupBox):
     """
-    UI component for the Deadline Cloud settings.
+    UI component for the AWS Deadline Cloud settings shown on the Shared job
+    settings tab.
+
+    Hosts editable farm, queue, and storage-profile selectors. Selecting a
+    resource persists it to the config file immediately (there is no Apply
+    button on this tab) and cascades: choosing a farm reloads the queue list,
+    choosing a queue reloads the storage-profile list. The storage-profile row
+    is only shown when the selected queue actually has storage profiles for the
+    current OS.
+
+    Signals:
+        selection_changed: Emitted after a farm or queue selection is persisted,
+            so the parent dialog can reload queue parameters and refresh the
+            Submit button state.
     """
+
+    # Emitted after a farm/queue selection is persisted to config.
+    selection_changed = Signal()
+
+    # Combo-box placeholder texts that do not represent a real, selectable resource.
+    _PLACEHOLDER_TEXTS = ("<refreshing>", "<none selected>")
 
     def __init__(self, *, parent: Optional[QWidget] = None):
         super().__init__(tr("Deadline Cloud settings"), parent=parent)
         self.deadline_settings: Dict[str, Any] = {"counter": -1}
         self.layout = QFormLayout(self)
         self.layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        # Keep the farm/queue/storage selectors visually close together, and trim the
+        # top/bottom padding inside the group box (~50% of the default 11px) so there
+        # isn't excess space above and below the selectors.
+        self.layout.setVerticalSpacing(4)
+        margins = self.layout.contentsMargins()
+        self.layout.setContentsMargins(margins.left(), 6, margins.right(), 6)
+
+        # When True, the next queues_updated from the controller is the result of
+        # a farm change we initiated, so we continue the cascade to storage profiles.
+        self._awaiting_queues_for_cascade = False
+
+        # Track the AWS profile so refresh_setting_controls can detect a profile switch
+        # and re-derive the farm/queue selection from the new profile (clearing a stale
+        # selection, or selecting the new profile's default) instead of keeping the old.
+        self._current_aws_profile = get_setting("defaults.aws_profile_name")
+
+        self._controller = DeadlineUIController.getInstance()
 
         self._build_ui()
 
@@ -476,12 +517,136 @@ class DeadlineCloudSettingsWidget(QGroupBox):
         Build the UI for the Deadline settings
         """
         self.farm_box_label = QLabel(tr("Farm"))
-        self.farm_box = DeadlineFarmDisplay()
+        self.farm_box = DeadlineFarmListComboBoxController(parent=self)
         self.layout.addRow(self.farm_box_label, self.farm_box)
 
         self.queue_box_label = QLabel(tr("Queue"))
-        self.queue_box = DeadlineQueueDisplay()
+        self.queue_box = DeadlineQueueListComboBoxController(parent=self)
         self.layout.addRow(self.queue_box_label, self.queue_box)
+
+        self.storage_profile_box_label = QLabel(tr("Default storage profile"))
+        self.storage_profile_box = DeadlineStorageProfileListComboBoxController(parent=self)
+        self.layout.addRow(self.storage_profile_box_label, self.storage_profile_box)
+        # Hidden until we confirm the selected queue has storage profiles.
+        self._set_storage_profile_visible(False)
+
+        # User-initiated selection handlers.
+        self.farm_box.box.currentIndexChanged.connect(self._on_farm_changed)
+        self.queue_box.box.currentIndexChanged.connect(self._on_queue_changed)
+        self.storage_profile_box.box.currentIndexChanged.connect(self._on_storage_profile_changed)
+
+        # Continue the farm -> queue -> storage cascade once the queue list lands.
+        self._controller.queues_updated.connect(self._on_queues_list_updated, Qt.QueuedConnection)
+
+        # Recompute storage-profile visibility whenever its list changes.
+        model = self.storage_profile_box.box.model()
+        model.rowsInserted.connect(self._update_storage_profile_visibility)
+        model.rowsRemoved.connect(self._update_storage_profile_visibility)
+        model.modelReset.connect(self._update_storage_profile_visibility)
+        self._controller.storage_profiles_updated.connect(
+            self._update_storage_profile_visibility, Qt.QueuedConnection
+        )
+
+    def _set_storage_profile_visible(self, visible: bool) -> None:
+        """Show or hide the storage-profile row (label + combo)."""
+        self.storage_profile_box_label.setVisible(visible)
+        self.storage_profile_box.setVisible(visible)
+
+    def _has_real_storage_profiles(self) -> bool:
+        """True if the storage-profile combo holds at least one real profile."""
+        box = self.storage_profile_box.box
+        for i in range(box.count()):
+            if box.itemText(i) in self._PLACEHOLDER_TEXTS:
+                continue
+            if box.itemData(i):
+                return True
+        return False
+
+    def _update_storage_profile_visibility(self, *args) -> None:
+        """Show the storage-profile row only when real profiles are available.
+
+        Connected to several signals with differing signatures (the combo
+        model's rowsInserted/rowsRemoved/modelReset and the controller's
+        storage_profiles_updated), so it ignores its arguments.
+        """
+        self._set_storage_profile_visible(self._has_real_storage_profiles())
+
+    def _resnapshot_config(self) -> None:
+        """Refresh each combo's cached config from the just-persisted settings.
+
+        Selections are persisted with the module-level ``set_setting`` (writing the
+        global config + disk), but the combos read farm/queue ids for their list
+        refreshes from the ``self.config`` snapshot captured at the last
+        ``refresh_setting_controls``. After a selection that snapshot is stale, so a
+        cascade would list resources for the previous farm/queue. Re-reading here
+        keeps the cascade reads in sync with what was just written.
+        """
+        config = config_file.read_config()
+        for box in (self.farm_box, self.queue_box, self.storage_profile_box):
+            box.set_config(config)
+
+    def _on_farm_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        farm_id = self.farm_box.box.itemData(index)
+        if farm_id is None:
+            return
+        set_setting("defaults.farm_id", farm_id)
+        # The previously selected queue/storage profile belong to the old farm.
+        set_setting("defaults.queue_id", "")
+        set_setting("settings.storage_profile_id", "")
+        self.queue_box.clear_list()
+        self.storage_profile_box.clear_list()
+        self._set_storage_profile_visible(False)
+        # The combos list resources using the farm/queue ids in their cached config
+        # snapshot, so re-snapshot from the just-persisted settings before refreshing.
+        # Otherwise the cascade would re-list the OLD farm's queues.
+        self._resnapshot_config()
+        # Cascade: reload the queue list for the new farm, then storage profiles.
+        self._awaiting_queues_for_cascade = True
+        self.queue_box.refresh_list()
+        self.selection_changed.emit()
+
+    def _on_queue_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        queue_id = self.queue_box.box.itemData(index)
+        if queue_id is None:
+            return
+        set_setting("defaults.queue_id", queue_id)
+        # The previously selected storage profile belongs to the old queue; clear it
+        # so a stale profile can't persist (or be re-shown as a raw id) when the new
+        # queue doesn't contain it.
+        set_setting("settings.storage_profile_id", "")
+        self.storage_profile_box.clear_list()
+        self._set_storage_profile_visible(False)
+        # Re-snapshot so the storage-profile list is fetched for the new queue, not
+        # the queue id in the stale cached snapshot.
+        self._resnapshot_config()
+        # Cascade: reload storage profiles for the newly selected queue.
+        self.storage_profile_box.refresh_list()
+        self.selection_changed.emit()
+
+    def _on_storage_profile_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        storage_profile_id = self.storage_profile_box.box.itemData(index)
+        # A storage profile does not gate queue parameters or the Submit button,
+        # so there is no need to notify the parent here.
+        set_setting("settings.storage_profile_id", storage_profile_id or "")
+
+    def _on_queues_list_updated(self, queues_list) -> None:
+        """Continue the cascade after a farm change repopulated the queue list."""
+        if not self._awaiting_queues_for_cascade:
+            return
+        self._awaiting_queues_for_cascade = False
+        current_queue_id = self.queue_box.box.currentData()
+        if current_queue_id:
+            set_setting("defaults.queue_id", current_queue_id)
+            # Re-snapshot so storage profiles are fetched for this queue.
+            self._resnapshot_config()
+            self.storage_profile_box.refresh_list()
+            self.selection_changed.emit()
 
     def refresh_setting_controls(self, deadline_authorized):
         """
@@ -493,191 +658,34 @@ class DeadlineCloudSettingsWidget(QGroupBox):
                     api.check_deadline_available, for example from
                     an AWS Deadline Cloud Status Widget.
         """
-        self.farm_box.refresh(deadline_authorized)
-        self.queue_box.refresh(deadline_authorized)
+        config = config_file.read_config()
 
+        # Detect an AWS profile switch. Farm/queue/storage settings are profile-scoped,
+        # so on a switch the combos must reflect the NEW profile's stored defaults
+        # exactly: clear the selection if the new profile has none, or select its
+        # default if it has one. Suppressing the lone-resource auto-select for this
+        # refresh prevents a single leftover farm/queue from the old profile being
+        # re-selected.
+        new_profile = get_setting("defaults.aws_profile_name", config=config)
+        profile_changed = new_profile != self._current_aws_profile
+        self._current_aws_profile = new_profile
 
-class _DeadlineNamedResourceDisplay(QWidget):
-    """
-    A Label for displaying an AWS Deadline Cloud resource, that starts displaying
-    it as the Id, but does an async call to AWS Deadline Cloud to convert it
-    to the name.
-
-    Uses AsyncTaskRunner for background API calls with automatic cancellation.
-
-    Args:
-        resource_name (str): The resource name for the list, like "Farm",
-                "Queue", "Fleet".
-        setting_name (str): The setting name for the item.
-    """
-
-    # Emitted when the background refresh thread catches an exception,
-    # provides (operation_name, BaseException)
-    background_exception = Signal(str, BaseException)
-
-    def __init__(self, *, resource_name, setting_name, parent: Optional[QWidget] = None):
-        super().__init__(parent=parent)
-
-        self.resource_name = resource_name
-        self.setting_name = setting_name
-        self.item_id = get_setting(self.setting_name)
-        self.item_name = ""
-        self.item_description = ""
-
-        # Use AsyncTaskRunner for background API calls
-        self._runner = AsyncTaskRunner(self)
-        self._runner.task_error.connect(self._handle_error, Qt.QueuedConnection)
-
-        self._build_ui()
-
-        self.label.setText(self.item_display_name())
-
-    def _build_ui(self):
-        self.label = QLabel(parent=self)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.label)
-        self.background_exception.connect(self.handle_background_exception)
-
-    def _handle_error(self, operation_name: str, error: BaseException) -> None:
-        """Handle errors from the async runner."""
-        self.background_exception.emit(f"Refresh {self.resource_name} item", error)
-
-    def handle_background_exception(self, e):
-        self.label.setText(self.item_id)
-        self.label.setToolTip("")
-
-    def item_display_name(self):
-        """Returns the text to display the item name as"""
-        return self.item_name or self.item_id or "<not configured>"
-
-    def refresh(self, deadline_authorized):
-        """
-        Starts a background task to refresh the item name.
-
-        Args:
-            deadline_authorized (bool): Should be the result of a call to
-                    api.check_deadline_available, for example from
-                    an AWS Deadline Cloud Status Widget.
-        """
-        resource_id = get_setting(self.setting_name)
-        if resource_id != self.item_id or not self.item_name:
-            self.item_id = resource_id
-            self.item_name = ""
-            self.item_description = ""
-            display_name = self.item_display_name()
-            # Only call the AWS Deadline Cloud API if we've confirmed access
-            if deadline_authorized:
-                display_name = "<refreshing> - " + display_name
-
-                self._runner.run(
-                    operation_key=f"get_{self.resource_name}",
-                    fn=self.get_item,
-                    on_success=self._handle_item_update,
-                    on_error=lambda e: self._handle_error(f"get_{self.resource_name}", e),
-                )
-
-            self.label.setText(display_name)
-            self.label.setToolTip(self.item_description)
-        else:
-            self.label.setText(self.item_display_name())
-
-    def _handle_item_update(self, item: tuple) -> None:
-        """Handle successful item fetch."""
-        item_id, name, description = item
-        self.item_id = item_id
-        self.item_name = name
-        self.item_description = description
-        self.label.setText(self.item_display_name())
-        self.label.setToolTip(self.item_description)
-
-
-class DeadlineFarmDisplay(_DeadlineNamedResourceDisplay):
-    def __init__(self, *, parent: Optional[QWidget] = None):
-        super().__init__(resource_name="Farm", setting_name="defaults.farm_id", parent=parent)
-
-    def get_item(self):
-        farm_id = get_setting(self.setting_name)
-        if farm_id:
-            # Scope the client to the farm's region (the farm may be in a non-default region).
-            region = _resolve_region(farm_id=farm_id)
-            deadline = api.get_boto3_client("deadline", region=region)
-            response = deadline.get_farm(farmId=farm_id)
-            return (
-                response["farmId"],
-                response["displayName"],
-                response["description"],
-            )
-        else:
-            return ("", "", "")
-
-
-class DeadlineQueueDisplay(_DeadlineNamedResourceDisplay):
-    def __init__(self, *, parent: Optional[QWidget] = None):
-        super().__init__(resource_name="Queue", setting_name="defaults.queue_id", parent=parent)
-
-    def get_item(self):
-        farm_id = get_setting("defaults.farm_id")
-        queue_id = get_setting(self.setting_name)
-        if farm_id and queue_id:
-            # Scope the client to the farm's region (the farm may be in a non-default region).
-            region = _resolve_region(farm_id=farm_id)
-            deadline = api.get_boto3_client("deadline", region=region)
-            response = deadline.get_queue(farmId=farm_id, queueId=queue_id)
-            return (
-                response["queueId"],
-                response["displayName"],
-                response["description"],
-            )
-        else:
-            return ("", "", "")
-
-
-class DeadlineStorageProfileNameDisplay(_DeadlineNamedResourceDisplay):
-    WINDOWS_OS = "Windows"
-    MAC_OS = "Macos"
-    LINUX_OS = "Linux"
-
-    def __init__(self, *, parent: Optional[QWidget] = None):
-        super().__init__(
-            resource_name="Storage profile name",
-            setting_name="settings.storage_profile_id",
-            parent=parent,
-        )
-
-    def get_item(self):
-        farm_id = get_setting("defaults.farm_id")
-        queue_id = get_setting("defaults.queue_id")
-        storage_profile_id = get_setting(self.setting_name)
-
-        if farm_id and queue_id and storage_profile_id:
-            # Scope the client to the farm's region (the farm may be in a non-default region).
-            region = _resolve_region(farm_id=farm_id)
-            deadline = api.get_boto3_client("deadline", region=region)
-            response = deadline.list_storage_profiles_for_queue(farmId=farm_id, queueId=queue_id)
-            farm_storage_profiles = response.get("storageProfiles", {})
-
-            if farm_storage_profiles:
-                storage_profile = [
-                    (item["storageProfileId"], item["displayName"], item["osFamily"])
-                    for item in farm_storage_profiles
-                    if storage_profile_id == item["storageProfileId"]
-                ]
-                return storage_profile[0]
-
-        return ("", "", "")
-
-    def _get_default_storage_profile_name(self) -> str:
-        """
-        Get a string specifying what the OS is, following the format the Deadline storage profile API expects.
-        """
-        if sys.platform.startswith("linux"):
-            return self.LINUX_OS
-
-        if sys.platform.startswith("darwin"):
-            return self.MAC_OS
-
-        if sys.platform.startswith("win"):
-            return self.WINDOWS_OS
-
-        return ""
+        for box in (self.farm_box, self.queue_box, self.storage_profile_box):
+            box.set_config(config)
+            if profile_changed:
+                # Drop the previous profile's list contents so they don't linger when
+                # the new profile can't be listed (e.g. it isn't logged in yet).
+                box.clear_list()
+                # Only arm the one-shot auto-select suppression when a list refresh
+                # will actually follow to consume it. If we're not authorized no
+                # refresh happens, so arming here would leave the flag set and
+                # silently suppress a legitimate auto-select on a later refresh
+                # (e.g. after the user logs in to this same profile).
+                if deadline_authorized:
+                    box.suppress_auto_select_once = True
+            box.refresh_selected_id()
+        if deadline_authorized:
+            self.farm_box.refresh_list()
+            self.queue_box.refresh_list()
+            self.storage_profile_box.refresh_list()
+        self._update_storage_profile_visibility()

@@ -320,6 +320,16 @@ class SubmitJobToDeadlineDialog(QDialog):
         # If necessary, this reloads the queue parameters
         self.shared_job_settings.refresh_queue_parameters()
 
+    def _on_deadline_cloud_selection_changed(self):
+        """React to a farm/queue selection made on the Shared job settings tab.
+
+        Only updates the Submit button state and reloads queue parameters; it does
+        not re-list the resource combos (they have already updated themselves) so a
+        queue change doesn't trigger a farm-list refresh.
+        """
+        self._set_submit_button_state()
+        self.shared_job_settings.refresh_queue_parameters()
+
     # Identifies the auto-select task in the AsyncTaskRunner. Reusing one key means a
     # newer auto-select supersedes any in-flight older one (latest-wins).
     _AUTO_SELECT_OPERATION_KEY = "submit_dialog_auto_select_defaults"
@@ -436,6 +446,14 @@ class SubmitJobToDeadlineDialog(QDialog):
         self.shared_job_settings_tab.setWidget(self.shared_job_settings)
         self.shared_job_settings_tab.setWidgetResizable(True)
         self.shared_job_settings.parameter_changed.connect(self.on_shared_job_parameter_changed)
+        # When the user edits the farm/queue selectors on the tab, reload queue
+        # parameters and refresh the Submit button enable state. This does NOT go
+        # through refresh_deadline_settings on purpose: the combos have already
+        # updated their own lists, so re-listing them (and re-running auto-select)
+        # would needlessly refresh the farm list when only the queue changed.
+        self.shared_job_settings.deadline_cloud_settings_box.selection_changed.connect(
+            self._on_deadline_cloud_selection_changed
+        )
 
     def _build_job_settings_tab(self, job_setup_widget_type, initial_job_settings):
         self.job_settings_tab = QScrollArea()

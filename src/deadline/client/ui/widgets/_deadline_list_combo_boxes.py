@@ -69,6 +69,11 @@ class _DeadlineResourceListComboBoxController(QWidget):
         self._controller = DeadlineUIController.getInstance()
         # Maps resource_id -> region for resources that carry a region (farms).
         self._region_by_id: dict = {}
+        # When set, the next list update skips the lone-resource auto-select. Used on
+        # an AWS profile switch, where the selection must reflect the new profile's
+        # stored default exactly (cleared if it has none) rather than auto-picking a
+        # leftover single resource from the previous profile.
+        self.suppress_auto_select_once: bool = False
 
         self._build_ui()
 
@@ -130,7 +135,11 @@ class _DeadlineResourceListComboBoxController(QWidget):
         # Done outside block_signals so currentIndexChanged fires and any connected
         # dialog logic (e.g. cascading to the next resource) reacts as if the user
         # had picked it.
-        if self._auto_select_when_single:
+        if self.suppress_auto_select_once:
+            # A profile switch must honor the new profile's stored default exactly,
+            # so skip auto-select for this single refresh cycle.
+            self.suppress_auto_select_once = False
+        elif self._auto_select_when_single:
             self._maybe_auto_select_single()
 
     def _maybe_auto_select_single(self) -> None:
