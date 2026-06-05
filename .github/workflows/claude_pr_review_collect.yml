@@ -1,0 +1,48 @@
+# [FORK TEST] Stage 1 (collect) of the Claude PR-review integration, inlined.
+#
+# This is a self-contained copy for testing in a fork before the reusable
+# workflows in aws-deadline/.github are merged. It is functionally identical to
+# reusable_claude_pr_review_collect.yml but triggers directly on pull_request
+# instead of workflow_call.
+name: Claude PR Review (collect)
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+concurrency:
+  group: claude-pr-review-collect-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Least privilege: this stage only needs to read the PR to record its metadata.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write PR metadata
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          mkdir -p ./claude-pr-review-meta
+          jq -n \
+            --arg pr_number "$PR_NUMBER" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg base_sha "$BASE_SHA" \
+            --arg head_repo "$HEAD_REPO" \
+            '{pr_number: $pr_number, head_sha: $head_sha, base_sha: $base_sha, head_repo: $head_repo}' \
+            > ./claude-pr-review-meta/pr_meta.json
+          cat ./claude-pr-review-meta/pr_meta.json
+
+      - name: Upload PR metadata artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: claude-pr-review-meta
+          path: ./claude-pr-review-meta/
+          retention-days: 1
