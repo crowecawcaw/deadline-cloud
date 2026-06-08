@@ -461,8 +461,19 @@ class SubmitterDialog(DeadlineApp):
         )
 
     def has_label(self, text: str) -> bool:
-        """True if a static_text label with the given *text* is present."""
-        return self.locator(f'static_text[name="{text}"]').exists()
+        """True if a *visible* static_text label with the given *text* exists.
+
+        Visibility (not mere presence) is the contract callers want - e.g. the
+        storage-profile row is hidden via ``setVisible(False)`` when its queue has
+        no profiles. macOS/Windows AT-SPI prune a hidden widget from the tree, but
+        Linux AT-SPI keeps it as a present-but-not-showing node, so an ``exists()``
+        check alone reports a correctly-hidden label as present on Linux. Filtering
+        on ``element.visible`` makes the check behave the same on every platform.
+        """
+        for element in self.locator(f'static_text[name="{text}"]').elements():
+            if element.visible:
+                return True
+        return False
 
     def wait_text(self, needle: str, timeout: float = FARM_RESOLVE_TIMEOUT) -> bool:
         """Poll the accessibility tree until *needle* appears, returning success."""
