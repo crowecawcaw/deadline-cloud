@@ -1,12 +1,18 @@
-# Stage 1 caller for the Claude PR-review integration: the "collect" workflow.
+# Stage 1 trigger for the Claude PR-review integration: the "collect" workflow.
 #
 # Runs on pull_request. For PRs from forks GitHub provides no secrets and a
-# read-only GITHUB_TOKEN, so this stage cannot post comments or mint tokens; it
-# only records PR metadata to an artifact that the review stage
-# (claude_pr_review.yml, triggered by workflow_run) consumes.
+# read-only GITHUB_TOKEN. This stage does no work and records nothing -- it
+# exists only so that its completion fires the workflow_run event that starts
+# the review stage (claude_pr_review.yml).
 #
-# This is a thin caller -- all logic lives in the reusable workflow in
-# aws-deadline/.github.
+# Crucially, this stage produces NO data that the review stage trusts. The
+# review stage derives the PR number, head SHA, and base SHA entirely from the
+# server-populated workflow_run event payload (which a fork cannot forge), so a
+# fork's copy of this file cannot influence what gets reviewed or where comments
+# are posted.
+#
+# This is a thin caller -- the (now no-op) collect job lives in the reusable
+# workflow in aws-deadline/.github.
 name: Claude PR Review (collect)
 
 on:
@@ -18,14 +24,9 @@ concurrency:
   group: claude-pr-review-collect-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-# Least privilege: only read access is needed to record PR metadata.
-permissions:
-  contents: read
-  pull-requests: read
+# No permissions needed: this stage only exists to fire the workflow_run event.
+permissions: {}
 
 jobs:
   collect:
     uses: aws-deadline/.github/.github/workflows/reusable_claude_pr_review_collect.yml@mainline
-    permissions:
-      contents: read
-      pull-requests: read

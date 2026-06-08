@@ -21,7 +21,6 @@ on:
 # these are the ceiling for the called workflow.
 permissions:
   contents: read
-  actions: read
   pull-requests: write
   issues: write
   id-token: write
@@ -33,15 +32,15 @@ jobs:
     uses: aws-deadline/.github/.github/workflows/reusable_claude_pr_review.yml@mainline
     permissions:
       contents: read
-      actions: read
       pull-requests: write
       issues: write
       id-token: write
     with:
-      # Pin the artifact download to the run that triggered us.
-      collect_run_id: ${{ github.event.workflow_run.id }}
-      # Head repo from the server-populated workflow_run event payload.
+      # Head repo and head SHA come from the server-populated workflow_run event
+      # payload, which a fork cannot forge. The review stage resolves the PR
+      # number and base SHA from these, so nothing fork-controlled is trusted.
       head_repository: ${{ github.event.workflow_run.head_repository.full_name }}
+      head_sha: ${{ github.event.workflow_run.head_sha }}
     secrets:
       # OIDC role that can mint a Bedrock bearer token.
       bedrock_role_arn: ${{ secrets.AWS_CLAUDE_PR_REVIEW_ROLE }}
