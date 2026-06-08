@@ -5,6 +5,7 @@ Tests for the controller-based Deadline resource list combo boxes.
 """
 
 import pytest
+from typing import List
 from unittest.mock import patch
 from configparser import ConfigParser
 
@@ -181,7 +182,7 @@ class TestDeadlineFarmListComboBoxController:
         config["defaults"] = {"farm_id": ""}  # nothing configured yet
         widget.set_config(config)
 
-        user_selected = []
+        user_selected: List[str] = []
         widget.user_selected.connect(user_selected.append)
 
         with patch("deadline.client.ui.widgets._deadline_list_combo_boxes.config_file") as mock_cf:
@@ -208,7 +209,7 @@ class TestDeadlineFarmListComboBoxController:
         widget.box.addItem("Farm A", userData="farm-a")
         widget.box.addItem("Farm B", userData="farm-b")
 
-        user_selected = []
+        user_selected: List[str] = []
         widget.user_selected.connect(user_selected.append)
 
         with patch("deadline.client.ui.widgets._deadline_list_combo_boxes.config_file") as mock_cf:
