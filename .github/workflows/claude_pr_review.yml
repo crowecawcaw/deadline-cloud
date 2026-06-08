@@ -17,6 +17,11 @@ on:
     types:
       - completed
 
+# Cancel a superseded review when the PR is pushed again, keyed on the trusted head repo + branch from the workflow_run payload (no pull_request.number here).
+concurrency:
+  group: claude-pr-review-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
 # Least privilege. The reusable workflow re-declares the same scopes on its job;
 # these are the ceiling for the called workflow.
 permissions:
