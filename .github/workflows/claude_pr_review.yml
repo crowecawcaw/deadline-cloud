@@ -27,8 +27,13 @@ permissions:
 
 jobs:
   review:
-    # Only run if Stage 1 succeeded.
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # Only run if Stage 1 succeeded, and only for runs triggered by a
+    # pull_request. The collect workflow listens on pull_request alone today, but
+    # gating on the event here is defense in depth: if another trigger
+    # (workflow_dispatch, schedule, ...) is ever added to the collect workflow,
+    # this prevents a review from firing -- with the base repo's secrets and a
+    # fork-controlled head_sha -- from a non-PR context.
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
     uses: aws-deadline/.github/.github/workflows/reusable_claude_pr_review.yml@mainline
     permissions:
       contents: read
