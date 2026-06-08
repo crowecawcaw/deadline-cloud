@@ -822,14 +822,14 @@ class DeadlineWorkstationConfigWidget(QWidget):
 
     def aws_profile_changed(self, value):
         self.changes["defaults.aws_profile_name"] = value
-        # Clear the farm/queue/storage-profile selections since they don't exist
-        # in the new profile. These are now edited on the submit dialog's Shared
-        # job settings tab, but they still must be reset on a profile change here.
-        # farm_region is cleared alongside farm_id per the (region, farm_id) convention.
-        self.changes["defaults.farm_id"] = ""
-        self.changes["defaults.farm_region"] = ""
-        self.changes["defaults.queue_id"] = ""
-        self.changes["settings.storage_profile_id"] = ""
+        # Do NOT clear farm/queue/storage here. These settings are profile-scoped
+        # (each profile has its own config section), so switching profiles already
+        # surfaces the new profile's own stored values. Clearing them would instead
+        # write empty values into the *new* profile's section - destroying the very
+        # defaults we're switching to (and orphaning the queue under a malformed
+        # section). The farm/queue/storage selectors live on the submit dialog's
+        # Shared job settings tab and re-derive their selection from the switched-to
+        # profile on the next refresh.
         self.refresh()
 
     def job_history_dir_changed(self):
