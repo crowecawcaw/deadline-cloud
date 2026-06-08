@@ -316,7 +316,18 @@ class _DeadlineResourceListComboBoxController(QWidget):
         return self.box.count()
 
     def set_config(self, config: ConfigParser) -> None:
-        """Updates the AWS Deadline Cloud config object the control uses."""
+        """Updates the AWS Deadline Cloud config object the control uses.
+
+        ``self.config`` is the object ``_maybe_auto_select_single`` and
+        ``refresh_selected_id`` read the configured id from. The host hands us the
+        same ``ConfigParser`` instance that ``config_file.read_config`` returns, and
+        the controller persists selections via the module-level ``set_setting``,
+        which mutates that shared instance in place. So a cascade's clears (e.g.
+        ``select_farm`` zeroing ``queue_id``) are visible here without a re-snapshot.
+        This relies on the combo and the controller observing the *same* config
+        object - if config caching ever starts handing out copies, these reads would
+        go stale and a lone-resource auto-select could be wrongly suppressed.
+        """
         self.config = config
         self._controller.set_config(config)
 
