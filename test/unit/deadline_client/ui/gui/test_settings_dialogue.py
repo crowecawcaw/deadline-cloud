@@ -178,6 +178,23 @@ class TestSettingsDialogue:
 
         assert "(default)" in items
 
+    def test_aws_profile_change_does_not_stage_farm_queue_clears(self, config_widget):
+        """Switching profiles must not stage farm/queue/storage clears.
+
+        Regression: farm/queue/storage are profile-scoped. If aws_profile_changed
+        staged empty values for them, applying the change would write those empties
+        into the *new* profile's config section, destroying the defaults the user is
+        switching to. The profile change must stage ONLY the profile name.
+        """
+        config_widget.changes.clear()
+
+        config_widget.aws_profile_changed("some-other-profile")
+
+        assert config_widget.changes.get("defaults.aws_profile_name") == "some-other-profile"
+        assert "defaults.farm_id" not in config_widget.changes
+        assert "defaults.queue_id" not in config_widget.changes
+        assert "settings.storage_profile_id" not in config_widget.changes
+
     def test_auto_accept_checkbox_is_checkable(self, config_widget):
         """Verify auto accept prompt defaults checkbox is checkable."""
         assert config_widget.auto_accept.isCheckable()
@@ -266,3 +283,51 @@ class TestSettingsDialogue:
         assert ok_btn is not None
         assert cancel_btn is not None
         assert apply_btn is not None
+
+
+def test_profile_switch_preserves_each_profiles_farm_queue(fresh_deadline_config):
+    """End-to-end regression for the profile-switch clobber bug.
+
+    Farm/queue are profile-scoped. Switching profile-1 -> profile-2 -> profile-1
+    through the real config_file must leave each profile's stored farm/queue
+    intact. The previous aws_profile_changed cleared farm/queue in the same
+    ``changes`` batch as the new profile name, so applying the switch wrote empty
+    values into the *target* profile's section, wiping its saved defaults.
+
+    This drives the actual ``aws_profile_changed`` -> ``apply`` flow against the
+    real config_file (not the mock), so it exercises the genuine bug path: it fails
+    if aws_profile_changed reintroduces the farm/queue/storage clears.
+    """
+    from deadline.client.config import config_file
+    from deadline.client.ui.dialogs.deadline_config_dialog import DeadlineWorkstationConfigWidget
+
+    # Seed two profiles, each with its own farm + queue.
+    config_file.set_setting("defaults.aws_profile_name", "profile-1")
+    config_file.set_setting("defaults.farm_id", "farm-1")
+    config_file.set_setting("defaults.queue_id", "queue-1")
+    config_file.set_setting("defaults.aws_profile_name", "profile-2")
+    config_file.set_setting("defaults.farm_id", "farm-2")
+    config_file.set_setting("defaults.queue_id", "queue-2")
+
+    # Build a config widget and drive the real profile-switch + apply path. Patch
+    # out only the UI-refresh side effects that need a populated dialog; the
+    # persistence (set_setting/write_config via apply) runs for real.
+    with patch.object(DeadlineWorkstationConfigWidget, "_build_ui"), patch.object(
+        DeadlineWorkstationConfigWidget, "_fill_aws_profiles_box"
+    ), patch.object(DeadlineWorkstationConfigWidget, "refresh"):
+        widget = DeadlineWorkstationConfigWidget.__new__(DeadlineWorkstationConfigWidget)
+        widget.changes = {}
+        widget.changes_were_applied = False
+
+        # Switch back to profile-1, then apply (writes the staged changes to config).
+        widget.aws_profile_changed("profile-1")
+        DeadlineWorkstationConfigWidget.apply(widget)
+
+    # Both profiles must still have their own farm/queue.
+    config_file.set_setting("defaults.aws_profile_name", "profile-1")
+    assert config_file.get_setting("defaults.farm_id") == "farm-1"
+    assert config_file.get_setting("defaults.queue_id") == "queue-1"
+
+    config_file.set_setting("defaults.aws_profile_name", "profile-2")
+    assert config_file.get_setting("defaults.farm_id") == "farm-2"
+    assert config_file.get_setting("defaults.queue_id") == "queue-2"
