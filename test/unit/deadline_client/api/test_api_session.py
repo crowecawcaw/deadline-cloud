@@ -187,8 +187,9 @@ def test_check_deadline_api_available_injects_principal_id(fresh_deadline_config
 def test_check_deadline_api_available_fails(fresh_deadline_config):
     # When the probe fails for a non-DCM profile, the shim resolves to
     # CONFIGURATION_ERROR (not AUTHENTICATED) and therefore returns False.
-    with patch.object(api._session, "get_boto3_client") as boto3_client_mock, patch.object(
-        api._list_apis, "get_user_and_identity_store_id", return_value=(None, None)
+    with (
+        patch.object(api._session, "get_boto3_client") as boto3_client_mock,
+        patch.object(api._list_apis, "get_user_and_identity_store_id", return_value=(None, None)),
     ):
         config.set_setting("defaults.aws_profile_name", "SomeRandomProfileName")
         boto3_client_mock.return_value.list_farms.side_effect = Exception()
