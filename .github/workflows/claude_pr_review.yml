@@ -34,5 +34,9 @@ jobs:
     with:
       head_repository: ${{ github.event.workflow_run.head_repository.full_name }}
       head_sha: ${{ github.event.workflow_run.head_sha }}
+      # Fork-test override: pull the pinned requirements file from the fork's fix
+      # branch instead of the production default (aws-deadline/.github@mainline).
+      tooling_repository: crowecawcaw/deadline-cloud.github
+      tooling_ref: fix/claude-review-fork-pr-resolution
     secrets:
       bedrock_role_arn: ${{ secrets.AWS_CLAUDE_PR_REVIEW_ROLE }}
