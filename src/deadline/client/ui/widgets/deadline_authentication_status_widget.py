@@ -92,7 +92,6 @@ class AuthenticationState(enum.Enum):
     Values:
         REFRESHING: Authentication status is being loaded or refreshed.
         AUTHENTICATED_READY: User is authenticated and has API access to list-farms
-        AUTHENTICATED_NO_API: User is authenticated but lacks API access permissions to list-farms
         NEEDS_LOGIN: User needs to log in to authenticate with a DCM profile
         CONFIGURATION_ERROR: There is a configuration issue with the AWS profile.
         UNEXPECTED_ERROR: An unknown or unexpected error occurred during authentication.
@@ -100,7 +99,6 @@ class AuthenticationState(enum.Enum):
 
     REFRESHING = enum.auto()
     AUTHENTICATED_READY = enum.auto()
-    AUTHENTICATED_NO_API = enum.auto()
     NEEDS_LOGIN = enum.auto()
     CONFIGURATION_ERROR = enum.auto()
     UNEXPECTED_ERROR = enum.auto()
@@ -242,14 +240,6 @@ class DeadlineAuthenticationStatusWidget(QGroupBox):
                 text=self._get_profile_name,
                 logout_visible=self._should_show_logout,
             ),
-            AuthenticationState.AUTHENTICATED_NO_API: AuthenticationStateConfig(
-                icon=QStyle.StandardPixmap.SP_MessageBoxWarning,
-                text=lambda: tr(
-                    "{profile} doesn't have access permissions to submit a job."
-                ).format(profile=self._get_profile_name()),
-                logout_visible=self._should_show_logout,
-                more_info_visible=True,
-            ),
             AuthenticationState.NEEDS_LOGIN: AuthenticationStateConfig(
                 icon=QStyle.StandardPixmap.SP_MessageBoxWarning,
                 text=tr("{profile}  -  You are logged out.").format(
@@ -274,30 +264,18 @@ class DeadlineAuthenticationStatusWidget(QGroupBox):
 
     def _get_current_auth_state_key(self) -> AuthenticationState:
         """
-        Evaluates the credentials source, authentication status, and API availability
-        to determine which authentication state the widget should display.
+        Evaluates the credentials source and authentication status to determine
+        which authentication state the widget should display.
 
         Returns:
             AuthenticationState: The current authentication state enum value
         """
-        is_refreshing = (
-            self._status.creds_source is None
-            or self._status.auth_status is None
-            or self._status.api_availability is None
-        )
+        is_refreshing = self._status.creds_source is None or self._status.auth_status is None
 
         if is_refreshing:
             return AuthenticationState.REFRESHING
-        elif (
-            self._status.auth_status == api.AwsAuthenticationStatus.AUTHENTICATED
-            and self._status.api_availability
-        ):
+        elif self._status.auth_status == api.AwsAuthenticationStatus.AUTHENTICATED:
             return AuthenticationState.AUTHENTICATED_READY
-        elif (
-            self._status.auth_status == api.AwsAuthenticationStatus.AUTHENTICATED
-            and not self._status.api_availability
-        ):
-            return AuthenticationState.AUTHENTICATED_NO_API
         elif self._status.auth_status == api.AwsAuthenticationStatus.NEEDS_LOGIN:
             return AuthenticationState.NEEDS_LOGIN
         elif self._status.auth_status == api.AwsAuthenticationStatus.CONFIGURATION_ERROR:
@@ -311,16 +289,8 @@ class DeadlineAuthenticationStatusWidget(QGroupBox):
         and hopefully steps the user can take to resolve it.
         """
 
-        current_state = self._get_current_auth_state_key()
-
         # Determine the current authentication state and provide appropriate help
-        if current_state == AuthenticationState.AUTHENTICATED_NO_API:
-            # Authenticated but no API availability - permissions issue or possibly configuration issue
-            title = tr("Unable to Call AWS Deadline Cloud API")
-            message = tr(
-                "You are authenticated with the profile '{profile}', but this profile is unable to call AWS Deadline Cloud ListFarms and unable to submit jobs to AWS Deadline Cloud.\n\nTo resolve this issue:\n\u2022 Check that there aren't any environment variables pointing to the wrong AWS region (e.g., AWS_DEFAULT_REGION)\n\u2022 If you are not using a Deadline Cloud Monitor profile, check that the profile has permissions for these AWS Deadline Cloud APIs needed for submitting:\n  \u2022 deadline:AssumeQueueRoleForUser\n  \u2022 deadline:CreateJob\n  \u2022 deadline:GetJob\n  \u2022 deadline:GetQueue\n  \u2022 deadline:GetQueueEnvironment\n  \u2022 deadline:GetStorageProfileForQueue\n  \u2022 deadline:GetStorageProfile\n  \u2022 deadline:ListFarms\n  \u2022 deadline:ListQueues\n  \u2022 deadline:ListQueueEnvironments\n  \u2022 deadline:ListStorageProfilesForQueue"
-            ).format(profile=self._get_profile_name())
-        elif self._status.auth_status == api.AwsAuthenticationStatus.CONFIGURATION_ERROR:
+        if self._status.auth_status == api.AwsAuthenticationStatus.CONFIGURATION_ERROR:
             title = tr("Issue With Profile Configuration")
             message = tr(
                 "There is a configuration issue with the profile '{profile}'.\n\n"

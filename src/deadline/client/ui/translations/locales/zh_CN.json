@@ -130,7 +130,6 @@
   "There was an error with authentication": "身份验证出错",
   "There was an unknown issue when trying to authenticate with the profile '{profile}'.\n\nCheck any available console logs for errors to try and diagnose the problem.\nLogs are commonly found:\n  \u2022 In the terminal that the dialog or software the submitter is running in was launched from  \u2022 In the built-in console within the software that the submitter is running in": "尝试使用配置文件 '{profile}' 进行身份验证时出现未知问题。\n\n检查任何可用的控制台日志以查找错误，以尝试诊断问题。\n日志通常位于:\n  \\u2022 在启动对话框或提交者正在运行的软件的终端中  \\u2022 在提交者正在运行的软件内的内置控制台中",
   "Timeouts": "超时",
-  "Unable to Call AWS Deadline Cloud API": "无法调用 AWS Deadline Cloud API",
   "Unknown Issue With Configured Profile": "配置的配置文件存在未知问题",
   "Version {latest_version} of Deadline Cloud for {integration_name} submitter is now available.": "Deadline Cloud for {integration_name} 提交器版本 {latest_version} 现已可用。",
   "View release notes": "查看发行说明",
@@ -140,7 +139,6 @@
   "Value(s)": "值",
   "You are authenticated with the profile '{profile}', but this profile is unable to call AWS Deadline Cloud ListFarms and unable to submit jobs to AWS Deadline Cloud.\n\nTo resolve this issue:\n\u2022 Check that there aren't any environment variables pointing to the wrong AWS region (e.g., AWS_DEFAULT_REGION)\n\u2022 If you are not using a Deadline Cloud Monitor profile, check that the profile has permissions for these AWS Deadline Cloud APIs needed for submitting:\n  \u2022 deadline:AssumeQueueRoleForUser\n  \u2022 deadline:CreateJob\n  \u2022 deadline:GetJob\n  \u2022 deadline:GetQueue\n  \u2022 deadline:GetQueueEnvironment\n  \u2022 deadline:GetStorageProfileForQueue\n  \u2022 deadline:GetStorageProfile\n  \u2022 deadline:ListFarms\n  \u2022 deadline:ListQueues\n  \u2022 deadline:ListQueueEnvironments\n  \u2022 deadline:ListStorageProfilesForQueue": "您已使用配置文件 '{profile}' 进行身份验证，但此配置文件无法调用 AWS Deadline Cloud ListFarms 并且无法向 AWS Deadline Cloud 提交作业。\n\n要解决此问题:\n\\u2022 检查是否没有指向错误 AWS 区域的环境变量 (例如 AWS_DEFAULT_REGION)\n\\u2022 如果您未使用 Deadline Cloud Monitor 配置文件，请检查配置文件是否具有提交所需的这些 AWS Deadline Cloud API 的权限:\n  \\u2022 deadline:AssumeQueueRoleForUser\n  \\u2022 deadline:CreateJob\n  \\u2022 deadline:GetJob\n  \\u2022 deadline:GetQueue\n  \\u2022 deadline:GetQueueEnvironment\n  \\u2022 deadline:GetStorageProfileForQueue\n  \\u2022 deadline:GetStorageProfile\n  \\u2022 deadline:ListFarms\n  \\u2022 deadline:ListQueues\n  \\u2022 deadline:ListQueueEnvironments\n  \\u2022 deadline:ListStorageProfilesForQueue",
   "{profile}  -  You are logged out.": "{profile}  -  您已登出。",
-  "{profile} doesn't have access permissions to submit a job.": "{profile} 没有提交作业的访问权限。",
   "{submitter} job submission": "{submitter} 作业提交",
   "Default maximum retries per task": "\u6bcf\u4e2a\u4efb\u52a1\u7684\u9ed8\u8ba4\u6700\u5927\u91cd\u8bd5\u6b21\u6570",
   "Default maximum failed tasks count": "\u9ed8\u8ba4\u6700\u5927\u5931\u8d25\u4efb\u52a1\u6570"
