@@ -24,9 +24,11 @@ from deadline.client.exceptions import DeadlineOperationError
 CONFIG_SETTING_ROUND_TRIP = [
     ("defaults.aws_profile_name", "(default)", "AnotherProfileName"),
     ("defaults.farm_id", "", "farm-82934h23k4j23kjh"),
+    ("defaults.farm_region", "", "eu-west-1"),
     ("defaults.job_attachments_file_system", "COPIED", "VIRTUAL"),
     ("settings.locale", "", "ja_JP"),
     ("settings.force_s3_check", "false", "true"),
+    ("settings.deadline_regions", "", "us-east-1,eu-west-1"),
 ]
 
 
@@ -371,3 +373,85 @@ def test_posix_config_file_permissions(fresh_deadline_config) -> None:
     config_file.set_setting("defaults.aws_profile_name", "goodguyprofile")
 
     assert config_file_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_get_deadline_regions_env_override(fresh_deadline_config):
+    """The DEADLINE_CLOUD_REGIONS env var takes top precedence."""
+    # Even if a config setting says something else, the env var wins.
+    config.set_setting("settings.deadline_regions", "ap-south-1")
+    with patch.dict(os.environ, {"DEADLINE_CLOUD_REGIONS": "us-west-2, eu-west-1 ,us-west-2"}):
+        result = config_file.get_deadline_regions()
+    # De-duplicated, order-preserving, whitespace-stripped
+    assert result == ["us-west-2", "eu-west-1"]
+
+
+def test_get_deadline_regions_config_override(fresh_deadline_config):
+    """The settings.deadline_regions config setting is used when the env var is not set."""
+    config.set_setting("settings.deadline_regions", "eu-central-1, ca-central-1")
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
+        result = config_file.get_deadline_regions()
+    assert result == ["eu-central-1", "ca-central-1"]
+
+
+def test_get_deadline_regions_blank_overrides_fall_through(fresh_deadline_config):
+    """Blank/whitespace-only env var and config setting fall through to the curated list."""
+    config.set_setting("settings.deadline_regions", "   ")
+    with patch.dict(os.environ, {"DEADLINE_CLOUD_REGIONS": "  "}):
+        result = config_file.get_deadline_regions()
+    assert result == config_file.DEADLINE_REGIONS
+
+
+def test_get_deadline_regions_default_curated_list(fresh_deadline_config):
+    """With no override set, the curated DEADLINE_REGIONS list is returned."""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
+        result = config_file.get_deadline_regions()
+    assert result == config_file.DEADLINE_REGIONS
+    # The returned value is a copy, not the module constant itself.
+    assert result is not config_file.DEADLINE_REGIONS
+
+
+def test_deadline_regions_matches_authoritative_aws_list():
+    """
+    Pins DEADLINE_REGIONS to the AWS Deadline Cloud "Service endpoints" table at
+    https://docs.aws.amazon.com/general/latest/gr/deadlinecloud.html
+    (commercial regions, reconciled 2026-06-08).
+
+    If AWS adds/removes a Deadline Cloud region, update both that table's transcription
+    here and the DEADLINE_REGIONS constant so the curated fallback doesn't drift (stale
+    entries cause spurious endpoint-connect warnings during the list-farms fan-out).
+    """
+    expected = {
+        "us-east-1",
+        "us-east-2",
+        "us-west-2",
+        "ap-northeast-1",
+        "ap-northeast-2",
+        "ap-southeast-1",
+        "ap-southeast-2",
+        "eu-central-1",
+        "eu-west-1",
+        "eu-west-2",
+    }
+    assert set(config_file.DEADLINE_REGIONS) == expected
+    # No duplicates in the curated list.
+    assert len(config_file.DEADLINE_REGIONS) == len(set(config_file.DEADLINE_REGIONS))
+
+
+def test_farm_region_depends_on_farm_id(fresh_deadline_config):
+    """defaults.farm_region is stored per-farm (depends on defaults.farm_id)."""
+    # Set a farm region for the default (empty) farm id.
+    config.set_setting("defaults.farm_id", "farm-A")
+    config.set_setting("defaults.farm_region", "us-west-2")
+    assert config.get_setting("defaults.farm_region") == "us-west-2"
+
+    # Switching to a different farm id yields the default (empty) region.
+    config.set_setting("defaults.farm_id", "farm-B")
+    assert config.get_setting("defaults.farm_region") == ""
+    config.set_setting("defaults.farm_region", "eu-west-1")
+    assert config.get_setting("defaults.farm_region") == "eu-west-1"
+
+    # Switching back to farm-A restores its region.
+    config.set_setting("defaults.farm_id", "farm-A")
+    assert config.get_setting("defaults.farm_region") == "us-west-2"

@@ -19,7 +19,7 @@ from ...config import config_file
 from .._main import deadline as main
 
 from ... import api
-from ...api._session import get_default_client_config
+from ...api._session import get_session_client, _resolve_region
 from ....job_attachments.api.attachment import (
     _attachment_download,
     _attachment_upload,
@@ -58,6 +58,7 @@ def cli_attachment():
 )
 @click.option("--path-mapping-rules", help="Path to a file with the path mapping rules to use.")
 @click.option("--farm-id", help="The AWS Deadline Cloud Farm to use. ")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The AWS Deadline Cloud Queue to use. ")
 @click.option(
     "--profile",
@@ -113,6 +114,15 @@ def attachment_download(
         queue_id: str = config_file.get_setting("defaults.queue_id", config=config)
         farm_id: str = config_file.get_setting("defaults.farm_id", config=config)
 
+        # These operate within a single farm, so scope every deadline call to that farm's
+        # region. _resolve_region returns None when nothing is configured.
+        region = _resolve_region(config=config, farm_id=farm_id)
+        if region is not None:
+            # GetQueue must run in the farm's region. get_queue builds its own client off
+            # the session, so hand it a region-scoped session and let boto3 resolve the
+            # regional endpoint itself.
+            boto3_session = api.get_boto3_session(config=config, region=region)
+
         s3_settings: Optional[JobAttachmentS3Settings] = get_queue(
             farm_id=farm_id,
             queue_id=queue_id,
@@ -123,7 +133,7 @@ def attachment_download(
 
         s3_root_uri = s3_settings.to_s3_root_uri()
 
-        deadline_client = boto3_session.client("deadline", config=get_default_client_config())
+        deadline_client = get_session_client(boto3_session, "deadline", region=region)
         boto3_session = api.get_queue_user_boto3_session(deadline=deadline_client, config=config)
 
     if not s3_root_uri:
@@ -178,6 +188,7 @@ def attachment_download(
     help="File path for uploading the manifests to CAS.",
 )
 @click.option("--farm-id", help="The AWS Deadline Cloud Farm to use. ")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The AWS Deadline Cloud Queue to use. ")
 @click.option(
     "--profile",
@@ -215,6 +226,15 @@ def attachment_upload(
         queue_id: str = config_file.get_setting("defaults.queue_id", config=config)
         farm_id: str = config_file.get_setting("defaults.farm_id", config=config)
 
+        # These operate within a single farm, so scope every deadline call to that farm's
+        # region. _resolve_region returns None when nothing is configured.
+        region = _resolve_region(config=config, farm_id=farm_id)
+        if region is not None:
+            # GetQueue must run in the farm's region. get_queue builds its own client off
+            # the session, so hand it a region-scoped session and let boto3 resolve the
+            # regional endpoint itself.
+            boto3_session = api.get_boto3_session(config=config, region=region)
+
         s3_settings: Optional[JobAttachmentS3Settings] = get_queue(
             farm_id=farm_id,
             queue_id=queue_id,
@@ -225,7 +245,7 @@ def attachment_upload(
 
         s3_root_uri = s3_settings.to_s3_root_uri()
 
-        deadline_client = boto3_session.client("deadline", config=get_default_client_config())
+        deadline_client = get_session_client(boto3_session, "deadline", region=region)
         boto3_session = api.get_queue_user_boto3_session(deadline=deadline_client, config=config)
 
     if not s3_root_uri:

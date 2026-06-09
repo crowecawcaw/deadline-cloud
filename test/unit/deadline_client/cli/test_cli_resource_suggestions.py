@@ -213,10 +213,12 @@ def test_worker_list_suggestion_uses_correct_api_params(fresh_deadline_config, d
     assert deadline_mock.search_workers.call_count == 2
 
 
-def test_suggestion_truncates_long_lists(fresh_deadline_config, deadline_mock):
+def test_suggestion_truncates_long_lists(fresh_deadline_config, deadline_mock, monkeypatch):
     """
     Test that suggestions are truncated when there are more than 10 results.
     """
+    # Scope the farm-suggestion fan-out to a single region so the count is deterministic.
+    monkeypatch.setenv("DEADLINE_CLOUD_REGIONS", "us-west-2")
     config.set_setting("defaults.farm_id", "farm-wrongid12345678901234567890")
 
     # ListQueues fails
@@ -267,10 +269,12 @@ def test_no_suggestion_on_other_errors(fresh_deadline_config, deadline_mock):
     assert "Available" not in result.output
 
 
-def test_suggestion_failure_silent(fresh_deadline_config, deadline_mock):
+def test_suggestion_failure_silent(fresh_deadline_config, deadline_mock, monkeypatch):
     """
     Test that if List API also fails, we show a hint about permissions.
     """
+    # Scope the farm-suggestion fan-out to a single region.
+    monkeypatch.setenv("DEADLINE_CLOUD_REGIONS", "us-west-2")
     config.set_setting("defaults.farm_id", "farm-wrongid12345678901234567890")
 
     # ListQueues fails
@@ -474,31 +478,35 @@ def test_worker_get_wrong_worker_suggests_workers(fresh_deadline_config, deadlin
     assert "worker-0123456789abcdef0123456789ab" in result.output
 
 
-def test_farm_list_wrong_farm_suggests_farms(fresh_deadline_config, deadline_mock):
+def test_farm_list_wrong_farm_suggests_farms(fresh_deadline_config, deadline_mock, monkeypatch):
     """
-    Test that when ListFarms fails with AccessDeniedException, the CLI suggests available farms.
+    Test that when ListFarms fails the CLI surfaces the per-region failure cause.
+
+    Note: with the Phase 2 multi-region fan-out, ``farm list`` now aggregates ListFarms
+    across regions, and an all-region failure raises ``DeadlineOperationError`` from the
+    API layer (before the CLI's ClientError suggestion path). Phase 3 (CLI) is responsible
+    for re-wiring the resource-suggestion UX onto the fanned-out command; here we assert
+    the error is surfaced with the underlying access-denied cause.
     """
-    # First call fails, second (for suggestions) succeeds
-    deadline_mock.list_farms.side_effect = [
-        ClientError(
-            {
-                "Error": {
-                    "Code": "AccessDeniedException",
-                    "Message": "User is not authorized to perform: deadline:ListFarms",
-                }
-            },
-            "ListFarms",
-        ),
-        {"farms": [{"farmId": MOCK_FARM_ID, "displayName": "Available Farm"}]},
-    ]
+    # Scope to a single region so the only ListFarms call is the failing one.
+    monkeypatch.setenv("DEADLINE_CLOUD_REGIONS", "us-west-2")
+    deadline_mock.list_farms.side_effect = ClientError(
+        {
+            "Error": {
+                "Code": "AccessDeniedException",
+                "Message": "User is not authorized to perform: deadline:ListFarms",
+            }
+        },
+        "ListFarms",
+    )
 
     runner = CliRunner()
     result = runner.invoke(main, ["farm", "list"])
 
     assert result.exit_code != 0
-    assert "Failed to get Farms from Deadline" in result.output
-    assert "Available farms:" in result.output
-    assert MOCK_FARM_ID in result.output
+    assert "Failed to list farms" in result.output
+    assert "us-west-2" in result.output
+    assert "AccessDeniedException" in result.output
 
 
 def test_fleet_list_wrong_farm_suggests_fleets(fresh_deadline_config, deadline_mock):

@@ -221,6 +221,182 @@ class TestDeadlineFarmListComboBoxController:
 
         assert widget.box.currentData() == "farm-a"
 
+    def test_handle_list_append_adds_incrementally(self, qtbot):
+        """Farm options stream in via append without clearing prior batches."""
+        widget = DeadlineFarmListComboBoxController()
+        qtbot.addWidget(widget)
+
+        config = ConfigParser()
+        config["defaults"] = {"farm_id": "", "farm_region": ""}
+        widget.set_config(config)
+
+        with patch("deadline.client.ui.widgets._deadline_list_combo_boxes.config_file") as mock_cf:
+            mock_cf.get_setting.return_value = ""
+            # First region arrives.
+            widget._handle_list_append([("(us-west-2) Farm A", "farm-a", "us-west-2")])
+            assert widget.box.findData("farm-a") >= 0
+            # Second region arrives; first batch is preserved (not cleared).
+            widget._handle_list_append([("(eu-west-1) Farm B", "farm-b", "eu-west-1")])
+
+        assert widget.box.findData("farm-a") >= 0
+        assert widget.box.findData("farm-b") >= 0
+        # Labels are region-first.
+        idx_a = widget.box.findData("farm-a")
+        assert widget.box.itemText(idx_a) == "(us-west-2) Farm A"
+        # Region is recorded per id for downstream persistence.
+        assert widget.region_for_id("farm-a") == "us-west-2"
+        assert widget.region_for_id("farm-b") == "eu-west-1"
+
+    def test_handle_list_append_keeps_stable_alphabetical_order(self, qtbot):
+        """
+        Regardless of the order regions stream in, the list is alphabetized by label.
+        Labels are region-first, so this orders by region then name.
+        """
+        widget = DeadlineFarmListComboBoxController()
+        qtbot.addWidget(widget)
+
+        config = ConfigParser()
+        config["defaults"] = {"farm_id": "", "farm_region": ""}
+        widget.set_config(config)
+
+        with patch("deadline.client.ui.widgets._deadline_list_combo_boxes.config_file") as mock_cf:
+            mock_cf.get_setting.return_value = ""
+            # Regions arrive out of alphabetical order.
+            widget._handle_list_append([("(us-west-2) Zebra", "farm-z", "us-west-2")])
+            widget._handle_list_append([("(eu-west-1) Apple", "farm-a", "eu-west-1")])
+            widget._handle_list_append(
+                [
+                    ("(us-west-2) Apple", "farm-wa", "us-west-2"),
+                    ("(ap-south-1) Mango", "farm-m", "ap-south-1"),
+                ]
+            )
+
+        labels = [widget.box.itemText(i) for i in range(widget.box.count())]
+        assert labels == [
+            "(ap-south-1) Mango",
+            "(eu-west-1) Apple",
+            "(us-west-2) Apple",
+            "(us-west-2) Zebra",
+        ]
+
+    def test_handle_list_append_preserves_selection(self, qtbot):
+        """Appending more farms must not clobber the user's current selection."""
+        widget = DeadlineFarmListComboBoxController()
+        qtbot.addWidget(widget)
+
+        config = ConfigParser()
+        config["defaults"] = {"farm_id": "", "farm_region": ""}
+        widget.set_config(config)
+
+        with patch("deadline.client.ui.widgets._deadline_list_combo_boxes.config_file") as mock_cf:
+            mock_cf.get_setting.return_value = ""
+            widget._handle_list_append([("(us-west-2) Farm A", "farm-a", "us-west-2")])
+            # User selects Farm A.
+            widget.box.setCurrentIndex(widget.box.findData("farm-a"))
+            assert widget.box.currentData() == "farm-a"
+            # A slower region streams in after the selection.
+            widget._handle_list_append([("(eu-west-1) Farm B", "farm-b", "eu-west-1")])
+
+        # Selection is preserved across the append.
+        assert widget.box.currentData() == "farm-a"
+
+    def test_handle_list_append_replaces_raw_id_placeholder(self, qtbot):
+        """A configured-but-unlisted raw id row is replaced by the labeled row."""
+        widget = DeadlineFarmListComboBoxController()
+        qtbot.addWidget(widget)
+
+        config = ConfigParser()
+        config["defaults"] = {"farm_id": "farm-a", "farm_region": ""}
+        widget.set_config(config)
+
+        with patch("deadline.client.ui.widgets._deadline_list_combo_boxes.config_file") as mock_cf:
+            mock_cf.get_setting.return_value = "farm-a"
+            # Simulate the start-of-refresh clear, which inserts the raw configured id.
+            widget._handle_list_update([])
+            assert widget.box.findData("farm-a") >= 0
+            assert widget.box.itemText(widget.box.findData("farm-a")) == "farm-a"
+            # The labeled farm streams in for the same id.
+            widget._handle_list_append([("(us-west-2) Farm A", "farm-a", "us-west-2")])
+
+        # Only one row for farm-a, now with the labeled text.
+        matches = [i for i in range(widget.box.count()) if widget.box.itemData(i) == "farm-a"]
+        assert len(matches) == 1
+        assert widget.box.itemText(matches[0]) == "(us-west-2) Farm A"
+        # And it stays selected.
+        assert widget.box.currentData() == "farm-a"
+
+    def test_handle_list_append_dedupes_repeated_same_id(self, qtbot):
+        """
+        If the same farm id arrives in two separate append batches (e.g. a duplicated or
+        retried region response), the combo box must not show two rows for it -- the later
+        batch replaces the earlier row rather than adding a duplicate.
+        """
+        widget = DeadlineFarmListComboBoxController()
+        qtbot.addWidget(widget)
+
+        config = ConfigParser()
+        config["defaults"] = {"farm_id": "", "farm_region": ""}
+        widget.set_config(config)
+
+        with patch("deadline.client.ui.widgets._deadline_list_combo_boxes.config_file") as mock_cf:
+            mock_cf.get_setting.return_value = ""
+            widget._handle_list_append([("(us-west-2) Farm A", "farm-a", "us-west-2")])
+            # The same id streams in again (possibly with an updated label).
+            widget._handle_list_append([("(us-west-2) Farm A (updated)", "farm-a", "us-west-2")])
+
+        matches = [i for i in range(widget.box.count()) if widget.box.itemData(i) == "farm-a"]
+        assert len(matches) == 1
+        # The most recent batch's label wins.
+        assert widget.box.itemText(matches[0]) == "(us-west-2) Farm A (updated)"
+        assert widget.region_for_id("farm-a") == "us-west-2"
+
+    def test_handle_list_append_dedupes_within_single_batch(self, qtbot):
+        """A single append batch containing the same id twice yields only one row."""
+        widget = DeadlineFarmListComboBoxController()
+        qtbot.addWidget(widget)
+
+        config = ConfigParser()
+        config["defaults"] = {"farm_id": "", "farm_region": ""}
+        widget.set_config(config)
+
+        with patch("deadline.client.ui.widgets._deadline_list_combo_boxes.config_file") as mock_cf:
+            mock_cf.get_setting.return_value = ""
+            widget._handle_list_append(
+                [
+                    ("(us-west-2) Farm A", "farm-a", "us-west-2"),
+                    ("(us-west-2) Farm A dup", "farm-a", "us-west-2"),
+                ]
+            )
+
+        matches = [i for i in range(widget.box.count()) if widget.box.itemData(i) == "farm-a"]
+        assert len(matches) == 1
+
+    def test_handle_region_warning_is_non_blocking(self, qtbot):
+        """A per-region warning sets a tooltip and does not raise/pop a modal."""
+        widget = DeadlineFarmListComboBoxController()
+        qtbot.addWidget(widget)
+
+        # Should not raise; just records a tooltip.
+        widget._handle_region_warning("us-east-1", Exception("opt-in required"))
+
+        assert "us-east-1" in widget.box.toolTip()
+
+    def test_current_region_reflects_selection(self, qtbot):
+        """current_region returns the region of the selected farm."""
+        widget = DeadlineFarmListComboBoxController()
+        qtbot.addWidget(widget)
+
+        config = ConfigParser()
+        config["defaults"] = {"farm_id": "", "farm_region": ""}
+        widget.set_config(config)
+
+        with patch("deadline.client.ui.widgets._deadline_list_combo_boxes.config_file") as mock_cf:
+            mock_cf.get_setting.return_value = ""
+            widget._handle_list_append([("(us-west-2) Farm A", "farm-a", "us-west-2")])
+            widget.box.setCurrentIndex(widget.box.findData("farm-a"))
+
+        assert widget.current_region() == "us-west-2"
+
 
 class TestDeadlineQueueListComboBoxController:
     """Tests for DeadlineQueueListComboBoxController."""

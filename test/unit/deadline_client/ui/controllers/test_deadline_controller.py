@@ -8,6 +8,8 @@ import pytest
 from unittest.mock import patch
 from configparser import ConfigParser
 
+from deadline.client.config import config_file
+
 try:
     from deadline.client.ui.controllers._deadline_controller import DeadlineUIController
     from deadline.client.ui.controllers._thread_pool import DeadlineThreadPool
@@ -91,12 +93,12 @@ class TestDeadlineUIController:
 
         assert controller.current_queue_id == ""
 
-    @patch("deadline.client.ui.controllers._deadline_controller.api")
-    def test_refresh_farms_emits_loading_signal(self, mock_api, qtbot):
+    @patch("deadline.client.ui.controllers._deadline_controller._iter_farms_by_region")
+    def test_refresh_farms_emits_loading_signal(self, mock_iter, qtbot):
         """Test that refresh_farms emits farms_loading signal."""
         controller = DeadlineUIController.getInstance()
 
-        mock_api.list_farms.return_value = {"farms": []}
+        mock_iter.side_effect = lambda config=None: iter([])
 
         loading_states = []
         controller.farms_loading.connect(lambda x: loading_states.append(x), _QueuedConnection)
@@ -109,39 +111,145 @@ class TestDeadlineUIController:
         assert loading_states[0] is True  # Loading started
         assert loading_states[-1] is False  # Loading finished
 
-    @patch("deadline.client.ui.controllers._deadline_controller.api")
-    def test_refresh_farms_emits_farms_updated(self, mock_api, qtbot):
-        """Test that refresh_farms emits farms_updated with farm list."""
+    @patch("deadline.client.ui.controllers._deadline_controller._iter_farms_by_region")
+    def test_refresh_farms_appends_farms_per_region(self, mock_iter, qtbot):
+        """refresh_farms streams farms via farms_appended, one emit per region."""
         controller = DeadlineUIController.getInstance()
 
-        mock_api.list_farms.return_value = {
-            "farms": [
-                {"displayName": "Farm A", "farmId": "farm-a"},
-                {"displayName": "Farm B", "farmId": "farm-b"},
-            ]
-        }
+        # Two regions complete (in this order). Each farm option is a
+        # (label, farm_id, region) tuple with the label region-first.
+        def fake_iter(config=None):
+            yield (
+                "us-west-2",
+                [{"displayName": "Farm A", "farmId": "farm-a", "region": "us-west-2"}],
+                None,
+            )
+            yield (
+                "eu-west-1",
+                [{"displayName": "Farm B", "farmId": "farm-b", "region": "eu-west-1"}],
+                None,
+            )
 
-        farms_received = []
-        controller.farms_updated.connect(lambda x: farms_received.append(x), _QueuedConnection)
+        mock_iter.side_effect = lambda config=None: fake_iter()
+
+        cleared = []
+        appended = []
+        controller.farms_updated.connect(lambda x: cleared.append(x), _QueuedConnection)
+        controller.farms_appended.connect(lambda x: appended.append(x), _QueuedConnection)
 
         controller.refresh_farms()
 
-        qtbot.waitUntil(lambda: len(farms_received) > 0, timeout=2000)
+        # One clear (farms_updated([])) up front, then one append per region.
+        qtbot.waitUntil(lambda: len(appended) >= 2, timeout=2000)
 
-        assert len(farms_received) == 1
-        farms = farms_received[0]
-        assert len(farms) == 2
-        # Should be sorted by name
-        # Note: Qt signals may convert tuples to lists
-        assert list(farms[0]) == ["Farm A", "farm-a"]
-        assert list(farms[1]) == ["Farm B", "farm-b"]
+        assert cleared[0] == []
+        # Each region produced its own append batch (incremental).
+        assert len(appended) == 2
+        all_options = [tuple(opt) for batch in appended for opt in batch]
+        labels = {opt[0] for opt in all_options}
+        assert labels == {"(us-west-2) Farm A", "(eu-west-1) Farm B"}
+        # The selected farm's region can be resolved from the controller map.
+        assert controller.region_for_farm("farm-a") == "us-west-2"
+        assert controller.region_for_farm("farm-b") == "eu-west-1"
 
-    @patch("deadline.client.ui.controllers._deadline_controller.api")
-    def test_refresh_farms_handles_error(self, mock_api, qtbot):
-        """Test that refresh_farms handles API errors gracefully."""
+    @patch("deadline.client.ui.controllers._deadline_controller._iter_farms_by_region")
+    def test_refresh_farms_label_region_first(self, mock_iter, qtbot):
+        """Farm labels are formatted region-first: '(region) displayName'."""
         controller = DeadlineUIController.getInstance()
 
-        mock_api.list_farms.side_effect = Exception("API Error")
+        def fake_iter(config=None):
+            yield (
+                "ap-southeast-2",
+                [{"displayName": "My Farm", "farmId": "farm-x", "region": "ap-southeast-2"}],
+                None,
+            )
+
+        mock_iter.side_effect = lambda config=None: fake_iter()
+
+        appended = []
+        controller.farms_appended.connect(lambda x: appended.append(x), _QueuedConnection)
+
+        controller.refresh_farms()
+        qtbot.waitUntil(lambda: len(appended) >= 1, timeout=2000)
+
+        assert tuple(appended[0][0]) == ("(ap-southeast-2) My Farm", "farm-x", "ap-southeast-2")
+
+    @patch("deadline.client.ui.controllers._deadline_controller._iter_farms_by_region")
+    def test_refresh_farms_failing_region_is_non_blocking(self, mock_iter, qtbot):
+        """A failing region emits a warning; surviving regions' farms still append."""
+        controller = DeadlineUIController.getInstance()
+
+        def fake_iter(config=None):
+            yield ("us-east-1", None, Exception("region opt-in required"))
+            yield (
+                "us-west-2",
+                [{"displayName": "Farm A", "farmId": "farm-a", "region": "us-west-2"}],
+                None,
+            )
+
+        mock_iter.side_effect = lambda config=None: fake_iter()
+
+        appended = []
+        warnings = []
+        errors = []
+        controller.farms_appended.connect(lambda x: appended.append(x), _QueuedConnection)
+        controller.farm_region_warning.connect(
+            lambda region, e: warnings.append((region, e)), _QueuedConnection
+        )
+        controller.operation_failed.connect(
+            lambda key, e: errors.append((key, e)), _QueuedConnection
+        )
+
+        controller.refresh_farms()
+        qtbot.waitUntil(lambda: len(appended) >= 1, timeout=2000)
+        qtbot.waitUntil(lambda: len(warnings) >= 1, timeout=2000)
+        # Let the stream finish so we can assert no hard error fired.
+        qtbot.wait(200)
+
+        # Surviving region's farm was appended.
+        assert tuple(appended[0][0]) == ("(us-west-2) Farm A", "farm-a", "us-west-2")
+        # Non-blocking warning for the failing region.
+        assert warnings[0][0] == "us-east-1"
+        # No hard failure since at least one region succeeded.
+        assert errors == []
+
+    @patch("deadline.client.ui.controllers._deadline_controller._iter_farms_by_region")
+    def test_refresh_farms_all_regions_fail_surfaces_error(self, mock_iter, qtbot):
+        """When every region fails, operation_failed is emitted (hard error)."""
+        controller = DeadlineUIController.getInstance()
+
+        def fake_iter(config=None):
+            yield ("us-east-1", None, Exception("boom"))
+            yield ("us-west-2", None, Exception("boom2"))
+
+        mock_iter.side_effect = lambda config=None: fake_iter()
+
+        warnings = []
+        errors = []
+        controller.farm_region_warning.connect(
+            lambda region, e: warnings.append((region, e)), _QueuedConnection
+        )
+        controller.operation_failed.connect(
+            lambda key, e: errors.append((key, e)), _QueuedConnection
+        )
+
+        controller.refresh_farms()
+        qtbot.waitUntil(lambda: len(errors) >= 1, timeout=2000)
+
+        # A warning per failing region, plus a single terminal hard error.
+        assert len(warnings) == 2
+        assert errors[0][0] == "list_farms"
+
+    @patch("deadline.client.ui.controllers._deadline_controller._iter_farms_by_region")
+    def test_refresh_farms_fatal_error_emits_empty(self, mock_iter, qtbot):
+        """A generator that raises outright routes through the error path."""
+        controller = DeadlineUIController.getInstance()
+
+        def fake_iter(config=None):
+            raise Exception("API Error")
+            yield  # pragma: no cover
+
+        mock_iter.side_effect = lambda config=None: fake_iter()
 
         farms_received = []
         errors_received = []
@@ -152,12 +260,10 @@ class TestDeadlineUIController:
 
         controller.refresh_farms()
 
-        qtbot.waitUntil(lambda: len(farms_received) > 0, timeout=2000)
         qtbot.waitUntil(lambda: len(errors_received) > 0, timeout=2000)
 
-        # Should emit empty list on error
-        assert farms_received[0] == []
-        # Should emit error signal
+        # farms_updated([]) is emitted to clear the box (once up front, once on error).
+        assert farms_received[-1] == []
         assert len(errors_received) == 1
 
     @patch("deadline.client.ui.controllers._deadline_controller.api")
@@ -197,6 +303,86 @@ class TestDeadlineUIController:
         mock_api.list_queues.assert_called_once()
         # Note: Qt signals may convert tuples to lists
         assert list(queues_received[0][0]) == ["Queue 1", "queue-1"]
+
+    @patch("deadline.client.ui.controllers._deadline_controller.api")
+    def test_refresh_queues_uses_selected_farm_region(self, mock_api, qtbot):
+        """refresh_queues passes the farm's discovered region to api.list_queues."""
+        controller = DeadlineUIController.getInstance()
+
+        # Seed the farm->region map as if a multi-region refresh already ran.
+        controller._farm_regions = {"farm-123": "eu-central-1"}
+        mock_api.list_queues.return_value = {"queues": []}
+
+        queues_received = []
+        controller.queues_updated.connect(lambda x: queues_received.append(x), _QueuedConnection)
+
+        controller.refresh_queues(farm_id="farm-123")
+
+        qtbot.waitUntil(lambda: len(queues_received) > 0, timeout=2000)
+
+        _, kwargs = mock_api.list_queues.call_args
+        assert kwargs["farmId"] == "farm-123"
+        assert kwargs["region"] == "eu-central-1"
+
+    @patch("deadline.client.ui.controllers._deadline_controller.api")
+    def test_refresh_storage_profiles_uses_selected_farm_region(self, mock_api, qtbot):
+        """refresh_storage_profiles passes the farm's region to the api call."""
+        controller = DeadlineUIController.getInstance()
+
+        controller._farm_regions = {"farm-123": "ap-northeast-1"}
+        mock_api.list_storage_profiles_for_queue.return_value = {"storageProfiles": []}
+
+        received = []
+        controller.storage_profiles_updated.connect(lambda x: received.append(x), _QueuedConnection)
+
+        controller.refresh_storage_profiles(farm_id="farm-123", queue_id="queue-1")
+
+        qtbot.waitUntil(lambda: len(received) > 0, timeout=2000)
+
+        _, kwargs = mock_api.list_storage_profiles_for_queue.call_args
+        assert kwargs["farmId"] == "farm-123"
+        assert kwargs["queueId"] == "queue-1"
+        assert kwargs["region"] == "ap-northeast-1"
+
+    def test_region_for_farm_returns_observed_region(self, qtbot):
+        """region_for_farm returns the region observed while streaming, if known."""
+        controller = DeadlineUIController.getInstance()
+        controller._farm_regions = {"farm-123": "eu-central-1"}
+
+        assert controller.region_for_farm("farm-123") == "eu-central-1"
+
+    def test_region_for_farm_unknown_farm_resolves_per_farm_not_default(self, qtbot):
+        """
+        When a farm wasn't observed in the current session, region_for_farm must resolve
+        THAT farm's persisted region, not blindly return the default farm's region.
+
+        defaults.farm_region is keyed per-farm (depends on defaults.farm_id), so two farms
+        can have different stored regions. Selecting a non-default farm before a refresh has
+        populated _farm_regions must not leak the default farm's region.
+        """
+        controller = DeadlineUIController.getInstance()
+
+        config = ConfigParser()
+        # Store farm-default in us-west-2, then farm-other in eu-west-1 (per-farm sections).
+        config_file.set_setting("defaults.farm_id", "farm-default", config=config)
+        config_file.set_setting("defaults.farm_region", "us-west-2", config=config)
+        config_file.set_setting("defaults.farm_id", "farm-other", config=config)
+        config_file.set_setting("defaults.farm_region", "eu-west-1", config=config)
+        # Leave farm-default as the active default.
+        config_file.set_setting("defaults.farm_id", "farm-default", config=config)
+        controller.set_config(config)
+
+        # The default farm resolves to its own region.
+        assert controller.region_for_farm("farm-default") == "us-west-2"
+        # A non-default, unobserved farm resolves to ITS region, not the default's.
+        assert controller.region_for_farm("farm-other") == "eu-west-1"
+
+    def test_region_for_farm_unknown_returns_none_when_unset(self, qtbot):
+        """region_for_farm returns None for a farm with no observed or stored region."""
+        controller = DeadlineUIController.getInstance()
+        controller.set_config(ConfigParser())
+
+        assert controller.region_for_farm("farm-nope") is None
 
     @patch("deadline.client.ui.controllers._deadline_controller.api")
     def test_on_farm_selected_updates_current_farm(self, mock_api, qtbot):

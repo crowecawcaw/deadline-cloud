@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from random import randrange
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -258,3 +258,35 @@ def test_list_jobs_by_filter_expression(
     assert sorted(result, key=lambda job: job["jobId"]) == [
         job for job in jobs if job["taskRunStatus"] in test_status_values
     ]
+
+
+@pytest.mark.parametrize("region", ["us-east-1", None])
+def test_list_jobs_by_filter_expression_passes_region(mock_boto3_session, region):
+    """The region argument is threaded into get_session_client so the deadline client is region-scoped."""
+    deadline_client = MagicMock()
+    deadline_client.search_jobs.return_value = {"jobs": [], "totalResults": 0}
+
+    with patch(
+        "deadline.client.api._list_jobs_by_filter_expression.get_session_client",
+        return_value=deadline_client,
+    ) as mock_get_session_client:
+        _list_jobs_by_filter_expression(
+            boto3_session=mock_boto3_session,
+            farm_id=MOCK_FARM_ID,
+            queue_id=MOCK_QUEUE_ID,
+            filter_expression={
+                "filters": [
+                    {
+                        "dateTimeFilter": {
+                            "name": "ENDED_AT",
+                            "dateTime": MOCK_TIMESTAMP,
+                            "operator": "GREATER_THAN_EQUAL_TO",
+                        }
+                    }
+                ],
+                "operator": "AND",
+            },
+            region=region,
+        )
+
+    mock_get_session_client.assert_called_once_with(mock_boto3_session, "deadline", region=region)

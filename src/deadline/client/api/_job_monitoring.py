@@ -15,6 +15,7 @@ from botocore.exceptions import ClientError
 
 from deadline.client.exceptions import DeadlineOperationError, DeadlineOperationTimedOut
 from deadline.client.api._session import (
+    _resolve_region,
     get_boto3_client,
     get_boto3_session,
     get_default_client_config,
@@ -123,7 +124,9 @@ def wait_for_job_completion(
     Raises:
         DeadlineOperationError: If the timeout is reached or there's an error retrieving job information.
     """
-    deadline = get_boto3_client("deadline", config=config)
+    # Scope the client to the farm's region (per-farm operation).
+    region = _resolve_region(config=config, farm_id=farm_id)
+    deadline = get_boto3_client("deadline", config=config, region=region)
 
     start_time = datetime.datetime.now()
     terminal_states = ["SUCCEEDED", "FAILED", "CANCELED", "SUSPENDED", "NOT_COMPATIBLE"]
@@ -257,8 +260,10 @@ def get_session_logs(
     Raises:
         DeadlineOperationError: If there's an error retrieving the logs.
     """
+    # Scope clients to the farm's region (per-farm operation).
+    region = _resolve_region(config=config, farm_id=farm_id)
     # Get the Deadline client to use for getting queue credentials
-    deadline = get_boto3_client("deadline", config=config)
+    deadline = get_boto3_client("deadline", config=config, region=region)
 
     # Auto-select session if not provided but job_id is
     if not session_id:
@@ -308,8 +313,8 @@ def get_session_logs(
         except Exception as e:
             raise DeadlineOperationError(f"Failed to get queue credentials: {e}")
     else:
-        # Use the same boto session as for deadline
-        logs_client = get_boto3_client("logs", config=config)
+        # Use the same boto session as for deadline, scoped to the farm's region.
+        logs_client = get_boto3_client("logs", config=config, region=region)
 
     # Construct the log group name
     log_group_name = f"/aws/deadline/{farm_id}/{queue_id}"
@@ -427,13 +432,16 @@ def get_worker_logs(
     # Worker logs use a different log group pattern than session logs
     log_group_name = f"/aws/deadline/{farm_id}/{fleet_id}"
 
+    # Worker logs live in the farm's region, so resolve it once and scope every client to it.
+    region = _resolve_region(config=config, farm_id=farm_id)
+
     # Check if we have user and identity store ID (from Deadline Cloud monitor)
     user_id, identity_store_id = get_user_and_identity_store_id(config=config)
 
     # Create logs client - use fleet role credentials when using monitor login
     if user_id and identity_store_id:
         try:
-            deadline = get_boto3_client("deadline", config=config)
+            deadline = get_boto3_client("deadline", config=config, region=region)
             response = deadline.assume_fleet_role_for_read(farmId=farm_id, fleetId=fleet_id)
             credentials = response["credentials"]
             fleet_session = boto3.Session(
@@ -441,15 +449,20 @@ def get_worker_logs(
                 aws_secret_access_key=credentials["secretAccessKey"],
                 aws_session_token=credentials["sessionToken"],
             )
+            # Scope the fleet-credentials logs client to the farm's region, falling back
+            # to the base session region when no region is configured (prior behavior).
+            logs_region = (
+                region if region is not None else get_boto3_session(config=config).region_name
+            )
             logs_client = fleet_session.client(
                 "logs",
-                region_name=get_boto3_session(config=config).region_name,
+                region_name=logs_region,
                 config=get_default_client_config(),
             )
         except Exception as e:
             raise DeadlineOperationError(f"Failed to get fleet credentials: {e}")
     else:
-        logs_client = get_boto3_client("logs", config=config)
+        logs_client = get_boto3_client("logs", config=config, region=region)
 
     # Prepare parameters for GetLogEvents
     params = {

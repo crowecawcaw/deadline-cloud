@@ -93,6 +93,22 @@ def mock_api(mock_backend):
                 ),
             )
         )
+
+        # The farm combo box now populates incrementally from the per-region
+        # streaming generator. Yield the mock backend's farms as a single
+        # "us-west-2" region so they surface with a (region) displayName label.
+        def _fake_iter_farms_by_region(config=None, regions=None, **kw):
+            farms = deadline_mock.list_farms(**{k: v for k, v in kw.items() if k != "config"})[
+                "farms"
+            ]
+            yield ("us-west-2", [{**farm, "region": "us-west-2"} for farm in farms], None)
+
+        stack.enter_context(
+            patch(
+                "deadline.client.ui.controllers._deadline_controller._iter_farms_by_region",
+                side_effect=_fake_iter_farms_by_region,
+            )
+        )
         stack.enter_context(
             patch(
                 "deadline.client.api.list_queues",
@@ -255,17 +271,19 @@ class TestSettingsDialogue:
         assert edit.directory_edit.isEnabled()
 
     def test_farm_dropdown_populated_from_backend(self, qtbot, config_widget):
-        """Verify farm dropdown gets populated when list is refreshed."""
+        """Verify farm dropdown gets populated incrementally when list is refreshed."""
         controller = DeadlineUIController.getInstance()
         combo = config_widget.default_farm_box.box
 
-        with qtbot.waitSignal(controller.farms_updated, timeout=5000):
+        # Farms now stream in per region via farms_appended.
+        with qtbot.waitSignal(controller.farms_appended, timeout=5000):
             controller.refresh_farms()
 
         QApplication.processEvents()
 
         items = [combo.itemText(i) for i in range(combo.count())]
-        assert "Test Farm" in items
+        # Label is region-first per the (region, farm_id) convention.
+        assert "(us-west-2) Test Farm" in items
 
     def test_queue_dropdown_populated_from_backend(self, qtbot, config_widget, mock_backend):
         """Verify queue dropdown gets populated for a given farm."""
@@ -363,13 +381,14 @@ class TestSettingsDialogue:
         config_widget.changes["defaults.queue_id"] = ""
         config_widget.refresh()
 
-        controller = DeadlineUIController.getInstance()
-
-        # Simulate the profile-change cascade entry point: farms get refreshed.
+        # Simulate the profile-change cascade entry point: farms get refreshed. Farms now
+        # stream in per region, and auto-select fires once the stream completes, so wait
+        # for the pending change to land rather than the initial clear emit.
         config_widget._awaiting_farms_for_cascade = True
-        with qtbot.waitSignal(controller.farms_updated, timeout=5000):
-            config_widget.default_farm_box.refresh_list()
-        QApplication.processEvents()
+        config_widget.default_farm_box.refresh_list()
+        qtbot.waitUntil(
+            lambda: config_widget.changes.get("defaults.farm_id") == farm_id, timeout=5000
+        )
 
         # The single farm should now be recorded as the pending farm change, which is
         # what gets persisted on Apply. (currentData on the combo can't be asserted
@@ -392,20 +411,21 @@ class TestSettingsDialogue:
         config_widget.changes["defaults.queue_id"] = ""
         config_widget.refresh()
 
-        controller = DeadlineUIController.getInstance()
-
         # Sign-in path: refresh_lists() refreshes the farm list WITHOUT the cascade
         # flags, but only when the API is available - so stub auth as signed in.
         auth_stub = MagicMock()
         auth_stub.api_availability = True
         assert not config_widget._awaiting_farms_for_cascade
+        # Farms stream in per region; auto-select fires once the stream completes, so wait
+        # for the pending change to land rather than the initial clear emit.
         with patch(
             "deadline.client.ui.dialogs.deadline_config_dialog.DeadlineAuthenticationStatus.getInstance",
             return_value=auth_stub,
         ):
-            with qtbot.waitSignal(controller.farms_updated, timeout=5000):
-                config_widget.refresh_lists()
-        QApplication.processEvents()
+            config_widget.refresh_lists()
+            qtbot.waitUntil(
+                lambda: config_widget.changes.get("defaults.farm_id") == farm_id, timeout=5000
+            )
 
         # The lone farm is auto-selected (combo fires currentIndexChanged ->
         # default_farm_changed records it). We assert on the pending change, which is
