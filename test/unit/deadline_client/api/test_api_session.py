@@ -8,6 +8,7 @@ from typing import Optional
 from unittest.mock import call, patch, MagicMock, ANY
 
 import boto3  # type: ignore[import]
+import pytest
 from deadline.client import api, config
 from deadline.client.api._session import get_session_client, precache_clients
 
@@ -150,11 +151,14 @@ def test_get_queue_user_boto3_session_no_profile(fresh_deadline_config):
 
 
 def test_check_deadline_api_available(fresh_deadline_config):
+    # check_deadline_api_available is a deprecated shim that delegates to
+    # check_authentication_status using the same deadline:ListFarms probe.
     with patch.object(api._session, "get_boto3_session") as session_mock:
         session_mock().client("deadline").list_farms.return_value = {"farms": []}
 
         # Call the function under test
-        result = api.check_deadline_api_available()
+        with pytest.warns(DeprecationWarning):
+            result = api.check_deadline_api_available()
 
         assert result is True
         # It should have called list_farms to check the API
@@ -173,22 +177,29 @@ def test_check_deadline_api_available_injects_principal_id(fresh_deadline_config
     ):
         boto3_client_mock.return_value.list_farms.return_value = {"farms": []}
 
-        assert api.check_deadline_api_available() is True
+        with pytest.warns(DeprecationWarning):
+            assert api.check_deadline_api_available() is True
         boto3_client_mock.return_value.list_farms.assert_called_once_with(
             maxResults=1, principalId="user-1234"
         )
 
 
 def test_check_deadline_api_available_fails(fresh_deadline_config):
-    with patch.object(api._session, "get_boto3_session") as session_mock:
-        session_mock().client("deadline").list_farms.side_effect = Exception()
+    # When the probe fails for a non-DCM profile, the shim resolves to
+    # CONFIGURATION_ERROR (not AUTHENTICATED) and therefore returns False.
+    with patch.object(api._session, "get_boto3_client") as boto3_client_mock, patch.object(
+        api._list_apis, "get_user_and_identity_store_id", return_value=(None, None)
+    ):
+        config.set_setting("defaults.aws_profile_name", "SomeRandomProfileName")
+        boto3_client_mock.return_value.list_farms.side_effect = Exception()
 
         # Call the function under test
-        result = api.check_deadline_api_available()
+        with pytest.warns(DeprecationWarning):
+            result = api.check_deadline_api_available()
 
         assert result is False
-        # It should have called list_farms with to check the API
-        session_mock().client("deadline").list_farms.assert_called_once_with(maxResults=1)
+        # It should have called list_farms to check the API
+        boto3_client_mock.return_value.list_farms.assert_called_once_with(maxResults=1)
 
 
 def test_get_session_client_caching():

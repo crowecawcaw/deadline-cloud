@@ -123,9 +123,6 @@ def mock_api(mock_backend):
             )
         )
         stack.enter_context(
-            patch("deadline.client.api.check_deadline_api_available", return_value=True)
-        )
-        stack.enter_context(
             patch(
                 "deadline.client.api.get_credentials_source",
                 return_value=api.AwsCredentialsSource.HOST_PROVIDED,
