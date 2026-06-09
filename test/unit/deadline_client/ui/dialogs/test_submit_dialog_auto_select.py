@@ -107,12 +107,15 @@ def _build_dialog(qtbot, auth_status):
     auth_status.api_availability = None  # quiet construction
     auth_module._deadline_authentication_status = auth_status
 
-    with patch(
-        "deadline.client.ui.widgets.deadline_authentication_status_widget.DeadlineAuthenticationStatus.getInstance",
-        return_value=auth_status,
-    ), patch(
-        f"{DIALOG_MODULE}.DeadlineAuthenticationStatus.getInstance",
-        return_value=auth_status,
+    with (
+        patch(
+            "deadline.client.ui.widgets.deadline_authentication_status_widget.DeadlineAuthenticationStatus.getInstance",
+            return_value=auth_status,
+        ),
+        patch(
+            f"{DIALOG_MODULE}.DeadlineAuthenticationStatus.getInstance",
+            return_value=auth_status,
+        ),
     ):
         from deadline.client.ui.dialogs.submit_job_to_deadline_dialog import (
             SubmitJobToDeadlineDialog,
@@ -148,15 +151,19 @@ def test_lone_farm_and_queue_auto_selected_through_dialog(qtbot, fresh_deadline_
     auth = _AuthStatusStub(True)
     dialog = _build_dialog(qtbot, auth)
 
-    with patch(
-        "deadline.client.api.list_farms",
-        return_value={"farms": [{"displayName": "Only Farm", "farmId": "farm-1"}]},
-    ), patch(
-        "deadline.client.api.list_queues",
-        return_value={"queues": [{"displayName": "Only Queue", "queueId": "queue-1"}]},
-    ), patch(
-        "deadline.client.api.list_storage_profiles_for_queue",
-        return_value={"storageProfiles": []},
+    with (
+        patch(
+            "deadline.client.api.list_farms",
+            return_value={"farms": [{"displayName": "Only Farm", "farmId": "farm-1"}]},
+        ),
+        patch(
+            "deadline.client.api.list_queues",
+            return_value={"queues": [{"displayName": "Only Queue", "queueId": "queue-1"}]},
+        ),
+        patch(
+            "deadline.client.api.list_storage_profiles_for_queue",
+            return_value={"storageProfiles": []},
+        ),
     ):
         dialog.refresh_deadline_settings()
         # The cascade is multi-hop and async (farm list -> auto-select farm ->
@@ -180,15 +187,18 @@ def test_multiple_farms_not_auto_selected_through_dialog(qtbot, fresh_deadline_c
     dialog = _build_dialog(qtbot, auth)
     controller = DeadlineUIController.getInstance()
 
-    with patch(
-        "deadline.client.api.list_farms",
-        return_value={
-            "farms": [
-                {"displayName": "Farm A", "farmId": "farm-a"},
-                {"displayName": "Farm B", "farmId": "farm-b"},
-            ]
-        },
-    ), patch("deadline.client.api.list_queues", return_value={"queues": []}):
+    with (
+        patch(
+            "deadline.client.api.list_farms",
+            return_value={
+                "farms": [
+                    {"displayName": "Farm A", "farmId": "farm-a"},
+                    {"displayName": "Farm B", "farmId": "farm-b"},
+                ]
+            },
+        ),
+        patch("deadline.client.api.list_queues", return_value={"queues": []}),
+    ):
         with qtbot.waitSignal(controller.farms_updated, timeout=5000):
             dialog.refresh_deadline_settings()
         QApplication.processEvents()
@@ -226,11 +236,11 @@ def test_tab_selection_change_does_not_refresh_farm_list(qtbot, fresh_deadline_c
     dialog = _build_dialog(qtbot, auth)
 
     settings_box = dialog.shared_job_settings.deadline_cloud_settings_box
-    with patch.object(settings_box.farm_box, "refresh_list") as farm_refresh, patch.object(
-        settings_box.queue_box, "refresh_list"
-    ) as queue_refresh, patch.object(
-        dialog.shared_job_settings, "refresh_queue_parameters"
-    ) as refresh_qp:
+    with (
+        patch.object(settings_box.farm_box, "refresh_list") as farm_refresh,
+        patch.object(settings_box.queue_box, "refresh_list") as queue_refresh,
+        patch.object(dialog.shared_job_settings, "refresh_queue_parameters") as refresh_qp,
+    ):
         dialog._on_deadline_cloud_selection_changed()
 
     farm_refresh.assert_not_called()
