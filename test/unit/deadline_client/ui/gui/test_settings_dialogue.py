@@ -325,9 +325,11 @@ def test_profile_switch_preserves_each_profiles_farm_queue(fresh_deadline_config
     # Build a config widget and drive the real profile-switch + apply path. Patch
     # out only the UI-refresh side effects that need a populated dialog; the
     # persistence (set_setting/write_config via apply) runs for real.
-    with patch.object(DeadlineWorkstationConfigWidget, "_build_ui"), patch.object(
-        DeadlineWorkstationConfigWidget, "_fill_aws_profiles_box"
-    ), patch.object(DeadlineWorkstationConfigWidget, "refresh"):
+    with (
+        patch.object(DeadlineWorkstationConfigWidget, "_build_ui"),
+        patch.object(DeadlineWorkstationConfigWidget, "_fill_aws_profiles_box"),
+        patch.object(DeadlineWorkstationConfigWidget, "refresh"),
+    ):
         widget = DeadlineWorkstationConfigWidget.__new__(DeadlineWorkstationConfigWidget)
         widget.changes = {}
         widget.changes_were_applied = False

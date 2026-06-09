@@ -107,12 +107,15 @@ def _build_dialog(qtbot, auth_status):
     auth_status.api_availability = None  # quiet construction
     auth_module._deadline_authentication_status = auth_status
 
-    with patch(
-        "deadline.client.ui.widgets.deadline_authentication_status_widget.DeadlineAuthenticationStatus.getInstance",
-        return_value=auth_status,
-    ), patch(
-        f"{DIALOG_MODULE}.DeadlineAuthenticationStatus.getInstance",
-        return_value=auth_status,
+    with (
+        patch(
+            "deadline.client.ui.widgets.deadline_authentication_status_widget.DeadlineAuthenticationStatus.getInstance",
+            return_value=auth_status,
+        ),
+        patch(
+            f"{DIALOG_MODULE}.DeadlineAuthenticationStatus.getInstance",
+            return_value=auth_status,
+        ),
     ):
         from deadline.client.ui.dialogs.submit_job_to_deadline_dialog import (
             SubmitJobToDeadlineDialog,
@@ -255,11 +258,11 @@ def test_tab_selection_change_does_not_refresh_farm_list(qtbot, fresh_deadline_c
     dialog = _build_dialog(qtbot, auth)
 
     settings_box = dialog.shared_job_settings.deadline_cloud_settings_box
-    with patch.object(settings_box.farm_box, "refresh_list") as farm_refresh, patch.object(
-        settings_box.queue_box, "refresh_list"
-    ) as queue_refresh, patch.object(
-        dialog.shared_job_settings, "refresh_queue_parameters"
-    ) as refresh_qp:
+    with (
+        patch.object(settings_box.farm_box, "refresh_list") as farm_refresh,
+        patch.object(settings_box.queue_box, "refresh_list") as queue_refresh,
+        patch.object(dialog.shared_job_settings, "refresh_queue_parameters") as refresh_qp,
+    ):
         dialog._on_deadline_cloud_selection_changed()
 
     farm_refresh.assert_not_called()
