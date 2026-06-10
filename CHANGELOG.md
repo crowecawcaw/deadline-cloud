@@ -1,3 +1,19 @@
+## 0.58.0 (2026-06-10)
+
+### BREAKING CHANGES
+* Dropped support for Python 3.8. The minimum supported Python version is now 3.9. Users running Python 3.8 must upgrade their Python installation. (#1200)
+
+### Features
+* When running `deadline bundle gui-submit`, the Host Requirements tab now correctly populates from the job template's `hostRequirements` instead of always defaulting to "Run on all available worker hosts". (#1198)
+* When no default farm or queue is configured, the CLI and GUI submit dialog now automatically select the farm/queue if only one is available to the user, removing the need to manually configure defaults in single-farm/queue setups. (#1015)
+
+### Bug Fixes
+* Fixed an issue where some internal boto clients were missing the default client config, causing user-agent attribution (app/deadline-client version, submitter, and CLI command name) to be absent from certain API calls (attachment downloads/uploads and log queries). (#1197)
+## 0.57.4 (2026-06-08)
+
+### Features
+* When no default farm or queue is configured, the CLI and GUI submit dialog now automatically select the farm/queue if only one is available to the user. If multiple exist, the existing behavior is preserved. (#1015)
+* The Monitor's session_id is now read from ~/.deadline/config and included in telemetry events for cross-component correlation with Monitor and CTDX sessions. (#1184)
 ## 0.57.3 (2026-06-01)
 
 ### Features

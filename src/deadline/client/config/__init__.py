@@ -11,13 +11,13 @@ file path instead.
 """
 
 __all__ = [
-    "get_setting_default",
-    "get_setting",
-    "set_setting",
+    "DEFAULT_DEADLINE_ENDPOINT_URL",
     "clear_setting",
     "get_best_profile_for_farm",
+    "get_setting",
+    "get_setting_default",
+    "set_setting",
     "str2bool",
-    "DEFAULT_DEADLINE_ENDPOINT_URL",
 ]
 
 from .config_file import (

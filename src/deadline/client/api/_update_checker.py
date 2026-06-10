@@ -10,12 +10,12 @@ integration is available by comparing the installed version against a remote man
 from __future__ import annotations
 
 __all__ = [
-    "MANIFEST_URL",
     "DOWNLOAD_BASE_URL",
-    "UpdateCheckStatus",
+    "MANIFEST_URL",
     "UpdateCheckResult",
-    "safe_check_for_updates",
+    "UpdateCheckStatus",
     "get_current_platform",
+    "safe_check_for_updates",
 ]
 
 import json
