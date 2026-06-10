@@ -15,10 +15,10 @@ from ..exceptions import DeadlineOperationError
 logger = getLogger(__name__)
 
 __all__ = [
-    "parse_query_string",
-    "install_deadline_web_url_handler",
-    "uninstall_deadline_web_url_handler",
     "DEADLINE_URL_SCHEME_NAME",
+    "install_deadline_web_url_handler",
+    "parse_query_string",
+    "uninstall_deadline_web_url_handler",
 ]
 
 DEADLINE_URL_SCHEME_NAME = "deadline"

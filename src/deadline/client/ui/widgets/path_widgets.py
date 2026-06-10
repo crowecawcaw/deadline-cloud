@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-__all__ = ["InputFilePickerWidget", "OutputFilePickerWidget", "DirectoryPickerWidget"]
+__all__ = ["DirectoryPickerWidget", "InputFilePickerWidget", "OutputFilePickerWidget"]
 
 import os
 from typing import Optional
