@@ -119,7 +119,6 @@ changes like `Requirements -> Optional[Requirements]`). The surface is determine
 
 - **ruff `F822`** (default): fails on `__all__` entries that don't exist (stale names).
 - **ruff `RUF022`**: keeps `__all__` sorted. Feature-grouped lists opt out via `# noqa: RUF022`.
-- **mypy `no_implicit_reexport`**: re-exports must be in `__all__` (or use `import X as X`).
 
 ### Running Tests with Docker for File and Directory Permissions
 

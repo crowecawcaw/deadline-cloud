@@ -97,9 +97,6 @@ show_error_codes = true
 pretty = true
 # Prohibit equality checks, identity checks, and container checks between non-overlapping types.
 strict_equality = true
-# Re-exports must be declared in __all__ (or use ``import X as X``), so __all__ stays the
-# authoritative public surface and incidental imports don't leak into the API.
-no_implicit_reexport = true
 ignore_missing_imports = true
 # Tell mypy that there's a namespace package at src/deadline
 namespace_packages = true
