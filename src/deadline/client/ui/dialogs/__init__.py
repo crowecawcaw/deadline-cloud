@@ -3,10 +3,10 @@
 __all__ = [
     "DeadlineConfigDialog",
     "DeadlineLoginDialog",
+    "JobBundlePurpose",
     "SubmitJobProgressDialog",
     "SubmitJobToDeadlineDialog",
     "UpdateAvailableDialog",
-    "JobBundlePurpose",
 ]
 
 from ._types import JobBundlePurpose

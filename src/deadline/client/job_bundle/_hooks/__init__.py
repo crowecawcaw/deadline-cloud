@@ -7,9 +7,9 @@ from ._models import HookConfiguration, HookDefinition, HookMetadata, HookResult
 from ._validator import validate_pre_gui_output
 
 __all__ = [
-    "HookManager",
     "HookConfiguration",
     "HookDefinition",
+    "HookManager",
     "HookMetadata",
     "HookResult",
     "_generate_hooks_confirmation_message",

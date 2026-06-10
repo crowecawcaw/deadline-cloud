@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-__all__ = [
+__all__ = [  # noqa: RUF022  intentionally grouped by widget category (see section comments), not sorted
     "DirectoryPickerWidget",
     "InputFilePickerWidget",
     "OutputFilePickerWidget",

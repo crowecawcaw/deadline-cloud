@@ -80,6 +80,67 @@ def extract_api_paths(api_data: Dict[str, Any]) -> Set[str]:
     return paths
 
 
+def render_annotation(ann: Any) -> Any:
+    """Render a griffe annotation/expression into a readable, diff-friendly string.
+
+    Griffe serializes type annotations as nested expression dicts, e.g.
+    ``Optional[HardwareRequirements]`` becomes
+    ``{"left": {"name": "Optional", ...}, "slice": {"name": "HardwareRequirements",
+    ...}, "cls": "ExprSubscript"}``. Diffing those raw dicts produces an unreadable
+    wall of text in the change report. Rendering them back to source-like strings
+    ("HardwareRequirements" -> "Optional[HardwareRequirements]") makes annotation
+    changes - the thing a reviewer actually cares about - obvious at a glance.
+
+    Plain strings and ``None`` pass through unchanged. Any unrecognized shape falls
+    back to the original value so we never lose information.
+    """
+    if ann is None or isinstance(ann, str):
+        return ann
+
+    if isinstance(ann, list):
+        return [render_annotation(item) for item in ann]
+
+    if not isinstance(ann, dict):
+        return ann
+
+    cls = ann.get("cls")
+
+    if cls == "ExprName":
+        return ann.get("name", "")
+    if cls == "ExprAttribute":
+        # Dotted access like ``typing.Optional`` -> join the parts.
+        values = ann.get("values", [])
+        return ".".join(render_annotation(v) for v in values)
+    if cls == "ExprSubscript":
+        left = render_annotation(ann.get("left"))
+        sl = render_annotation(ann.get("slice"))
+        return f"{left}[{sl}]"
+    if cls == "ExprTuple":
+        elements = ann.get("elements", [])
+        return ", ".join(render_annotation(e) for e in elements)
+    if cls == "ExprList":
+        elements = ann.get("elements", [])
+        return "[" + ", ".join(render_annotation(e) for e in elements) + "]"
+    if cls == "ExprBinOp":
+        left = render_annotation(ann.get("left"))
+        right = render_annotation(ann.get("right"))
+        op = ann.get("operator", "|")
+        return f"{left} {op} {right}"
+    if cls == "ExprCall":
+        func = render_annotation(ann.get("function"))
+        args = ", ".join(render_annotation(a) for a in ann.get("arguments", []))
+        return f"{func}({args})"
+    if cls == "ExprKeyword":
+        name = ann.get("name", "")
+        value = render_annotation(ann.get("value"))
+        return f"{name}={value}"
+
+    # Unknown expression shape - fall back to the raw value rather than dropping it.
+    if "name" in ann:
+        return ann["name"]
+    return ann
+
+
 def normalize_decorator_info(decorators):
     """Normalize decorator info by removing line numbers to focus on functional changes."""
     if not decorators or not isinstance(decorators, list):
@@ -115,7 +176,7 @@ def extract_functional_signature(obj: Dict[str, Any]) -> Dict[str, Any]:
                     if "default" in p and p["default"] is not None:
                         param_sig["default"] = p["default"]
                     if "annotation" in p and p["annotation"] is not None:
-                        param_sig["annotation"] = p["annotation"]
+                        param_sig["annotation"] = render_annotation(p["annotation"])
 
                     # Only add if we have meaningful data
                     if param_sig:
@@ -125,7 +186,7 @@ def extract_functional_signature(obj: Dict[str, Any]) -> Dict[str, Any]:
 
         # Track return type annotation if present
         if "returns" in obj and obj["returns"] is not None:
-            signature["returns"] = obj["returns"]
+            signature["returns"] = render_annotation(obj["returns"])
 
         # Track decorator names only (ignore line numbers and other metadata)
         if "decorators" in obj and isinstance(obj["decorators"], list):
@@ -139,7 +200,7 @@ def extract_functional_signature(obj: Dict[str, Any]) -> Dict[str, Any]:
     elif kind == "class":
         # Track base classes
         if "bases" in obj and obj["bases"]:
-            signature["bases"] = obj["bases"]
+            signature["bases"] = render_annotation(obj["bases"])
 
         # Track decorator names only
         if "decorators" in obj and isinstance(obj["decorators"], list):
@@ -153,7 +214,7 @@ def extract_functional_signature(obj: Dict[str, Any]) -> Dict[str, Any]:
     elif kind == "attribute":
         # Track type annotation and value if meaningful
         if "annotation" in obj and obj["annotation"] is not None:
-            signature["annotation"] = obj["annotation"]
+            signature["annotation"] = render_annotation(obj["annotation"])
         # Only track simple values, ignore complex ones that might have noise
         if "value" in obj and obj["value"] is not None:
             value = obj["value"]

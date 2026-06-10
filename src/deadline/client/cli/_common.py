@@ -8,13 +8,13 @@ from __future__ import annotations
 
 __all__ = [
     "_PROMPT_WHEN_COMPLETE",
-    "_prompt_at_completion",
-    "_handle_error",
+    "_ProgressBarCallbackManager",
     "_apply_cli_options_to_config",
     "_cli_object_repr",
-    "_ProgressBarCallbackManager",
+    "_handle_error",
     "_parse_file_parameter",
     "_parse_multi_format_parameters",
+    "_prompt_at_completion",
     "_suggest_resources_on_client_error",
 ]
 

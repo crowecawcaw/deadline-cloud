@@ -19,7 +19,7 @@ depending on whether the credentials are from a Deadline Cloud Monitor login or 
 provider.
 """
 
-__all__ = [
+__all__ = [  # noqa: RUF022  intentionally grouped by feature (see section comments), not sorted
     "login",
     "logout",
     "create_job_from_job_bundle",

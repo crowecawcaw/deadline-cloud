@@ -6,10 +6,10 @@ interfaces that use Deadline Cloud.
 """
 
 __all__ = [
-    "block_signals",
-    "gui_error_handler",
-    "gui_context_for_cli",
     "CancelationFlag",
+    "block_signals",
+    "gui_context_for_cli",
+    "gui_error_handler",
 ]
 
 from ._utils import block_signals, gui_error_handler, gui_context_for_cli, CancelationFlag

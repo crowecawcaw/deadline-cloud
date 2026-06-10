@@ -14,10 +14,71 @@ import sys
 from pathlib import Path
 
 
-def is_public_interface(name: str, obj: dict = None) -> bool:
-    """Check if an interface is public (doesn't start with underscore)."""
+# The package whose API we track. Aliases that resolve outside this package are
+# imported names (e.g. ``from typing import Any``) rather than part of our API.
+TRACKED_PACKAGE = "deadline"
+
+
+def is_reexported_import(obj: dict) -> bool:
+    """Return True if a member is an imported name rather than part of our API.
+
+    A bare ``from typing import Any`` (or ``import os``) shows up in griffe as an
+    ``alias`` member whose ``target_path`` points outside the tracked package.
+    These are implementation details of the module - not public API - so counting
+    them as "added/removed APIs" produces noise (e.g. adding ``Optional`` to an
+    import line should not register as a new public interface).
+
+    Aliases that resolve *within* the tracked package (e.g. a deliberate
+    re-export like ``from deadline.client...import JobParameter``) are kept,
+    since those genuinely expose our own API surface from a new location.
+    """
+    if not isinstance(obj, dict) or obj.get("kind") != "alias":
+        return False
+
+    target = obj.get("target_path")
+    if not isinstance(target, str) or not target:
+        # An alias with no resolvable target is most likely an unresolved import.
+        return True
+
+    # Keep re-exports of our own package; drop everything else (typing, os, ...).
+    return target != TRACKED_PACKAGE and not target.startswith(f"{TRACKED_PACKAGE}.")
+
+
+def is_public_interface(name: str, obj: dict = None, all_names: list = None) -> bool:
+    """Check if an interface is public.
+
+    When the containing module declares ``__all__`` (passed in as ``all_names``),
+    that list is authoritative for *named* members - functions, classes, attributes,
+    and re-exported aliases. A member of that kind is public if and only if it is
+    listed in ``__all__``. This is the explicit, author-declared public surface and
+    removes guesswork about imports and underscores.
+
+    Submodules and subpackages are an exception: ``__all__`` governs names imported
+    via ``from module import *``, and by convention it does not list submodules even
+    though they are independently importable public API (e.g. ``deadline.client.api``
+    is public even though it is not in ``deadline.client``'s ``__all__``). Submodules
+    are therefore always traversed and judged by the underscore convention, then
+    evaluated against their own ``__all__`` recursively.
+
+    When ``__all__`` is absent, fall back to a heuristic: a member is public if it
+    does not start with an underscore and is not merely an imported name (e.g.
+    ``from typing import Any``).
+    """
+    is_module = isinstance(obj, dict) and obj.get("kind") == "module"
+
+    # An explicit __all__ is the source of truth for named members. Submodules are
+    # not listed in __all__ by convention, so they bypass this check.
+    if all_names is not None and not is_module:
+        return name in all_names
+
+    # Heuristic fallback (modules without __all__, and submodules of any module).
+
     # Skip private interfaces (starting with _)
     if name.startswith("_"):
+        return False
+
+    # Skip imported names that just happen to live in the module namespace.
+    if is_reexported_import(obj):
         return False
 
     # If we have the object, also check the is_public flag from griffe
@@ -33,6 +94,11 @@ def normalize_paths_in_snapshot(snapshot_data, project_root: Path):
     """Recursively normalize absolute paths to relative paths and remove user-specific info."""
     if isinstance(snapshot_data, dict):
         result = {}
+        # ``exports`` is griffe's serialization of a module's ``__all__``. When present
+        # it is the authoritative declaration of the module's public surface, so we use
+        # it to decide which members to keep (see ``is_public_interface``).
+        exports = snapshot_data.get("exports")
+        all_names = exports if isinstance(exports, list) else None
         for key, value in snapshot_data.items():
             if key == "docstring":
                 # Skip docstrings entirely to save space - they're not used in API comparison
@@ -41,7 +107,7 @@ def normalize_paths_in_snapshot(snapshot_data, project_root: Path):
                 # Filter out private members
                 public_members = {}
                 for member_name, member_obj in value.items():
-                    if is_public_interface(member_name, member_obj):
+                    if is_public_interface(member_name, member_obj, all_names):
                         public_members[member_name] = normalize_paths_in_snapshot(
                             member_obj, project_root
                         )
