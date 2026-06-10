@@ -18,9 +18,9 @@ warnings.warn(
 )
 
 __all__ = [
+    "PathSummary",
     "human_readable_file_size",
+    "summarize_path_list",
     "summarize_paths_by_nested_directory",
     "summarize_paths_by_sequence",
-    "summarize_path_list",
-    "PathSummary",
 ]

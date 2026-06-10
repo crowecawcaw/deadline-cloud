@@ -53,7 +53,12 @@ from ...job_attachments.models import (
     StorageProfile,
     FileSystemLocationType,
 )
-from ...job_attachments.progress_tracker import ProgressReportMetadata, ProgressStatus
+from ...job_attachments.progress_tracker import (
+    ProgressReportMetadata,
+    ProgressStatus,
+    # imported from its source module (not via .upload) for explicit re-export
+    SummaryStatistics,
+)
 from ...job_attachments.upload import S3AssetManager
 from ._session import session_context
 from ...job_attachments._path_summarization import (
@@ -61,7 +66,6 @@ from ...job_attachments._path_summarization import (
     summarize_path_list,
 )
 from ...job_attachments.api._hashing import _hash_attachments
-from ...job_attachments.upload import SummaryStatistics
 
 logger = logging.getLogger(__name__)
 

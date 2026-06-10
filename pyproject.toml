@@ -116,6 +116,8 @@ disable_error_code = ["attr-defined", "assignment"]
 line-length = 100
 
 [tool.ruff.lint]
+# F822 (undefined name in __all__) is on by default; RUF022 keeps __all__ sorted.
+extend-select = ["RUF022"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]

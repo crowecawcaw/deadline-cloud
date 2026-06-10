@@ -103,6 +103,23 @@ hatch run docs:validate-api-snapshot /tmp/baseline.json
 - 🗑️ **REMOVED**: Deleted APIs, functions, classes, methods, attributes  
 - 🔄 **MODIFIED**: Changed function signatures, parameters, return types, decorators, class bases, attribute types/values
 
+Snapshot validation reports *all* real API changes, not just breaking ones, so reviewers
+see the evolving public surface (additions, removals, parameter changes, and annotation
+changes like `Requirements -> Optional[Requirements]`). The surface is determined by:
+
+- **`__all__` when a module declares it.** Only listed names are public. Submodules are
+  the exception (they aren't listed in `__all__` by convention) and are judged by their
+  own `__all__`.
+- **Heuristic otherwise:** public if not underscore-prefixed and not an import (e.g.
+  `from typing import Any` is dropped; `from deadline...import JobParameter` is kept).
+- **Annotations rendered as strings** (`Optional[HardwareRequirements]`) rather than raw
+  griffe dicts, so changes are readable.
+
+#### Keeping `__all__` correct and enforced
+
+- **ruff `F822`** (default): fails on `__all__` entries that don't exist (stale names).
+- **ruff `RUF022`**: keeps `__all__` sorted. Feature-grouped lists opt out via `# noqa: RUF022`.
+
 ### Running Tests with Docker for File and Directory Permissions
 
 We have some unit tests that require being run in a specific docker container that is set up for testing with different users. Those unit tests are marked with `docker`, and the `run_sudo_tests.sh` script is provided to facilitate this testing. The script builds the Docker image using the Dockerfile located in `testing_containers/localuser_sudo_environment/`, and then runs the container.

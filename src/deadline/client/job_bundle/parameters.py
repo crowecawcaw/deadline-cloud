@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 __all__ = [
+    "JobParameter",
     "apply_job_parameters",
-    "read_job_bundle_parameters",
     "get_ui_control_for_parameter_definition",
     "parameter_definition_difference",
+    "read_job_bundle_parameters",
 ]
 
 import os

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 __all__ = [
+    "parse_yaml_or_json_content",
     "read_yaml_or_json",
     "read_yaml_or_json_object",
-    "parse_yaml_or_json_content",
     "validate_directory_symlink_containment",
 ]
 

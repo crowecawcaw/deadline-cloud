@@ -7,14 +7,14 @@ Contains dataclasses for holding UI parameter values, used by the widgets.
 from __future__ import annotations
 
 __all__ = [
-    "JobBundleSettings",
     "CliJobSettings",
-    "OsRequirements",
-    "HardwareRequirements",
     "CustomAmountRequirement",
     "CustomAttributeRequirement",
     "CustomRequirements",
+    "HardwareRequirements",
     "HostRequirements",
+    "JobBundleSettings",
+    "OsRequirements",
 ]
 
 import os
