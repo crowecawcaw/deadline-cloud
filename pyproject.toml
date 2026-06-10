@@ -97,9 +97,8 @@ show_error_codes = true
 pretty = true
 # Prohibit equality checks, identity checks, and container checks between non-overlapping types.
 strict_equality = true
-# Require names re-exported from a module to be listed in __all__ (or imported with an
-# explicit ``import X as X``). This keeps __all__ the authoritative public surface and
-# prevents incidental imports from leaking into the public API.
+# Re-exports must be declared in __all__ (or use ``import X as X``), so __all__ stays the
+# authoritative public surface and incidental imports don't leak into the API.
 no_implicit_reexport = true
 ignore_missing_imports = true
 # Tell mypy that there's a namespace package at src/deadline
@@ -120,9 +119,7 @@ disable_error_code = ["attr-defined", "assignment"]
 line-length = 100
 
 [tool.ruff.lint]
-# F822 (undefined name in __all__) is on by default and keeps __all__ entries valid.
-# RUF022 keeps __all__ sorted so the declared public surface stays consistent and
-# diffs stay clean. The default rule set (E, F) is otherwise preserved.
+# F822 (undefined name in __all__) is on by default; RUF022 keeps __all__ sorted.
 extend-select = ["RUF022"]
 ignore = ["E501"]
 

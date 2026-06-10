@@ -14,79 +14,49 @@ import sys
 from pathlib import Path
 
 
-# The package whose API we track. Aliases that resolve outside this package are
-# imported names (e.g. ``from typing import Any``) rather than part of our API.
+# Aliases resolving outside this package are imports (e.g. ``from typing import Any``),
+# not part of our API.
 TRACKED_PACKAGE = "deadline"
 
 
 def is_reexported_import(obj: dict) -> bool:
-    """Return True if a member is an imported name rather than part of our API.
+    """True if a member is an imported name rather than our own API.
 
-    A bare ``from typing import Any`` (or ``import os``) shows up in griffe as an
-    ``alias`` member whose ``target_path`` points outside the tracked package.
-    These are implementation details of the module - not public API - so counting
-    them as "added/removed APIs" produces noise (e.g. adding ``Optional`` to an
-    import line should not register as a new public interface).
-
-    Aliases that resolve *within* the tracked package (e.g. a deliberate
-    re-export like ``from deadline.client...import JobParameter``) are kept,
-    since those genuinely expose our own API surface from a new location.
+    Imports like ``from typing import Any`` appear as ``alias`` members whose
+    ``target_path`` points outside the tracked package; counting them as API is noise.
+    Re-exports of our own package (``from deadline...import JobParameter``) are kept.
     """
     if not isinstance(obj, dict) or obj.get("kind") != "alias":
         return False
 
     target = obj.get("target_path")
     if not isinstance(target, str) or not target:
-        # An alias with no resolvable target is most likely an unresolved import.
-        return True
+        return True  # unresolved alias: most likely an import
 
-    # Keep re-exports of our own package; drop everything else (typing, os, ...).
     return target != TRACKED_PACKAGE and not target.startswith(f"{TRACKED_PACKAGE}.")
 
 
 def is_public_interface(name: str, obj: dict = None, all_names: list = None) -> bool:
-    """Check if an interface is public.
+    """True if a member is public.
 
-    When the containing module declares ``__all__`` (passed in as ``all_names``),
-    that list is authoritative for *named* members - functions, classes, attributes,
-    and re-exported aliases. A member of that kind is public if and only if it is
-    listed in ``__all__``. This is the explicit, author-declared public surface and
-    removes guesswork about imports and underscores.
-
-    Submodules and subpackages are an exception: ``__all__`` governs names imported
-    via ``from module import *``, and by convention it does not list submodules even
-    though they are independently importable public API (e.g. ``deadline.client.api``
-    is public even though it is not in ``deadline.client``'s ``__all__``). Submodules
-    are therefore always traversed and judged by the underscore convention, then
-    evaluated against their own ``__all__`` recursively.
-
-    When ``__all__`` is absent, fall back to a heuristic: a member is public if it
-    does not start with an underscore and is not merely an imported name (e.g.
-    ``from typing import Any``).
+    When the module declares ``__all__`` (``all_names``), it is authoritative for named
+    members. Submodules bypass it: ``__all__`` does not list submodules by convention,
+    yet they are public (e.g. ``deadline.client.api``), so they are judged by their own
+    ``__all__`` recursively. Without ``__all__``, fall back to: not underscore-prefixed
+    and not an import.
     """
     is_module = isinstance(obj, dict) and obj.get("kind") == "module"
 
-    # An explicit __all__ is the source of truth for named members. Submodules are
-    # not listed in __all__ by convention, so they bypass this check.
     if all_names is not None and not is_module:
         return name in all_names
 
-    # Heuristic fallback (modules without __all__, and submodules of any module).
-
-    # Skip private interfaces (starting with _)
+    # Heuristic fallback.
     if name.startswith("_"):
         return False
-
-    # Skip imported names that just happen to live in the module namespace.
     if is_reexported_import(obj):
         return False
-
-    # If we have the object, also check the is_public flag from griffe
-    if obj and isinstance(obj, dict):
-        # Griffe provides is_public flag - use it if available
-        if "is_public" in obj:
-            return obj["is_public"]
-
+    if obj and isinstance(obj, dict) and "is_public" in obj:
+        return obj["is_public"]  # griffe's own flag
     return True
 
 
@@ -94,9 +64,7 @@ def normalize_paths_in_snapshot(snapshot_data, project_root: Path):
     """Recursively normalize absolute paths to relative paths and remove user-specific info."""
     if isinstance(snapshot_data, dict):
         result = {}
-        # ``exports`` is griffe's serialization of a module's ``__all__``. When present
-        # it is the authoritative declaration of the module's public surface, so we use
-        # it to decide which members to keep (see ``is_public_interface``).
+        # ``exports`` is griffe's serialization of ``__all__``; drives member filtering.
         exports = snapshot_data.get("exports")
         all_names = exports if isinstance(exports, list) else None
         for key, value in snapshot_data.items():

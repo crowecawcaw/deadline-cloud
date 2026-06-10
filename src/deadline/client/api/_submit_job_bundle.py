@@ -56,9 +56,7 @@ from ...job_attachments.models import (
 from ...job_attachments.progress_tracker import (
     ProgressReportMetadata,
     ProgressStatus,
-    # SummaryStatistics is defined here; import from its source module rather than
-    # via job_attachments.upload (which only re-imports it) so the public contract
-    # is explicit. Matches the import in api/_telemetry.py.
+    # imported from its source module (not via .upload) for explicit re-export
     SummaryStatistics,
 )
 from ...job_attachments.upload import S3AssetManager

@@ -103,38 +103,23 @@ hatch run docs:validate-api-snapshot /tmp/baseline.json
 - 🗑️ **REMOVED**: Deleted APIs, functions, classes, methods, attributes  
 - 🔄 **MODIFIED**: Changed function signatures, parameters, return types, decorators, class bases, attribute types/values
 
-The snapshot validation reports *all* real API changes (not just breaking ones) so
-reviewers can be aware of the evolving public surface - additions, removals, new or
-changed parameters, and annotation changes such as `Requirements -> Optional[Requirements]`.
+Snapshot validation reports *all* real API changes, not just breaking ones, so reviewers
+see the evolving public surface (additions, removals, parameter changes, and annotation
+changes like `Requirements -> Optional[Requirements]`). The surface is determined by:
 
-The public surface is determined as follows, so the report stays high-signal:
-
-- **`__all__` is authoritative when a module declares it.** A module's `__all__` is the
-  explicit, author-declared public API. When present, only the names it lists are tracked
-  as public (submodules are always traversed and judged by their own `__all__`, since
-  `__all__` governs `from module import *` and does not list submodules by convention).
-  This means imported names, internal helpers, and sub-components left out of `__all__`
-  are correctly treated as non-public.
-- **Heuristic fallback when `__all__` is absent.** For modules without `__all__`, a member
-  is public if it does not start with an underscore and is not merely an imported name
-  (e.g. `from typing import Any` resolves outside the `deadline` package and is dropped;
-  a deliberate re-export like `from deadline.client...import JobParameter` is kept).
-- **Annotations are rendered as readable strings.** Type annotations are compared and
-  displayed in source-like form (`Optional[HardwareRequirements]`) rather than as raw
-  griffe expression dicts, so annotation changes are easy to read in the diff.
+- **`__all__` when a module declares it.** Only listed names are public. Submodules are
+  the exception (they aren't listed in `__all__` by convention) and are judged by their
+  own `__all__`.
+- **Heuristic otherwise:** public if not underscore-prefixed and not an import (e.g.
+  `from typing import Any` is dropped; `from deadline...import JobParameter` is kept).
+- **Annotations rendered as strings** (`Optional[HardwareRequirements]`) rather than raw
+  griffe dicts, so changes are readable.
 
 #### Keeping `__all__` correct and enforced
 
-Because the public surface is driven by `__all__`, two linters keep it trustworthy:
-
-- **ruff `F822`** (on by default) fails the build if `__all__` lists a name that does not
-  exist in the module - catching stale entries.
-- **ruff `RUF022`** keeps `__all__` sorted so the declared surface stays consistent and
-  diffs stay clean. A small number of `__all__` lists are intentionally grouped by feature
-  with section comments and opt out with `# noqa: RUF022`.
-- **mypy `no_implicit_reexport`** requires names re-exported from a module to be listed in
-  `__all__` (or imported with an explicit `import X as X`), preventing incidental imports
-  from leaking into the public API.
+- **ruff `F822`** (default): fails on `__all__` entries that don't exist (stale names).
+- **ruff `RUF022`**: keeps `__all__` sorted. Feature-grouped lists opt out via `# noqa: RUF022`.
+- **mypy `no_implicit_reexport`**: re-exports must be in `__all__` (or use `import X as X`).
 
 ### Running Tests with Docker for File and Directory Permissions
 

@@ -81,18 +81,12 @@ def extract_api_paths(api_data: Dict[str, Any]) -> Set[str]:
 
 
 def render_annotation(ann: Any) -> Any:
-    """Render a griffe annotation/expression into a readable, diff-friendly string.
+    """Render a griffe annotation expression into a readable string.
 
-    Griffe serializes type annotations as nested expression dicts, e.g.
-    ``Optional[HardwareRequirements]`` becomes
-    ``{"left": {"name": "Optional", ...}, "slice": {"name": "HardwareRequirements",
-    ...}, "cls": "ExprSubscript"}``. Diffing those raw dicts produces an unreadable
-    wall of text in the change report. Rendering them back to source-like strings
-    ("HardwareRequirements" -> "Optional[HardwareRequirements]") makes annotation
-    changes - the thing a reviewer actually cares about - obvious at a glance.
-
-    Plain strings and ``None`` pass through unchanged. Any unrecognized shape falls
-    back to the original value so we never lose information.
+    Griffe serializes annotations as nested expression dicts; diffing those raw is
+    unreadable. Rendering them to source-like form (``Optional[HardwareRequirements]``)
+    makes annotation changes obvious in the report. Strings/``None`` pass through;
+    unrecognized shapes fall back to the original value.
     """
     if ann is None or isinstance(ann, str):
         return ann
@@ -108,7 +102,7 @@ def render_annotation(ann: Any) -> Any:
     if cls == "ExprName":
         return ann.get("name", "")
     if cls == "ExprAttribute":
-        # Dotted access like ``typing.Optional`` -> join the parts.
+        # Dotted access, e.g. ``typing.Optional``.
         values = ann.get("values", [])
         return ".".join(render_annotation(v) for v in values)
     if cls == "ExprSubscript":
@@ -135,7 +129,7 @@ def render_annotation(ann: Any) -> Any:
         value = render_annotation(ann.get("value"))
         return f"{name}={value}"
 
-    # Unknown expression shape - fall back to the raw value rather than dropping it.
+    # Unknown shape: fall back rather than drop.
     if "name" in ann:
         return ann["name"]
     return ann
