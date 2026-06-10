@@ -70,18 +70,45 @@ def _has_explicit_region_list() -> bool:
     return bool(config_value and config_value.strip())
 
 
+def _list_farms_with_client(
+    region: Optional[str],
+    deadline,
+    **call_kwargs,
+) -> List[dict]:
+    """
+    Runs ``deadline:ListFarms`` against an already-built client and tags each farm.
+
+    This is the fan-out's per-region unit of work. It takes a ready-made ``deadline``
+    client rather than building one, so it touches **no** shared boto3 ``Session`` state
+    and is therefore safe to run from a worker thread by construction -- the only thing it
+    does is make the (network) ListFarms call and shallow-copy/tag the results. All session
+    and client construction happens up front on the calling thread (see
+    :func:`_iter_farms_by_region`).
+
+    Args:
+        region (str, optional): The region this client is scoped to; used only to tag the
+            returned farms (``None`` for the endpoint-override single-region path).
+        deadline: A boto3 ``deadline`` client already scoped to ``region``.
+
+    Returns:
+        The list of farm dicts for ``region``, each annotated with ``farm["region"]``.
+    """
+    result = _call_paginated_deadline_list_api(deadline.list_farms, "farms", **call_kwargs)
+    # Tag a shallow copy of each farm so we don't mutate dicts owned by the caller/SDK.
+    return [{**farm, "region": region} for farm in result["farms"]]
+
+
 def _list_farms_for_region(
     region: Optional[str],
     config: Optional[ConfigParser] = None,
     **kwargs,
 ) -> List[dict]:
     """
-    Performs a single-region ``deadline:ListFarms`` fan-out unit of work.
+    Single-region ``deadline:ListFarms`` (client built here, then delegated).
 
-    Builds a dedicated boto3 client scoped to ``region`` (clients are never shared
-    across regions, which keeps this safe to run from a worker thread), applies the
-    principal-id filter, de-paginates, and tags every returned farm dict with its
-    ``region``.
+    Used by the single-region path of :func:`list_farms`, where there is no concurrency.
+    Builds a region-scoped client, applies the principal-id filter, and delegates to
+    :func:`_list_farms_with_client`.
 
     Args:
         region (str, optional): The AWS region to list farms in. When ``None``, the
@@ -95,9 +122,7 @@ def _list_farms_for_region(
     call_kwargs = dict(kwargs)
     _apply_principal_id_filter(call_kwargs, config=config)
     deadline = get_boto3_client("deadline", config=config, region=region)
-    result = _call_paginated_deadline_list_api(deadline.list_farms, "farms", **call_kwargs)
-    # Tag a shallow copy of each farm so we don't mutate dicts owned by the caller/SDK.
-    return [{**farm, "region": region} for farm in result["farms"]]
+    return _list_farms_with_client(region, deadline, **call_kwargs)
 
 
 def _iter_farms_by_region(
@@ -108,8 +133,13 @@ def _iter_farms_by_region(
     """
     Fans ``deadline:ListFarms`` out across Deadline Cloud regions concurrently, yielding
     each region's result *as it completes* (out of order) so consumers like the UI can
-    render partial results without waiting on the slowest region. Each call runs on its
-    own thread with its own region-scoped client (clients are never shared across threads).
+    render partial results without waiting on the slowest region.
+
+    Thread-safety: every per-region boto3 client (and the principal-id filter, which does a
+    one-time DCM lookup) is built **up front on this thread**, before the executor starts.
+    The worker threads receive a ready client and only make the network ListFarms call --
+    they never touch the shared boto3 ``Session`` (which is not thread-safe to build clients
+    from concurrently). This makes the fan-out safe by construction rather than by timing.
 
     This is the shared chokepoint for the region-set decision, so the CLI
     (:func:`list_farms`) and the GUI streaming path behave identically. When ``regions`` is
@@ -141,10 +171,22 @@ def _iter_farms_by_region(
     if not regions:
         return
 
+    # Build everything that touches the shared boto3 Session up front, on this thread:
+    # the principal-id filter (one DCM lookup, region-independent) and one region-scoped
+    # client per region. The worker threads below only make the network call against a
+    # ready client, so they never construct clients off the shared Session concurrently.
+    call_kwargs = dict(kwargs)
+    _apply_principal_id_filter(call_kwargs, config=config)
+    clients_by_region = {
+        region: get_boto3_client("deadline", config=config, region=region) for region in regions
+    }
+
     max_workers = min(len(regions), _MAX_FANOUT_WORKERS)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_region = {
-            executor.submit(_list_farms_for_region, region, config, **kwargs): region
+            executor.submit(
+                _list_farms_with_client, region, clients_by_region[region], **call_kwargs
+            ): region
             for region in regions
         }
         for future in concurrent.futures.as_completed(future_to_region):

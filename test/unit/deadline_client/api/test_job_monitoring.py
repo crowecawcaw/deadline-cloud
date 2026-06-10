@@ -842,11 +842,14 @@ def test_get_worker_logs_fleet_session_uses_resolved_farm_region():
     (resolved from defaults.farm_region), not the session/profile region. Worker logs for
     a farm in region X live in region X.
     """
-    with patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client, patch(
-        "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
-    ) as mock_get_user, patch(
-        "deadline.client.api._job_monitoring._resolve_region"
-    ) as mock_resolve_region, patch("deadline.client.api._job_monitoring.boto3") as mock_boto3:
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch(
+            "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
+        ) as mock_get_user,
+        patch("deadline.client.api._job_monitoring._resolve_region") as mock_resolve_region,
+        patch("deadline.client.api._job_monitoring.boto3") as mock_boto3,
+    ):
         mock_get_user.return_value = ("user-123", "identity-store-456")
         mock_resolve_region.return_value = "eu-central-1"
 
@@ -889,13 +892,15 @@ def test_get_worker_logs_fleet_session_falls_back_to_session_region():
     With no farm_region configured (_resolve_region -> None), get_worker_logs falls back
     to the base session region for the fleet logs client (preserving prior behavior).
     """
-    with patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client, patch(
-        "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
-    ) as mock_get_user, patch(
-        "deadline.client.api._job_monitoring._resolve_region"
-    ) as mock_resolve_region, patch(
-        "deadline.client.api._job_monitoring.get_boto3_session"
-    ) as mock_get_session, patch("deadline.client.api._job_monitoring.boto3") as mock_boto3:
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch(
+            "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
+        ) as mock_get_user,
+        patch("deadline.client.api._job_monitoring._resolve_region") as mock_resolve_region,
+        patch("deadline.client.api._job_monitoring.get_boto3_session") as mock_get_session,
+        patch("deadline.client.api._job_monitoring.boto3") as mock_boto3,
+    ):
         mock_get_user.return_value = ("user-123", "identity-store-456")
         mock_resolve_region.return_value = None
 
@@ -932,11 +937,13 @@ def test_get_worker_logs_fleet_session_falls_back_to_session_region():
 
 def test_get_session_logs_resolves_farm_region():
     """get_session_logs scopes its deadline client to the farm's resolved region."""
-    with patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client, patch(
-        "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
-    ) as mock_get_user, patch(
-        "deadline.client.api._job_monitoring._resolve_region"
-    ) as mock_resolve_region:
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch(
+            "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
+        ) as mock_get_user,
+        patch("deadline.client.api._job_monitoring._resolve_region") as mock_resolve_region,
+    ):
         mock_get_user.return_value = (None, None)
         mock_resolve_region.return_value = "ap-northeast-1"
 
@@ -961,9 +968,10 @@ def test_get_session_logs_resolves_farm_region():
 
 def test_wait_for_job_completion_resolves_farm_region():
     """wait_for_job_completion scopes its deadline client to the farm's resolved region."""
-    with patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client, patch(
-        "deadline.client.api._job_monitoring._resolve_region"
-    ) as mock_resolve_region:
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch("deadline.client.api._job_monitoring._resolve_region") as mock_resolve_region,
+    ):
         mock_resolve_region.return_value = "ap-southeast-2"
 
         deadline_mock = MagicMock()

@@ -57,9 +57,10 @@ class TestCliRegionPrecedenceEndToEnd:
         from deadline.client import api
         from deadline.client.cli import main
 
-        with patch.object(api._session, "get_boto3_session"), patch.object(
-            api._session, "get_session_client"
-        ) as get_session_client_mock:
+        with (
+            patch.object(api._session, "get_boto3_session"),
+            patch.object(api._session, "get_session_client") as get_session_client_mock,
+        ):
             client = MagicMock()
             client.get_farm.return_value = {"farmId": "farm-abc", "displayName": "F"}
             get_session_client_mock.return_value = client

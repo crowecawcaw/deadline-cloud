@@ -313,8 +313,9 @@ def test_cli_job_requeue_tasks_scopes_requeues_client_to_region(
     # client is constructed. The read client (get_job/list_steps/list_tasks) still uses
     # the real, moto-backed path through api.get_boto3_client.
     fake_session = MagicMock()
-    with patch.object(job_group.api, "get_boto3_session", return_value=fake_session), patch.object(
-        click, "confirm", return_value=True
+    with (
+        patch.object(job_group.api, "get_boto3_session", return_value=fake_session),
+        patch.object(click, "confirm", return_value=True),
     ):
         runner = CliRunner()
         result = runner.invoke(main, ["job", "requeue-tasks", "--run-status", "FAILED"])

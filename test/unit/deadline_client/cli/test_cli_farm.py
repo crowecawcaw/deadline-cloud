@@ -227,9 +227,11 @@ def test_cli_farm_list_partial_failure_exits_zero_with_survivors(
     def fake_get_client(service_name, config=None, region=None):
         return clients[region]
 
-    with caplog.at_level("WARNING"), patch.object(
-        api._list_apis, "get_boto3_client", side_effect=fake_get_client
-    ), patch.object(api._list_apis, "_apply_principal_id_filter"):
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(api._list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(api._list_apis, "_apply_principal_id_filter"),
+    ):
         runner = CliRunner()
         result = runner.invoke(main, ["farm", "list"])
 

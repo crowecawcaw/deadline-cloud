@@ -7,6 +7,7 @@ streaming generator, and region pass-through on the per-farm list APIs.
 """
 
 import os
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -63,9 +64,11 @@ def test_list_farms_multi_region_happy_path(fresh_deadline_config):
     def fake_get_client(service_name, config=None, region=None):
         return clients[region]
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis.config_file, "get_deadline_regions", return_value=regions
-    ), patch.object(_list_apis, "_apply_principal_id_filter"):
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions", return_value=regions),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
         result = api.list_farms()
 
     farms = result["farms"]
@@ -92,11 +95,12 @@ def test_list_farms_partial_failure_returns_survivors(fresh_deadline_config, cap
     def fake_get_client(service_name, config=None, region=None):
         return clients[region]
 
-    with caplog.at_level("WARNING"), patch.object(
-        _list_apis, "get_boto3_client", side_effect=fake_get_client
-    ), patch.object(
-        _list_apis.config_file, "get_deadline_regions", return_value=regions
-    ), patch.object(_list_apis, "_apply_principal_id_filter"):
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions", return_value=regions),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
         result = api.list_farms()
 
     farms = result["farms"]
@@ -120,9 +124,11 @@ def test_list_farms_total_failure_raises(fresh_deadline_config):
     def fake_get_client(service_name, config=None, region=None):
         return clients[region]
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis.config_file, "get_deadline_regions", return_value=regions
-    ), patch.object(_list_apis, "_apply_principal_id_filter"):
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions", return_value=regions),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
         with pytest.raises(DeadlineOperationError) as excinfo:
             api.list_farms()
 
@@ -140,9 +146,11 @@ def test_list_farms_explicit_region_single_region(fresh_deadline_config):
         return _client_returning([_make_farm("farm-only")])
 
     # If fan-out were used, get_deadline_regions would be consulted; assert it is NOT.
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis.config_file, "get_deadline_regions"
-    ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
         result = api.list_farms(region="ap-south-1")
 
     regions_mock.assert_not_called()
@@ -164,8 +172,9 @@ def test_iter_farms_by_region_yields_per_region_including_failure(fresh_deadline
     def fake_get_client(service_name, config=None, region=None):
         return clients[region]
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis, "_apply_principal_id_filter"
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
     ):
         results = list(_list_apis._iter_farms_by_region(regions=regions))
 
@@ -199,8 +208,9 @@ def test_iter_farms_by_region_does_not_swallow_base_exceptions(fresh_deadline_co
     def fake_get_client(service_name, config=None, region=None):
         return clients[region]
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis, "_apply_principal_id_filter"
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
     ):
         with pytest.raises(KeyboardInterrupt):
             list(_list_apis._iter_farms_by_region(regions=regions))
@@ -222,8 +232,9 @@ def test_iter_farms_by_region_out_of_order_completion(fresh_deadline_config):
     def fake_get_client(service_name, config=None, region=None):
         return clients[region]
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis, "_apply_principal_id_filter"
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
     ):
         order = [region for region, _, _ in _list_apis._iter_farms_by_region(regions=regions)]
 
@@ -243,8 +254,9 @@ def test_iter_farms_by_region_pagination_per_region(fresh_deadline_config):
     def fake_get_client(service_name, config=None, region=None):
         return client
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis, "_apply_principal_id_filter"
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
     ):
         results = list(_list_apis._iter_farms_by_region(regions=regions))
 
@@ -278,8 +290,9 @@ def test_per_farm_list_apis_pass_region_through(
         captured["region"] = region
         return client
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis, "_apply_principal_id_filter"
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
     ):
         getattr(api, api_func)(region="eu-central-1")
 
@@ -297,8 +310,9 @@ def test_per_farm_list_api_default_region_is_none(fresh_deadline_config):
         captured["region"] = region
         return client
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis, "_apply_principal_id_filter"
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
     ):
         api.list_queues()
 
@@ -319,9 +333,11 @@ def test_list_farms_explicit_region_ignores_configured_farm_region(fresh_deadlin
         captured["region"] = region
         return _client_returning([_make_farm("farm-explicit")])
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis.config_file, "get_deadline_regions"
-    ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
         result = api.list_farms(region="ap-northeast-1")
 
     # Fan-out was never consulted, and the explicit region (not the configured one) was used.
@@ -336,10 +352,10 @@ def test_list_farms_no_regions_returns_empty_no_error(fresh_deadline_config):
     without crashing and without raising the all-regions-failed error (there were no
     regions to fail).
     """
-    with patch.object(
-        _list_apis.config_file, "get_deadline_regions", return_value=[]
-    ), patch.object(_list_apis, "get_boto3_client") as get_client_mock, patch.object(
-        _list_apis, "_apply_principal_id_filter"
+    with (
+        patch.object(_list_apis.config_file, "get_deadline_regions", return_value=[]),
+        patch.object(_list_apis, "get_boto3_client") as get_client_mock,
+        patch.object(_list_apis, "_apply_principal_id_filter"),
     ):
         result = api.list_farms()
 
@@ -359,9 +375,11 @@ def test_list_farms_explicit_region_does_not_fan_out(fresh_deadline_config):
         calls.append(region)
         return _client_returning([_make_farm("farm-single")])
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis.config_file, "get_deadline_regions"
-    ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
         api.list_farms(region="us-east-2")
 
     regions_mock.assert_not_called()
@@ -381,9 +399,11 @@ def test_list_farms_multi_region_concatenation_contract(fresh_deadline_config):
     def fake_get_client(service_name, config=None, region=None):
         return clients[region]
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis.config_file, "get_deadline_regions", return_value=regions
-    ), patch.object(_list_apis, "_apply_principal_id_filter"):
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions", return_value=regions),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
         result = api.list_farms()
 
     farms = result["farms"]
@@ -424,8 +444,9 @@ def test_per_farm_list_apis_explicit_region_overrides_config(
         captured["region"] = region
         return client
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis, "_apply_principal_id_filter"
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
     ):
         getattr(api, api_func)(region="eu-north-1")
 
@@ -449,11 +470,12 @@ def test_list_farms_endpoint_override_scans_single_session_region(fresh_deadline
 
     with patch.dict(os.environ, {"AWS_ENDPOINT_URL_DEADLINE": "https://override.test/deadline"}):
         os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(_list_apis, "get_boto3_session", return_value=mock_session), patch.object(
-            _list_apis.config_file, "get_deadline_regions"
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(_list_apis, "get_boto3_session", return_value=mock_session),
+            patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             result = api.list_farms()
 
     regions_mock.assert_not_called()
@@ -475,11 +497,12 @@ def test_list_farms_endpoint_override_session_region_none_does_not_crash(fresh_d
 
     with patch.dict(os.environ, {"AWS_ENDPOINT_URL_DEADLINE": "https://override.test/deadline"}):
         os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(_list_apis, "get_boto3_session", return_value=mock_session), patch.object(
-            _list_apis.config_file, "get_deadline_regions"
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(_list_apis, "get_boto3_session", return_value=mock_session),
+            patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             result = api.list_farms()
 
     regions_mock.assert_not_called()
@@ -506,11 +529,13 @@ def test_list_farms_endpoint_override_with_explicit_regions_still_fans_out(fresh
             "DEADLINE_CLOUD_REGIONS": ",".join(regions),
         },
     ):
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(
-            _list_apis.config_file, "get_deadline_regions", return_value=regions
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(
+                _list_apis.config_file, "get_deadline_regions", return_value=regions
+            ) as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             result = api.list_farms()
 
     # Fan-out path was taken (explicit region list honored).
@@ -530,11 +555,11 @@ def test_list_farms_endpoint_override_explicit_region_arg_still_single(fresh_dea
         return _client_returning([_make_farm("farm-eu")])
 
     with patch.dict(os.environ, {"AWS_ENDPOINT_URL_DEADLINE": "https://override.test/deadline"}):
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(
-            _list_apis.config_file, "get_deadline_regions"
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             result = api.list_farms(region="eu-west-1")
 
     regions_mock.assert_not_called()
@@ -556,11 +581,13 @@ def test_list_farms_no_override_still_fans_out(fresh_deadline_config):
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("AWS_ENDPOINT_URL_DEADLINE", None)
         os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(
-            _list_apis.config_file, "get_deadline_regions", return_value=regions
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(
+                _list_apis.config_file, "get_deadline_regions", return_value=regions
+            ) as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             result = api.list_farms()
 
     regions_mock.assert_called()
@@ -585,11 +612,12 @@ def test_iter_farms_by_region_endpoint_override_scans_single_session_region(fres
 
     with patch.dict(os.environ, {"AWS_ENDPOINT_URL_DEADLINE": "https://override.test/deadline"}):
         os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(_list_apis, "get_boto3_session", return_value=mock_session), patch.object(
-            _list_apis.config_file, "get_deadline_regions"
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(_list_apis, "get_boto3_session", return_value=mock_session),
+            patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             results = list(_list_apis._iter_farms_by_region())
 
     regions_mock.assert_not_called()
@@ -622,11 +650,13 @@ def test_iter_farms_by_region_endpoint_override_with_explicit_regions_still_fans
             "DEADLINE_CLOUD_REGIONS": ",".join(regions),
         },
     ):
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(
-            _list_apis.config_file, "get_deadline_regions", return_value=regions
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(
+                _list_apis.config_file, "get_deadline_regions", return_value=regions
+            ) as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             results = list(_list_apis._iter_farms_by_region())
 
     regions_mock.assert_called()
@@ -647,13 +677,12 @@ def test_iter_farms_by_region_explicit_regions_arg_ignores_override(fresh_deadli
         return clients[region]
 
     with patch.dict(os.environ, {"AWS_ENDPOINT_URL_DEADLINE": "https://override.test/deadline"}):
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(
-            _list_apis.config_file, "get_deadline_regions"
-        ) as regions_mock, patch.object(
-            _list_apis, "get_boto3_session"
-        ) as session_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+            patch.object(_list_apis, "get_boto3_session") as session_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             results = list(_list_apis._iter_farms_by_region(regions=regions))
 
     regions_mock.assert_not_called()
@@ -676,11 +705,13 @@ def test_iter_farms_by_region_no_override_fans_out_via_get_deadline_regions(fres
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("AWS_ENDPOINT_URL_DEADLINE", None)
         os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(
-            _list_apis.config_file, "get_deadline_regions", return_value=regions
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(
+                _list_apis.config_file, "get_deadline_regions", return_value=regions
+            ) as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             results = list(_list_apis._iter_farms_by_region())
 
     regions_mock.assert_called()
@@ -703,11 +734,12 @@ def test_iter_farms_by_region_endpoint_override_session_region_none(fresh_deadli
 
     with patch.dict(os.environ, {"AWS_ENDPOINT_URL_DEADLINE": "https://override.test/deadline"}):
         os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(_list_apis, "get_boto3_session", return_value=mock_session), patch.object(
-            _list_apis.config_file, "get_deadline_regions"
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(_list_apis, "get_boto3_session", return_value=mock_session),
+            patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             results = list(_list_apis._iter_farms_by_region())
 
     regions_mock.assert_not_called()
@@ -734,10 +766,10 @@ def test_list_farms_endpoint_override_single_region_failure_raises(fresh_deadlin
 
     with patch.dict(os.environ, {"AWS_ENDPOINT_URL_DEADLINE": "https://override.test/deadline"}):
         os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_client
-        ), patch.object(_list_apis, "get_boto3_session", return_value=mock_session), patch.object(
-            _list_apis, "_apply_principal_id_filter"
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+            patch.object(_list_apis, "get_boto3_session", return_value=mock_session),
+            patch.object(_list_apis, "_apply_principal_id_filter"),
         ):
             with pytest.raises(DeadlineOperationError) as excinfo:
                 api.list_farms()
@@ -762,8 +794,9 @@ def test_list_farms_does_not_mutate_caller_farm_dicts(fresh_deadline_config):
     def fake_get_client(service_name, config=None, region=None):
         return client
 
-    with patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client), patch.object(
-        _list_apis, "_apply_principal_id_filter"
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
     ):
         result = api.list_farms(region="us-west-2")
 
@@ -775,3 +808,141 @@ def test_list_farms_does_not_mutate_caller_farm_dicts(fresh_deadline_config):
         {"farmId": "farm-b", "displayName": "B"},
     ]
     assert all("region" not in f for f in original_farms)
+
+
+# ---------------------------------------------------------------------------
+# Thread-safety of the fan-out
+#
+# The fan-out shares one boto3 Session across regions. boto3 Sessions are not safe to
+# build clients from concurrently, so every client (and the one-time principal-id DCM
+# lookup) is built up front on the calling thread; the worker threads only make the
+# network ListFarms call against a ready client. These tests pin that contract.
+# ---------------------------------------------------------------------------
+
+
+def test_iter_farms_by_region_builds_clients_on_calling_thread(fresh_deadline_config):
+    """
+    get_boto3_client (which touches the shared Session) must run on the thread that
+    drives the generator, never inside a worker thread. This is what makes the fan-out
+    thread-safe by construction rather than by timing.
+    """
+    regions = ["us-west-2", "us-east-1", "eu-west-1"]
+    driver_thread = threading.get_ident()
+    client_build_threads = []
+    list_farms_threads = []
+
+    def fake_get_client(service_name, config=None, region=None):
+        client_build_threads.append(threading.get_ident())
+        client = MagicMock()
+
+        def _list_farms(**kwargs):
+            list_farms_threads.append(threading.get_ident())
+            return {"farms": [_make_farm(f"farm-{region}")]}
+
+        client.list_farms.side_effect = _list_farms
+        return client
+
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions", return_value=regions),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
+        results = list(_list_apis._iter_farms_by_region())
+
+    assert len(results) == len(regions)
+    # Every client was constructed on the driver thread (no Session access off-thread).
+    assert client_build_threads == [driver_thread] * len(regions)
+    # The actual ListFarms calls did run off the driver thread (the fan-out is real).
+    assert list_farms_threads, "expected ListFarms to be called"
+    assert all(tid != driver_thread for tid in list_farms_threads)
+
+
+def test_iter_farms_by_region_principal_filter_applied_once_on_calling_thread(
+    fresh_deadline_config,
+):
+    """
+    The principal-id filter does a DCM lookup; it must run exactly once, up front, on the
+    calling thread -- not once per worker thread.
+    """
+    regions = ["us-west-2", "us-east-1", "eu-west-1", "ap-south-1"]
+    driver_thread = threading.get_ident()
+    filter_threads = []
+
+    def fake_apply_principal(kwargs, config=None):
+        filter_threads.append(threading.get_ident())
+
+    def fake_get_client(service_name, config=None, region=None):
+        return _client_returning([_make_farm(f"farm-{region}")])
+
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions", return_value=regions),
+        patch.object(_list_apis, "_apply_principal_id_filter", side_effect=fake_apply_principal),
+    ):
+        list(_list_apis._iter_farms_by_region())
+
+    assert filter_threads == [driver_thread], "principal filter must run once, on the driver thread"
+
+
+def test_iter_farms_by_region_high_concurrency_stress(fresh_deadline_config):
+    """
+    Stress the fan-out across many regions with a client factory that is deliberately NOT
+    safe to call concurrently: it asserts it is only ever entered from one thread at a
+    time. Because clients are built serially up front, this never trips; if a future change
+    moved client construction back into the workers, this test would flake/fail.
+
+    The per-region ListFarms calls themselves run concurrently (verified by observing more
+    than one distinct worker thread), so this exercises real parallelism on the call path.
+    """
+    regions = [f"region-{i:02d}" for i in range(30)]
+    build_lock = threading.Lock()
+    concurrent_builds = 0
+    max_concurrent_builds = 0
+    call_threads = set()
+    call_threads_lock = threading.Lock()
+
+    def make_list_farms(region):
+        def _list_farms(**kwargs):
+            with call_threads_lock:
+                call_threads.add(threading.get_ident())
+            time.sleep(0.002)  # let calls overlap across the pool
+            return {"farms": [_make_farm(f"farm-{region}")]}
+
+        return _list_farms
+
+    def fake_get_client(service_name, config=None, region=None):
+        # Detect any overlapping client construction: if two threads were ever inside this
+        # factory at once, current would exceed 1 and we'd fail right here.
+        nonlocal concurrent_builds, max_concurrent_builds
+        with build_lock:
+            concurrent_builds += 1
+            max_concurrent_builds = max(max_concurrent_builds, concurrent_builds)
+            current = concurrent_builds
+        assert current == 1, "client construction overlapped across threads"
+        try:
+            time.sleep(0.001)  # hold the "build" open so any overlap would be observed
+            client = MagicMock()
+            client.list_farms.side_effect = make_list_farms(region)
+            return client
+        finally:
+            with build_lock:
+                concurrent_builds -= 1
+
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_client),
+        patch.object(_list_apis.config_file, "get_deadline_regions", return_value=regions),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
+        results = list(_list_apis._iter_farms_by_region())
+
+    # All regions returned, each correctly tagged, no exceptions captured.
+    assert len(results) == len(regions)
+    by_region = {region: (farms, exc) for region, farms, exc in results}
+    assert set(by_region) == set(regions)
+    for region, (farms, exc) in by_region.items():
+        assert exc is None
+        assert farms is not None and farms[0]["region"] == region
+    # Client construction never overlapped (serial, up front)...
+    assert max_concurrent_builds == 1
+    # ...while the network calls genuinely ran in parallel across the worker pool.
+    assert len(call_threads) > 1

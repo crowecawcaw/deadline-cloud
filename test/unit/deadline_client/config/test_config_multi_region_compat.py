@@ -339,11 +339,12 @@ def test_list_farms_with_endpoint_override_scans_single_region(
 
     with patch.dict(os.environ, {"AWS_ENDPOINT_URL_DEADLINE": "https://override.test/deadline"}):
         os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
-        with patch.object(
-            _list_apis, "get_boto3_client", side_effect=fake_get_boto3_client
-        ), patch.object(_list_apis, "get_boto3_session", return_value=mock_session), patch.object(
-            _list_apis.config_file, "get_deadline_regions"
-        ) as regions_mock, patch.object(_list_apis, "_apply_principal_id_filter"):
+        with (
+            patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_boto3_client),
+            patch.object(_list_apis, "get_boto3_session", return_value=mock_session),
+            patch.object(_list_apis.config_file, "get_deadline_regions") as regions_mock,
+            patch.object(_list_apis, "_apply_principal_id_filter"),
+        ):
             result = _list_apis.list_farms()
 
     # FIXED BEHAVIOR: the override collapses the fan-out to a single-region scan.
@@ -369,9 +370,10 @@ def test_fanout_queries_each_region_independently(fresh_deadline_config):
         client.list_farms.return_value = {"farms": [{"farmId": f"farm-{region}"}]}
         return client
 
-    with patch.object(
-        _list_apis, "get_boto3_client", side_effect=fake_get_boto3_client
-    ), patch.object(_list_apis, "_apply_principal_id_filter"):
+    with (
+        patch.object(_list_apis, "get_boto3_client", side_effect=fake_get_boto3_client),
+        patch.object(_list_apis, "_apply_principal_id_filter"),
+    ):
         results = list(_list_apis._iter_farms_by_region(regions=regions))
 
     # A distinct client was built for each region.

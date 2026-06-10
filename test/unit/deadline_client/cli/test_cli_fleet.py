@@ -82,9 +82,10 @@ def test_cli_fleet_list_region_reaches_client(fresh_deadline_config, mock_teleme
     """
     config.set_setting("defaults.farm_id", MOCK_FARM_ID)
 
-    with patch.object(api._session, "get_boto3_session") as session_mock, patch.object(
-        api._session, "get_session_client"
-    ) as get_session_client_mock:
+    with (
+        patch.object(api._session, "get_boto3_session") as session_mock,
+        patch.object(api._session, "get_session_client") as get_session_client_mock,
+    ):
         get_session_client_mock().list_fleets.return_value = {"fleets": MOCK_FLEETS_LIST}
         get_session_client_mock.reset_mock()
         get_session_client_mock.return_value.list_fleets.return_value = {"fleets": MOCK_FLEETS_LIST}

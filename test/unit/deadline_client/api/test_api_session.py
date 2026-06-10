@@ -359,9 +359,11 @@ def test_get_queue_user_boto3_session_uses_resolved_farm_region(fresh_deadline_c
     # Clear the lru_cache so a prior test's queue-user session doesn't shadow this one.
     api._session._get_queue_user_boto3_session.cache_clear()
 
-    with patch.object(api._session, "get_boto3_session", return_value=session_mock), patch(
-        "botocore.session.Session", return_value=mock_botocore_session
-    ), patch("boto3.Session") as boto3_session_mock:
+    with (
+        patch.object(api._session, "get_boto3_session", return_value=session_mock),
+        patch("botocore.session.Session", return_value=mock_botocore_session),
+        patch("boto3.Session") as boto3_session_mock,
+    ):
         api.get_queue_user_boto3_session(
             deadline_mock,
             farm_id="farm-1234",
@@ -390,9 +392,11 @@ def test_get_queue_user_boto3_session_falls_back_to_base_region(fresh_deadline_c
 
     api._session._get_queue_user_boto3_session.cache_clear()
 
-    with patch.object(api._session, "get_boto3_session", return_value=session_mock), patch(
-        "botocore.session.Session", return_value=mock_botocore_session
-    ), patch("boto3.Session") as boto3_session_mock:
+    with (
+        patch.object(api._session, "get_boto3_session", return_value=session_mock),
+        patch("botocore.session.Session", return_value=mock_botocore_session),
+        patch("boto3.Session") as boto3_session_mock,
+    ):
         api.get_queue_user_boto3_session(
             deadline_mock,
             farm_id="farm-1234",
@@ -427,9 +431,10 @@ def test_get_session_logs_logs_client_uses_farm_region_non_dcm(fresh_deadline_co
         client.get_log_events.return_value = {"events": [], "nextForwardToken": None}
         return client
 
-    with patch.object(
-        _job_monitoring, "get_boto3_client", side_effect=fake_get_boto3_client
-    ), patch.object(_job_monitoring, "get_user_and_identity_store_id", return_value=(None, None)):
+    with (
+        patch.object(_job_monitoring, "get_boto3_client", side_effect=fake_get_boto3_client),
+        patch.object(_job_monitoring, "get_user_and_identity_store_id", return_value=(None, None)),
+    ):
         _job_monitoring.get_session_logs(
             farm_id="farm-1234",
             queue_id="queue-1234",

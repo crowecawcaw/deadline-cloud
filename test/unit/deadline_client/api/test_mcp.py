@@ -491,9 +491,10 @@ class TestMcpRegionScoping:
     """
 
     def test_get_job_resolves_region_from_farm(self):
-        with patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client, patch(
-            "deadline.client.api._mcp._resolve_region"
-        ) as mock_resolve:
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
             mock_resolve.return_value = "eu-west-1"
             mock_get_client.return_value = MagicMock()
 
@@ -503,9 +504,10 @@ class TestMcpRegionScoping:
             assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
 
     def test_get_session_resolves_region_from_farm(self):
-        with patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client, patch(
-            "deadline.client.api._mcp._resolve_region"
-        ) as mock_resolve:
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
             mock_resolve.return_value = "eu-west-1"
             mock_get_client.return_value = MagicMock()
 
@@ -520,9 +522,10 @@ class TestMcpRegionScoping:
             assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
 
     def test_list_sessions_resolves_region_from_farm(self):
-        with patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client, patch(
-            "deadline.client.api._mcp._resolve_region"
-        ) as mock_resolve:
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
             mock_resolve.return_value = "eu-west-1"
             deadline_mock = MagicMock()
             deadline_mock.list_sessions.return_value = {"sessions": []}
@@ -534,9 +537,10 @@ class TestMcpRegionScoping:
             assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
 
     def test_list_steps_resolves_region_from_farm(self):
-        with patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client, patch(
-            "deadline.client.api._mcp._resolve_region"
-        ) as mock_resolve:
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
             mock_resolve.return_value = "eu-west-1"
             deadline_mock = MagicMock()
             deadline_mock.list_steps.return_value = {"steps": []}
@@ -548,9 +552,10 @@ class TestMcpRegionScoping:
             assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
 
     def test_list_tasks_resolves_region_from_farm(self):
-        with patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client, patch(
-            "deadline.client.api._mcp._resolve_region"
-        ) as mock_resolve:
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
             mock_resolve.return_value = "eu-west-1"
             deadline_mock = MagicMock()
             deadline_mock.list_tasks.return_value = {"tasks": []}
@@ -567,9 +572,10 @@ class TestMcpRegionScoping:
             assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
 
     def test_search_jobs_resolves_region_from_farm(self, fresh_deadline_config):
-        with patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client, patch(
-            "deadline.client.api._mcp._resolve_region"
-        ) as mock_resolve:
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
             mock_resolve.return_value = "eu-west-1"
             deadline_mock = MagicMock()
             deadline_mock.search_jobs.return_value = MOCK_SEARCH_JOBS_RESPONSE
@@ -582,9 +588,10 @@ class TestMcpRegionScoping:
 
     def test_explicit_region_passed_through(self):
         """An explicit region argument is forwarded to _resolve_region (and wins)."""
-        with patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client, patch(
-            "deadline.client.api._mcp._resolve_region"
-        ) as mock_resolve:
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
             mock_resolve.return_value = "ap-south-1"
             mock_get_client.return_value = MagicMock()
 

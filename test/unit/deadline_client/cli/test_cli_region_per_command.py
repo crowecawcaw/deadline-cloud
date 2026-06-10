@@ -21,7 +21,6 @@ behavior, including on read-only commands - see ``test_cli_region_persists_farm_
 
 from __future__ import annotations
 
-import sys
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -256,9 +255,10 @@ def test_cli_region_reaches_get_session_client(
     fresh_deadline_config, mock_telemetry, build_command
 ):
     """--region scopes the deadline client to that region and persists defaults.farm_region."""
-    with patch.object(api._session, "get_boto3_session"), patch.object(
-        api._session, "get_session_client"
-    ) as get_session_client_mock:
+    with (
+        patch.object(api._session, "get_boto3_session"),
+        patch.object(api._session, "get_session_client") as get_session_client_mock,
+    ):
         command = _setup_get_session_client(get_session_client_mock, build_command)
         runner = CliRunner()
         result = runner.invoke(main, command)
@@ -277,9 +277,11 @@ def test_cli_region_reaches_get_session_client(
 
 def test_cli_job_download_output_region(fresh_deadline_config, mock_telemetry):
     """job download-output builds a region-scoped deadline client and persists farm_region."""
-    with patch.object(api._session, "get_boto3_session"), patch.object(
-        api._session, "get_session_client"
-    ) as get_session_client_mock, patch.object(api, "get_queue_user_boto3_session"):
+    with (
+        patch.object(api._session, "get_boto3_session"),
+        patch.object(api._session, "get_session_client") as get_session_client_mock,
+        patch.object(api, "get_queue_user_boto3_session"),
+    ):
         client = MagicMock()
         client.get_job.return_value = {"name": "Test Job", "attachments": None}
         client.get_queue.return_value = dict(MOCK_GET_QUEUE_RESPONSE)
@@ -313,9 +315,11 @@ def test_cli_job_download_output_region(fresh_deadline_config, mock_telemetry):
 
 def test_cli_job_download_input_region(fresh_deadline_config, mock_telemetry):
     """job download-input builds a region-scoped deadline client and persists farm_region."""
-    with patch.object(api._session, "get_boto3_session"), patch.object(
-        api._session, "get_session_client"
-    ) as get_session_client_mock, patch.object(api, "get_queue_user_boto3_session"):
+    with (
+        patch.object(api._session, "get_boto3_session"),
+        patch.object(api._session, "get_session_client") as get_session_client_mock,
+        patch.object(api, "get_queue_user_boto3_session"),
+    ):
         client = MagicMock()
         # No attachments => command prints "No input attachments" and returns cleanly.
         client.get_job.return_value = {"name": "Test Job", "attachments": None}
@@ -359,10 +363,10 @@ def test_cli_job_wait_region(fresh_deadline_config, mock_telemetry):
     wait_result.elapsed_time = 1.0
     wait_result.failed_tasks = []
 
-    with patch.object(api._session, "get_boto3_session"), patch.object(
-        api._session, "get_session_client"
-    ) as get_session_client_mock, patch.object(
-        api, "wait_for_job_completion", return_value=wait_result
+    with (
+        patch.object(api._session, "get_boto3_session"),
+        patch.object(api._session, "get_session_client") as get_session_client_mock,
+        patch.object(api, "wait_for_job_completion", return_value=wait_result),
     ):
         client = MagicMock()
         client.get_job.return_value = {"name": "Test Job"}
@@ -411,12 +415,15 @@ def test_cli_job_logs_region_scopes_deadline_and_logs_clients(fresh_deadline_con
         log_stream="session-test-session",
     )
 
-    with patch.object(api._session, "get_boto3_session"), patch.object(
-        api._session, "get_session_client"
-    ) as get_session_client_mock, patch(
-        "deadline.client.api._job_monitoring.get_user_and_identity_store_id",
-        return_value=(None, None),
-    ), patch("deadline.client.api.get_session_logs", return_value=log_result) as mock_get_logs:
+    with (
+        patch.object(api._session, "get_boto3_session"),
+        patch.object(api._session, "get_session_client") as get_session_client_mock,
+        patch(
+            "deadline.client.api._job_monitoring.get_user_and_identity_store_id",
+            return_value=(None, None),
+        ),
+        patch("deadline.client.api.get_session_logs", return_value=log_result) as mock_get_logs,
+    ):
         client = MagicMock()
         client.get_job.return_value = {"name": "Test Job"}
         get_session_client_mock.return_value = client
@@ -474,9 +481,10 @@ def test_job_logs_api_logs_client_region_scoped_non_dcm(fresh_deadline_config):
         client.get_log_events.return_value = {"events": [], "nextForwardToken": None}
         return client
 
-    with patch.object(
-        _job_monitoring, "get_boto3_client", side_effect=fake_get_boto3_client
-    ), patch.object(_job_monitoring, "get_user_and_identity_store_id", return_value=(None, None)):
+    with (
+        patch.object(_job_monitoring, "get_boto3_client", side_effect=fake_get_boto3_client),
+        patch.object(_job_monitoring, "get_user_and_identity_store_id", return_value=(None, None)),
+    ):
         _job_monitoring.get_session_logs(
             farm_id=MOCK_FARM_ID,
             queue_id=MOCK_QUEUE_ID,
@@ -497,9 +505,6 @@ def test_job_logs_api_logs_client_region_scoped_non_dcm(fresh_deadline_config):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="The sync-output command requires Python >= 3.9"
-)
 def test_cli_queue_sync_output_region(fresh_deadline_config, tmp_path):
     """
     queue sync-output (6): builds the deadline client via get_session_client(session,
@@ -508,10 +513,12 @@ def test_cli_queue_sync_output_region(fresh_deadline_config, tmp_path):
     deadline_client = MagicMock()
     deadline_client.get_queue.return_value = dict(MOCK_GET_QUEUE_RESPONSE)
 
-    with patch.object(queue_group.api, "get_boto3_session", return_value=MagicMock()), patch.object(
-        queue_group, "get_session_client", return_value=deadline_client
-    ) as mock_get_session_client, patch.object(
-        queue_group, "_incremental_output_download", return_value=MagicMock()
+    with (
+        patch.object(queue_group.api, "get_boto3_session", return_value=MagicMock()),
+        patch.object(
+            queue_group, "get_session_client", return_value=deadline_client
+        ) as mock_get_session_client,
+        patch.object(queue_group, "_incremental_output_download", return_value=MagicMock()),
     ):
         runner = CliRunner()
         result = runner.invoke(
@@ -556,12 +563,12 @@ def test_cli_manifest_download_region(fresh_deadline_config, tmp_path):
     deadline_client = session_mock.client.return_value
     deadline_client.get_queue.return_value = dict(MOCK_GET_QUEUE_RESPONSE)
 
-    with patch.object(
-        manifest_group.api, "get_boto3_session", return_value=session_mock
-    ), patch.object(
-        manifest_group, "_get_queue_user_boto3_session", return_value=MagicMock()
-    ) as queue_session_mock, patch.object(
-        manifest_group, "_manifest_download", return_value=_DownloadOutput()
+    with (
+        patch.object(manifest_group.api, "get_boto3_session", return_value=session_mock),
+        patch.object(
+            manifest_group, "_get_queue_user_boto3_session", return_value=MagicMock()
+        ) as queue_session_mock,
+        patch.object(manifest_group, "_manifest_download", return_value=_DownloadOutput()),
     ):
         runner = CliRunner()
         result = runner.invoke(
@@ -600,11 +607,12 @@ def test_cli_manifest_upload_region(fresh_deadline_config, tmp_path):
     manifest_file = tmp_path / "abc_manifest"
     manifest_file.write_text("{}")
 
-    with patch.object(
-        manifest_group.api, "get_boto3_session", return_value=MagicMock()
-    ), patch.object(api._session, "get_session_client") as get_session_client_mock, patch.object(
-        manifest_group.api, "get_queue_user_boto3_session", return_value=MagicMock()
-    ), patch.object(manifest_group, "_manifest_upload", return_value=None):
+    with (
+        patch.object(manifest_group.api, "get_boto3_session", return_value=MagicMock()),
+        patch.object(api._session, "get_session_client") as get_session_client_mock,
+        patch.object(manifest_group.api, "get_queue_user_boto3_session", return_value=MagicMock()),
+        patch.object(manifest_group, "_manifest_upload", return_value=None),
+    ):
         deadline_client = MagicMock()
         deadline_client.get_queue.return_value = dict(MOCK_GET_QUEUE_RESPONSE)
         get_session_client_mock.return_value = deadline_client
@@ -630,17 +638,15 @@ def test_cli_manifest_upload_region(fresh_deadline_config, tmp_path):
     assert config.get_setting("defaults.farm_region") == MOCK_REGION
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="The trace-schedule command requires Python >= 3.9"
-)
 def test_cli_trace_schedule_region(fresh_deadline_config, mock_telemetry):
     """
     job trace-schedule (19): builds its deadline client via api.get_boto3_client, scoped to
     the persisted farm region. A job that hasn't started exits early after the get_job call.
     """
-    with patch.object(api._session, "get_boto3_session"), patch.object(
-        api._session, "get_session_client"
-    ) as get_session_client_mock:
+    with (
+        patch.object(api._session, "get_boto3_session"),
+        patch.object(api._session, "get_session_client") as get_session_client_mock,
+    ):
         client = MagicMock()
         # No startedAt => trace-schedule reports "hasn't started yet" and stops, which is
         # enough to confirm the region-scoped deadline client was built.

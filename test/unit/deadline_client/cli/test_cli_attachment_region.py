@@ -47,16 +47,20 @@ def test_attachment_download_scopes_deadline_client_to_region(configured_farm_re
     mock_queue = MagicMock()
     mock_queue.jobAttachmentSettings = MOCK_S3_SETTINGS
 
-    with patch.object(
-        attachment_group.api, "get_boto3_session", return_value=MagicMock()
-    ), patch.object(attachment_group, "get_queue", return_value=mock_queue), patch.object(
-        attachment_group, "get_session_client", return_value=MagicMock()
-    ) as mock_get_session_client, patch.object(
-        attachment_group.api, "get_queue_user_boto3_session", return_value=MagicMock()
-    ), patch.object(
-        attachment_group,
-        "_attachment_download",
-        return_value=DownloadSummaryStatistics(),
+    with (
+        patch.object(attachment_group.api, "get_boto3_session", return_value=MagicMock()),
+        patch.object(attachment_group, "get_queue", return_value=mock_queue),
+        patch.object(
+            attachment_group, "get_session_client", return_value=MagicMock()
+        ) as mock_get_session_client,
+        patch.object(
+            attachment_group.api, "get_queue_user_boto3_session", return_value=MagicMock()
+        ),
+        patch.object(
+            attachment_group,
+            "_attachment_download",
+            return_value=DownloadSummaryStatistics(),
+        ),
     ):
         runner = CliRunner()
         result = runner.invoke(
@@ -93,18 +97,20 @@ def test_attachment_download_get_queue_uses_region_scoped_session(configured_far
     def _get_session(*args, **kwargs):
         return scoped_session if kwargs.get("region") else base_session
 
-    with patch.object(
-        attachment_group.api, "get_boto3_session", side_effect=_get_session
-    ) as mock_get_session, patch.object(
-        attachment_group, "get_queue", return_value=mock_queue
-    ) as mock_get_queue, patch.object(
-        attachment_group, "get_session_client", return_value=MagicMock()
-    ), patch.object(
-        attachment_group.api, "get_queue_user_boto3_session", return_value=MagicMock()
-    ), patch.object(
-        attachment_group,
-        "_attachment_download",
-        return_value=DownloadSummaryStatistics(),
+    with (
+        patch.object(
+            attachment_group.api, "get_boto3_session", side_effect=_get_session
+        ) as mock_get_session,
+        patch.object(attachment_group, "get_queue", return_value=mock_queue) as mock_get_queue,
+        patch.object(attachment_group, "get_session_client", return_value=MagicMock()),
+        patch.object(
+            attachment_group.api, "get_queue_user_boto3_session", return_value=MagicMock()
+        ),
+        patch.object(
+            attachment_group,
+            "_attachment_download",
+            return_value=DownloadSummaryStatistics(),
+        ),
     ):
         runner = CliRunner()
         result = runner.invoke(
@@ -134,13 +140,17 @@ def test_attachment_upload_scopes_deadline_client_to_region(configured_farm_regi
     mock_queue = MagicMock()
     mock_queue.jobAttachmentSettings = MOCK_S3_SETTINGS
 
-    with patch.object(
-        attachment_group.api, "get_boto3_session", return_value=MagicMock()
-    ), patch.object(attachment_group, "get_queue", return_value=mock_queue), patch.object(
-        attachment_group, "get_session_client", return_value=MagicMock()
-    ) as mock_get_session_client, patch.object(
-        attachment_group.api, "get_queue_user_boto3_session", return_value=MagicMock()
-    ), patch.object(attachment_group, "_attachment_upload", return_value=MagicMock()):
+    with (
+        patch.object(attachment_group.api, "get_boto3_session", return_value=MagicMock()),
+        patch.object(attachment_group, "get_queue", return_value=mock_queue),
+        patch.object(
+            attachment_group, "get_session_client", return_value=MagicMock()
+        ) as mock_get_session_client,
+        patch.object(
+            attachment_group.api, "get_queue_user_boto3_session", return_value=MagicMock()
+        ),
+        patch.object(attachment_group, "_attachment_upload", return_value=MagicMock()),
+    ):
         runner = CliRunner()
         result = runner.invoke(
             main,
@@ -165,15 +175,17 @@ def test_attachment_upload_get_queue_uses_region_scoped_session(configured_farm_
     def _get_session(*args, **kwargs):
         return scoped_session if kwargs.get("region") else base_session
 
-    with patch.object(
-        attachment_group.api, "get_boto3_session", side_effect=_get_session
-    ) as mock_get_session, patch.object(
-        attachment_group, "get_queue", return_value=mock_queue
-    ) as mock_get_queue, patch.object(
-        attachment_group, "get_session_client", return_value=MagicMock()
-    ), patch.object(
-        attachment_group.api, "get_queue_user_boto3_session", return_value=MagicMock()
-    ), patch.object(attachment_group, "_attachment_upload", return_value=MagicMock()):
+    with (
+        patch.object(
+            attachment_group.api, "get_boto3_session", side_effect=_get_session
+        ) as mock_get_session,
+        patch.object(attachment_group, "get_queue", return_value=mock_queue) as mock_get_queue,
+        patch.object(attachment_group, "get_session_client", return_value=MagicMock()),
+        patch.object(
+            attachment_group.api, "get_queue_user_boto3_session", return_value=MagicMock()
+        ),
+        patch.object(attachment_group, "_attachment_upload", return_value=MagicMock()),
+    ):
         runner = CliRunner()
         result = runner.invoke(
             main,
