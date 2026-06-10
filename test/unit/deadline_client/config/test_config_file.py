@@ -394,6 +394,28 @@ def test_get_deadline_regions_config_override(fresh_deadline_config):
     assert result == ["eu-central-1", "ca-central-1"]
 
 
+def test_get_deadline_regions_honors_passed_config(fresh_deadline_config):
+    """
+    An explicit ``config`` argument's settings.deadline_regions is honored, not the global
+    on-disk config. Pins the fix where get_deadline_regions ignored a passed-in config (so a
+    CLI --profile override that lives only in memory was silently dropped from the fan-out).
+    """
+    from configparser import ConfigParser
+
+    # Global/on-disk config says one thing...
+    config.set_setting("settings.deadline_regions", "us-east-1")
+    # ...but an in-memory config passed explicitly says another.
+    in_memory = ConfigParser()
+    config.set_setting("settings.deadline_regions", "eu-central-1, ca-central-1", config=in_memory)
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("DEADLINE_CLOUD_REGIONS", None)
+        result = config_file.get_deadline_regions(config=in_memory)
+
+    # The passed config wins over the global one.
+    assert result == ["eu-central-1", "ca-central-1"]
+
+
 def test_get_deadline_regions_blank_overrides_fall_through(fresh_deadline_config):
     """Blank/whitespace-only env var and config setting fall through to the curated list."""
     config.set_setting("settings.deadline_regions", "   ")

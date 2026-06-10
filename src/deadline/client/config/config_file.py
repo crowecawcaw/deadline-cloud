@@ -91,7 +91,7 @@ def _split_regions_csv(value: str) -> List[str]:
     return [region.strip() for region in value.split(",") if region.strip()]
 
 
-def get_deadline_regions() -> List[str]:
+def get_deadline_regions(config: Optional[ConfigParser] = None) -> List[str]:
     """
     Gets the list of AWS regions where AWS Deadline Cloud should be scanned.
 
@@ -104,6 +104,13 @@ def get_deadline_regions() -> List[str]:
     Regions are not auto-discovered at runtime: the curated list is the default, and a
     user who needs a different set overrides it via the env var or config setting above.
 
+    Args:
+        config (ConfigParser, optional): The AWS Deadline Cloud config to read the
+            ``settings.deadline_regions`` override from. When omitted, the live on-disk
+            config is read. Passing it through matters when a caller is operating on an
+            in-memory config (e.g. a CLI ``--profile`` override that hasn't been persisted)
+            so the region set honors that config rather than the global one.
+
     Returns:
         A de-duplicated, order-preserving list of region names.
     """
@@ -115,7 +122,7 @@ def get_deadline_regions() -> List[str]:
             return _dedupe_preserve_order(regions)
 
     # 2. Config setting override
-    config_value = get_setting("settings.deadline_regions")
+    config_value = get_setting("settings.deadline_regions", config=config)
     if config_value and config_value.strip():
         regions = _split_regions_csv(config_value)
         if regions:

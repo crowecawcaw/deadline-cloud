@@ -54,7 +54,7 @@ def _call_paginated_deadline_list_api(list_api, list_property_name, **kwargs):
     return result
 
 
-def _has_explicit_region_list() -> bool:
+def _has_explicit_region_list(config: Optional[ConfigParser] = None) -> bool:
     """
     Returns True when the user has explicitly listed the Deadline regions to scan via
     the ``DEADLINE_CLOUD_REGIONS`` env var or the ``settings.deadline_regions`` config
@@ -62,11 +62,16 @@ def _has_explicit_region_list() -> bool:
 
     This deliberate user intent takes precedence over the endpoint-override
     single-region short-circuit in :func:`list_farms`.
+
+    Args:
+        config (ConfigParser, optional): The config to read the ``settings.deadline_regions``
+            override from; threaded through so an in-memory config (e.g. a ``--profile``
+            override) is honored rather than the global on-disk config.
     """
     env_value = os.getenv(config_file.DEADLINE_REGIONS_ENV_VAR)
     if env_value and env_value.strip():
         return True
-    config_value = config_file.get_setting("settings.deadline_regions")
+    config_value = config_file.get_setting("settings.deadline_regions", config=config)
     return bool(config_value and config_value.strip())
 
 
@@ -153,10 +158,9 @@ def _iter_farms_by_region(
     ``(region, None, exception)`` on failure.
     """
     if regions is None:
-        if (
-            os.getenv(config_file.AWS_ENDPOINT_URL_DEADLINE_ENV_VAR)
-            and not _has_explicit_region_list()
-        ):
+        if os.getenv(
+            config_file.AWS_ENDPOINT_URL_DEADLINE_ENV_VAR
+        ) and not _has_explicit_region_list(config=config):
             # Single explicit endpoint: scan only the session region. It may be None
             # (the client builder accepts region=None), scanned as a 1-element list so
             # the fan-out machinery below handles it uniformly.
@@ -166,7 +170,7 @@ def _iter_farms_by_region(
                 session_region = None
             regions = [session_region]
         else:
-            regions = config_file.get_deadline_regions()
+            regions = config_file.get_deadline_regions(config=config)
 
     if not regions:
         return

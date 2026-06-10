@@ -169,6 +169,14 @@ def _resolve_region(
     2. The ``defaults.farm_region`` config setting, if set (non-empty).
     3. ``None`` (let boto3/the session decide, preserving single-region behavior).
 
+    Contract / region-value convention: this normalizes "no region" to ``None`` and never
+    returns ``""``. Both an explicit ``region=""`` and an empty ``defaults.farm_region`` are
+    treated as "not set" (the falsy ``if region:`` / ``if farm_region:`` checks below).
+    Callers downstream of resolution therefore test ``if region is not None:`` -- a
+    resolved region is either ``None`` (use the session/profile default) or a real region.
+    Raw, pre-resolution inputs (CLI args, config reads) may legitimately be ``""`` and use a
+    truthy ``if region:`` check instead; the two conventions are intentional, not arbitrary.
+
     Args:
         config (ConfigParser, optional): The AWS Deadline Cloud config to use.
         region (str, optional): An explicit region override.
@@ -177,8 +185,9 @@ def _resolve_region(
             differ from the default farm). When ``None``, the default farm's region is used.
 
     Returns:
-        The resolved region name, or ``None`` if nothing is configured.
+        The resolved region name, or ``None`` if nothing is configured (never ``""``).
     """
+    # Truthy (not "is not None"): an explicit region="" means "not provided", so fall through.
     if region:
         return region
 
