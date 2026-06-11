@@ -390,6 +390,10 @@ class MockDeadlineBackend:
     def create_storage_profile(
         self, *, farmId: str, queueId: str, displayName: str, osFamily: str = "LINUX", **kwargs
     ) -> dict:
+        # clear() drops storage_profiles (it's treated as an ad-hoc attr), while the
+        # read path uses getattr(..., {}); re-create it here so writes after a clear work.
+        if not hasattr(self, "storage_profiles"):
+            self.storage_profiles = {}
         sp_id = self._gen_id("sp")
         self.storage_profiles[(farmId, queueId, sp_id)] = {
             "storageProfileId": sp_id,
