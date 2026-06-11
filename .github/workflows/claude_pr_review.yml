@@ -25,7 +25,7 @@ permissions:
 jobs:
   review:
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
-    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review.yml@fix/claude-review-fork-pr-resolution
+    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review.yml@claude-review-improvements
     permissions:
       contents: read
       pull-requests: write
@@ -37,6 +37,6 @@ jobs:
       # Fork-test override: pull the pinned requirements file from the fork's fix
       # branch instead of the production default (aws-deadline/.github@mainline).
       tooling_repository: crowecawcaw/deadline-cloud.github
-      tooling_ref: fix/claude-review-fork-pr-resolution
+      tooling_ref: claude-review-improvements
     secrets:
       bedrock_role_arn: ${{ secrets.AWS_CLAUDE_PR_REVIEW_ROLE }}
