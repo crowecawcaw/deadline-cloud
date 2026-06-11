@@ -13,6 +13,7 @@ from typing import Optional
 from botocore.exceptions import ClientError
 
 from .. import api
+from ..exceptions import DeadlineOperationError
 
 
 def _format_resource_suggestions(
@@ -49,7 +50,11 @@ def _try_suggestion_chain(
             suggestions = _format_resource_suggestions(items, id_field, name_field, header)
             if suggestions:
                 return suggestions, False
-        except ClientError:
+        except (ClientError, DeadlineOperationError):
+            # ClientError: a single-region/per-farm List* call failed.
+            # DeadlineOperationError: the multi-region list_farms fan-out failed in
+            # every region (it wraps the per-region causes). Either way, fall through
+            # to the next fetcher in the chain.
             continue
     return [], True
 

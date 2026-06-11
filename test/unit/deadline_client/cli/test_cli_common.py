@@ -22,6 +22,111 @@ from deadline.client.config.config_file import (
 )
 
 
+class TestApplyCliOptionsRegion:
+    """Test that _apply_cli_options_to_config handles the --region option."""
+
+    def test_region_sets_farm_region_setting(self, fresh_deadline_config):
+        config = _apply_cli_options_to_config(region="us-east-1")
+        assert config_file.get_setting("defaults.farm_region", config=config) == "us-east-1"
+
+    def test_region_none_does_not_raise_unexpected_option(self, fresh_deadline_config):
+        # region=None must be consumed in the "no options provided" branch so the
+        # "unexpected option" RuntimeError doesn't fire.
+        config = _apply_cli_options_to_config(region=None)
+        assert config_file.get_setting("defaults.farm_region", config=config) == ""
+
+    def test_region_none_with_other_options(self, fresh_deadline_config):
+        # region=None alongside a provided option must still be consumed.
+        config = _apply_cli_options_to_config(farm_id="farm-1", region=None)
+        assert config_file.get_setting("defaults.farm_id", config=config) == "farm-1"
+        assert config_file.get_setting("defaults.farm_region", config=config) == ""
+
+
+class TestCliRegionPrecedenceEndToEnd:
+    """
+    End-to-end region precedence and flag semantics, driven through a real command
+    (``farm get``) rather than just ``_apply_cli_options_to_config``. ``farm get`` builds
+    its deadline client via ``api.get_boto3_client`` -> ``api._session.get_session_client``,
+    so the region the client is built for is what we assert.
+    """
+
+    @staticmethod
+    def _run_farm_get(extra_args):
+        from unittest.mock import MagicMock, patch
+        from click.testing import CliRunner
+        from deadline.client import api
+        from deadline.client.cli import main
+
+        with (
+            patch.object(api._session, "get_boto3_session"),
+            patch.object(api._session, "get_session_client") as get_session_client_mock,
+        ):
+            client = MagicMock()
+            client.get_farm.return_value = {"farmId": "farm-abc", "displayName": "F"}
+            get_session_client_mock.return_value = client
+
+            runner = CliRunner()
+            result = runner.invoke(main, ["farm", "get", "--farm-id", "farm-abc", *extra_args])
+
+        regions = [
+            call.kwargs.get("region")
+            for call in get_session_client_mock.call_args_list
+            if call.kwargs.get("service_name") == "deadline"
+        ]
+        return result, regions
+
+    def test_region_flag_overrides_configured_farm_region(self, fresh_deadline_config):
+        """--region wins over a previously-configured defaults.farm_region."""
+        config_file.set_setting("defaults.farm_region", "us-west-2")
+
+        result, regions = self._run_farm_get(["--region", "eu-central-1"])
+
+        assert result.exit_code == 0, result.output
+        # The deadline client was built for the flag's region, not the configured one.
+        assert "eu-central-1" in regions
+        assert "us-west-2" not in regions
+        # And the flag overwrote the persisted setting.
+        assert config_file.get_setting("defaults.farm_region") == "eu-central-1"
+
+    def test_no_region_flag_uses_configured_farm_region(self, fresh_deadline_config):
+        """with no --region, the command uses the configured defaults.farm_region."""
+        # farm_region is stored per-farm (depends on defaults.farm_id), so the default
+        # farm_id must be set to the same farm the command targets before storing the region.
+        config_file.set_setting("defaults.farm_id", "farm-abc")
+        config_file.set_setting("defaults.farm_region", "ap-south-1")
+
+        result, regions = self._run_farm_get([])
+
+        assert result.exit_code == 0, result.output
+        assert regions == ["ap-south-1"]
+
+    def test_no_region_flag_and_no_config_builds_client_without_region(self, fresh_deadline_config):
+        """
+        no --region and no configured farm_region => the deadline client is built
+        with region=None (the old single-region behavior, where boto3/the session picks the
+        region).
+        """
+        result, regions = self._run_farm_get([])
+
+        assert result.exit_code == 0, result.output
+        # region=None means get_session_client was called without an explicit region.
+        assert regions == [None]
+
+    def test_region_on_read_only_command_persists_farm_region(self, fresh_deadline_config):
+        """
+        --region on a read-only command (farm get) persists defaults.farm_region.
+        This pins the CURRENT, intended behavior: read-only commands still write the region
+        to config via _apply_cli_options_to_config, so a subsequent command reuses it.
+        """
+        assert config_file.get_setting("defaults.farm_region") == ""
+
+        result, _ = self._run_farm_get(["--region", "eu-west-1"])
+
+        assert result.exit_code == 0, result.output
+        # Intended: the region is persisted even though farm get does not mutate anything.
+        assert config_file.get_setting("defaults.farm_region") == "eu-west-1"
+
+
 class TestParseFileParameter:
     """Test the _parse_file_parameter function."""
 

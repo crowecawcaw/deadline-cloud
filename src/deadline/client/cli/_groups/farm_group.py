@@ -32,27 +32,42 @@ def cli_farm():
 
 @cli_farm.command(name="list")
 @click.option("--profile", help="The AWS profile to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @_handle_error
-def farm_list(**args):
+def farm_list(region, **args):
     """
     Lists the available Deadline Cloud farms. If the AWS profile is created
     from a Deadline Cloud monitor login, it will list only the farms you have
     permission to access.
+
+    Without --region, farms are listed across all Deadline Cloud regions and
+    each farm's region is shown. With --region, only that region is listed.
     """
-    # Get a temporary config object with the standard options handled
+    # Get a temporary config object with the standard options handled.
+    # Note: --region is consumed directly here (to scope the fan-out) rather than
+    # being routed through config via _apply_cli_options_to_config.
     config = _apply_cli_options_to_config(**args)
 
     try:
-        response = api.list_farms(config=config)
+        response = api.list_farms(config=config, region=region)
+    except DeadlineOperationError:
+        # When listing across all regions, a total (every-region) failure raises a
+        # DeadlineOperationError that already summarizes each region's cause. Let it
+        # propagate so _handle_error prints the summary verbatim.
+        raise
     except ClientError as exc:
+        # Single-region (--region given) failures surface as a ClientError; keep the
+        # resource-suggestion behavior for those.
         suggestion = _suggest_resources_on_client_error(exc, config=config)
         raise DeadlineOperationError(
             f"Failed to get Farms from Deadline:\n{exc}{suggestion}"
         ) from exc
 
-    # Select which fields to print and in which order
+    # Select which fields to print and in which order. Per the (region, farm_id)
+    # convention, the region column comes first.
     structured_farm_list = [
-        {field: farm[field] for field in ["farmId", "displayName"]} for farm in response["farms"]
+        {field: farm[field] for field in ["region", "farmId", "displayName"] if field in farm}
+        for farm in response["farms"]
     ]
 
     click.echo(_cli_object_repr(structured_farm_list))
@@ -61,6 +76,7 @@ def farm_list(**args):
 @cli_farm.command(name="get")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @_handle_error
 def farm_get(**args):
     """

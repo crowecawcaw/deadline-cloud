@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, Optional
 
 from qtpy.QtCore import QObject, Qt, Signal
 
-from ._async_task import AsyncTask
+from ._async_task import AsyncTask, StreamingAsyncTask
 from ._thread_pool import DeadlineThreadPool
 
 
@@ -94,6 +94,75 @@ class AsyncTaskRunner(QObject):
         if on_success is not None:
             task.signals.result.connect(on_success, Qt.QueuedConnection)
 
+        self._wire_and_start(operation_key, operation_id, task, on_error)
+
+        logger.debug(f"Started async task: {operation_key} (id={operation_id})")
+        return operation_id
+
+    def run_streaming(
+        self,
+        operation_key: str,
+        fn: Callable[..., Any],
+        on_progress: Optional[Callable[[Any], None]] = None,
+        on_finished: Optional[Callable[[], None]] = None,
+        on_error: Optional[Callable[[BaseException], None]] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        """
+        Run a generator-producing function asynchronously, delivering each yielded
+        item to ``on_progress`` as it arrives (progressive/streaming results).
+
+        This is the incremental counterpart to :meth:`run`. It uses the same
+        same-key cancellation semantics, so starting a new streaming op cancels an
+        in-flight one with the same key and no stale partial updates are delivered.
+
+        Args:
+            operation_key: Unique key identifying this operation type. Cancels any
+                           running task with the same key before starting.
+            fn: A function returning an iterator/generator to consume in the background.
+            on_progress: Callback invoked once per yielded item, in the main thread
+                         via queued connection. This is where incremental UI updates
+                         (e.g. appending a region's farms) happen.
+            on_finished: Callback invoked once the generator is exhausted (the
+                         terminal step), in the main thread via queued connection.
+            on_error: Callback invoked with the exception if the generator raises.
+            *args: Positional arguments passed to fn
+            **kwargs: Keyword arguments passed to fn
+
+        Returns:
+            Operation ID for tracking this specific task instance
+        """
+        # Cancel any existing task with the same key
+        self.cancel(operation_key)
+
+        # Generate unique operation ID
+        self._operation_counter += 1
+        operation_id = self._operation_counter
+
+        task = StreamingAsyncTask(fn, *args, operation_id=operation_id, **kwargs)
+
+        if on_progress is not None:
+            task.signals.progress.connect(on_progress, Qt.QueuedConnection)
+
+        # The terminal result for a streaming task carries no aggregate payload;
+        # wire on_finished to it so callers get a single "stream done" callback.
+        if on_finished is not None:
+            task.signals.result.connect(lambda _result: on_finished(), Qt.QueuedConnection)
+
+        self._wire_and_start(operation_key, operation_id, task, on_error)
+
+        logger.debug(f"Started streaming async task: {operation_key} (id={operation_id})")
+        return operation_id
+
+    def _wire_and_start(
+        self,
+        operation_key: str,
+        operation_id: int,
+        task: AsyncTask,
+        on_error: Optional[Callable[[BaseException], None]],
+    ) -> None:
+        """Wire error/cleanup signals shared by run() and run_streaming(), then start."""
         # Connect error callbacks
         if on_error is not None:
             task.signals.error.connect(on_error, Qt.QueuedConnection)
@@ -115,9 +184,6 @@ class AsyncTaskRunner(QObject):
         # Track and start
         self._active_tasks[operation_key] = task
         self._thread_pool.start(task)
-
-        logger.debug(f"Started async task: {operation_key} (id={operation_id})")
-        return operation_id
 
     def cancel(self, operation_key: str) -> bool:
         """

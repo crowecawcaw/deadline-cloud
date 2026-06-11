@@ -139,6 +139,10 @@ def _apply_cli_options_to_config(
         if farm_id:
             config_file.set_setting(SETTING_FARM_ID, farm_id, config=config)
 
+        region = args.pop("region", None)
+        if region:
+            config_file.set_setting("defaults.farm_region", region, config=config)
+
         queue_id = args.pop("queue_id", None)
         if queue_id:
             config_file.set_setting(SETTING_QUEUE_ID, queue_id, config=config)
@@ -164,7 +168,7 @@ def _apply_cli_options_to_config(
             )
     else:
         # Remove the standard option names from the args list
-        for name in ["profile", "farm_id", "queue_id", "job_id", "storage_profile_id"]:
+        for name in ["profile", "farm_id", "region", "queue_id", "job_id", "storage_profile_id"]:
             args.pop(name, None)
 
     # Check that the required options have values, auto-selecting if only one exists

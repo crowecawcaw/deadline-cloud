@@ -7,7 +7,7 @@ APIs for job diagnostics - get, list, and search operations for jobs, sessions, 
 from configparser import ConfigParser
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-from ._session import get_boto3_client
+from ._session import get_boto3_client, _resolve_region
 from . import record_function_latency_telemetry_event
 
 if TYPE_CHECKING:
@@ -41,6 +41,7 @@ def get_job(
     queue_id: str,
     job_id: str,
     config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Get detailed information about a specific job.
@@ -50,11 +51,14 @@ def get_job(
         queue_id: The ID of the queue containing the job.
         job_id: The ID of the job to retrieve.
         config: Optional configuration object.
+        region: The AWS region of the farm. When omitted, it is resolved for this farm
+            from the config (defaults.farm_region), otherwise the session/profile region.
 
     Returns:
         Job details including name, status, taskRunStatusCounts, timestamps, and lifecycle info.
     """
-    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config)
+    region = _resolve_region(config=config, region=region, farm_id=farm_id)
+    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config, region=region)
     return deadline.get_job(farmId=farm_id, queueId=queue_id, jobId=job_id)
 
 
@@ -65,6 +69,7 @@ def get_session(
     job_id: str,
     session_id: str,
     config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Get detailed information about a specific session.
@@ -75,11 +80,14 @@ def get_session(
         job_id: The ID of the job containing the session.
         session_id: The ID of the session to retrieve.
         config: Optional configuration object.
+        region: The AWS region of the farm. When omitted, it is resolved for this farm
+            from the config (defaults.farm_region), otherwise the session/profile region.
 
     Returns:
         Session details including lifecycleStatus, log configuration, worker info.
     """
-    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config)
+    region = _resolve_region(config=config, region=region, farm_id=farm_id)
+    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config, region=region)
     return deadline.get_session(
         farmId=farm_id, queueId=queue_id, jobId=job_id, sessionId=session_id
     )
@@ -92,6 +100,7 @@ def list_sessions(
     job_id: str,
     max_results: Optional[int] = None,
     config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     List all sessions for a job.
@@ -102,11 +111,14 @@ def list_sessions(
         job_id: The ID of the job to list sessions for.
         max_results: Optional maximum number of sessions to return per page (API default if not provided).
         config: Optional configuration object.
+        region: The AWS region of the farm. When omitted, it is resolved for this farm
+            from the config (defaults.farm_region), otherwise the session/profile region.
 
     Returns:
         {"sessions": [...]} with session summaries including sessionId, lifecycleStatus, workerId.
     """
-    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config)
+    region = _resolve_region(config=config, region=region, farm_id=farm_id)
+    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config, region=region)
     kwargs: Dict[str, Any] = {
         "farmId": farm_id,
         "queueId": queue_id,
@@ -128,6 +140,7 @@ def list_steps(
     job_id: str,
     max_results: Optional[int] = None,
     config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     List all steps for a job.
@@ -138,11 +151,14 @@ def list_steps(
         job_id: The ID of the job to list steps for.
         max_results: Optional maximum number of steps to return per page (API default if not provided).
         config: Optional configuration object.
+        region: The AWS region of the farm. When omitted, it is resolved for this farm
+            from the config (defaults.farm_region), otherwise the session/profile region.
 
     Returns:
         {"steps": [...]} with step summaries including stepId, name, taskRunStatus, taskRunStatusCounts.
     """
-    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config)
+    region = _resolve_region(config=config, region=region, farm_id=farm_id)
+    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config, region=region)
     kwargs: Dict[str, Any] = {
         "farmId": farm_id,
         "queueId": queue_id,
@@ -165,6 +181,7 @@ def list_tasks(
     step_id: str,
     max_results: Optional[int] = None,
     config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     List all tasks for a step.
@@ -176,11 +193,14 @@ def list_tasks(
         step_id: The ID of the step to list tasks for.
         max_results: Optional maximum number of tasks to return per page (API default if not provided).
         config: Optional configuration object.
+        region: The AWS region of the farm. When omitted, it is resolved for this farm
+            from the config (defaults.farm_region), otherwise the session/profile region.
 
     Returns:
         {"tasks": [...]} with task summaries including taskId, runStatus, parameters.
     """
-    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config)
+    region = _resolve_region(config=config, region=region, farm_id=farm_id)
+    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config, region=region)
     kwargs: Dict[str, Any] = {
         "farmId": farm_id,
         "queueId": queue_id,
@@ -205,6 +225,7 @@ def search_jobs(
     page_size: int = 25,
     item_offset: int = 0,
     config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Search for jobs with optional filters.
@@ -217,6 +238,8 @@ def search_jobs(
         page_size: Results per page (1-100, default 25).
         item_offset: Offset for pagination (0-10000).
         config: Optional configuration object.
+        region: The AWS region of the farm. When omitted, it is resolved for the resolved
+            farm from the config (defaults.farm_region), otherwise the session/profile region.
 
     Returns:
         {"jobs": [...], "totalResults": N, "nextItemOffset": N}
@@ -233,7 +256,9 @@ def search_jobs(
     if not queue_ids:
         raise ValueError("queue_ids is required (not found in config defaults)")
 
-    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config)
+    # Resolve the region only after farm_id is finalized (it may come from config defaults).
+    region = _resolve_region(config=config, region=region, farm_id=farm_id)
+    deadline: "DeadlineClient" = get_boto3_client("deadline", config=config, region=region)
 
     # Build filter expressions
     filter_expressions: List[Dict[str, Any]] = []

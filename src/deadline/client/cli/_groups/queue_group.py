@@ -15,7 +15,7 @@ from botocore.exceptions import ClientError  # type: ignore[import]
 from datetime import datetime, timedelta, timezone
 
 from ... import api
-from ...api._session import get_session_client
+from ...api._session import get_session_client, _resolve_region
 from ...config import config_file
 from ...exceptions import DeadlineOperationError
 from .._common import (
@@ -54,6 +54,7 @@ def cli_queue():
 @cli_queue.command(name="list")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @_handle_error
 def queue_list(**args):
     """
@@ -86,6 +87,7 @@ def queue_list(**args):
 @cli_queue.command(name="export-credentials")
 @click.option("--queue-id", help="The queue ID to use.")
 @click.option("--farm-id", help="The farm ID to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option(
     "--mode",
     type=click.Choice(["USER", "READ"], case_sensitive=False),
@@ -188,6 +190,7 @@ def queue_export_credentials(mode, output_format, **args):
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
 @click.option("--queue-id", help="The queue to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @_handle_error
 def queue_paramdefs(**args):
     """
@@ -222,6 +225,7 @@ def queue_paramdefs(**args):
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
 @click.option("--queue-id", help="The queue to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @_handle_error
 def queue_get(**args):
     """
@@ -252,6 +256,7 @@ def queue_get(**args):
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The AWS Deadline Cloud Farm to use.")
 @click.option("--queue-id", help="The AWS Deadline Cloud Queue to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option(
     "--storage-profile-id",
     help="The storage profile to use for mapping paths to local. Cannot be used together with --ignore-storage-profiles",
@@ -361,7 +366,10 @@ def sync_output(
     farm_id = config_file.get_setting("defaults.farm_id", config=config)
     queue_id = config_file.get_setting("defaults.queue_id", config=config)
     boto3_session: boto3.Session = api.get_boto3_session(config=config)
-    deadline = get_session_client(boto3_session, "deadline")
+    # This operates within a single farm, so scope the deadline client to that farm's
+    # region. _resolve_region returns None when nothing is configured.
+    region = _resolve_region(config=config, farm_id=farm_id)
+    deadline = get_session_client(boto3_session, "deadline", region=region)
 
     if ignore_storage_profiles:
         local_storage_profile_id = None

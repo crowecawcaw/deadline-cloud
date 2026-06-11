@@ -155,6 +155,7 @@ def _interactive_confirmation_prompt(message: str, default_response: bool) -> bo
 )
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--storage-profile-id", help="The storage profile to use.")
 @click.option("--name", help="The job name to use in place of the one in the job bundle.")
@@ -326,6 +327,7 @@ def bundle_submit(
         if (
             args.get("profile") is None
             and args.get("farm_id") is None
+            and args.get("region") is None
             and args.get("queue_id") is None
             and args.get("storage_profile_id") is None
             and job_id

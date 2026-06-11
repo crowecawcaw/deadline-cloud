@@ -3,6 +3,8 @@ from __future__ import annotations
 
 __all__ = ["get_queue_parameter_definitions"]
 
+from typing import Optional
+
 import yaml
 
 from .. import api
@@ -20,7 +22,7 @@ from ..ui._utils import tr
 
 @api.record_function_latency_telemetry_event()
 def get_queue_parameter_definitions(
-    *, farmId: str, queueId: str, config=None
+    *, region: Optional[str] = None, farmId: str, queueId: str, config=None
 ) -> list[JobParameter]:
     """
     This gets all the queue parameter definitions for the specified [Deadline Cloud queue].
@@ -30,8 +32,16 @@ def get_queue_parameter_definitions(
 
     [Deadline Cloud queue]: https://docs.aws.amazon.com/deadline-cloud/latest/userguide/queues.html
     [queue environments]: https://docs.aws.amazon.com/deadline-cloud/latest/userguide/create-queue-environment.html
+
+    Args:
+        region (str, optional): The AWS region of the farm. When None, the region is
+            resolved from `defaults.farm_region` (if set), otherwise the session/profile
+            region is used.
+        farmId (str): The farm the queue belongs to.
+        queueId (str): The queue to get parameter definitions for.
+        config (ConfigParser, optional): If provided, the AWS Deadline Cloud config to use.
     """
-    deadline = get_boto3_client("deadline", config=config)
+    deadline = get_boto3_client("deadline", config=config, region=region)
     response = _call_paginated_deadline_list_api(
         deadline.list_queue_environments,
         "environments",

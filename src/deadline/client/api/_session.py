@@ -26,7 +26,7 @@ from botocore.exceptions import (  # type: ignore[import]
 from botocore.session import get_session as get_botocore_session
 
 from .. import version
-from ..config import get_setting, config_file
+from ..config import get_setting, set_setting, config_file
 from ..exceptions import DeadlineOperationError
 from ...job_attachments._aws.aws_clients import get_s3_client
 
@@ -52,7 +52,9 @@ session_context: dict[str, Optional[str]] = {
 
 
 def get_boto3_session(
-    force_refresh: bool = False, config: Optional[ConfigParser] = None
+    force_refresh: bool = False,
+    config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
 ) -> boto3.Session:
     """
     Gets a boto3 session for the AWS Deadline Cloud aws profile from the local
@@ -65,6 +67,9 @@ def get_boto3_session(
     Args:
         force_refresh (bool, optional): If set to True, forces a cache refresh.
         config (ConfigParser, optional): If provided, the AWS Deadline Cloud config to use.
+        region (str, optional): If provided, returns a session scoped to this region (so
+            boto3 resolves the regional Deadline endpoint itself). When omitted, the
+            profile's default region is used (today's behavior).
     """
 
     profile_name: Optional[str] = get_setting("defaults.aws_profile_name", config)
@@ -77,12 +82,12 @@ def get_boto3_session(
     if force_refresh:
         invalidate_boto3_session_cache()
 
-    return _get_boto3_session_for_profile(profile_name)
+    return _get_boto3_session_for_profile(profile_name, region)
 
 
 @lru_cache
-def _get_boto3_session_for_profile(profile_name: str):
-    session = boto3.Session(profile_name=profile_name)
+def _get_boto3_session_for_profile(profile_name: str, region: Optional[str] = None):
+    session = boto3.Session(profile_name=profile_name, region_name=region)
 
     # By default, DCM returns creds that expire after 15 minutes, and boto3's RefreshableCredentials
     # class refreshes creds that are within 15 minutes of expiring, so credentials would never be reused.
@@ -130,35 +135,113 @@ def get_default_client_config(**kwargs) -> botocore.config.Config:
 
 
 @lru_cache
-def get_session_client(session: boto3.Session, service_name: str):
+def get_session_client(session: boto3.Session, service_name: str, region: Optional[str] = None):
     """
-    Create and cache a boto3 client for the given session and service name.
+    Create and cache a boto3 client for the given session, service name, and region.
 
     This function is decorated with @lru_cache to ensure that repeated calls
-    with the same session and service name return the cached client to avoid
-    repeating initialization where possible.
+    with the same session, service name, and region return the cached client to
+    avoid repeating initialization where possible. The ``region`` argument is part
+    of the cache key so clients for different regions are never reused for each other.
 
     Args:
         session: The boto3 Session to use for creating the client
         service_name: The name of the AWS service (e.g., 'deadline', 's3')
+        region: The AWS region to create the client for. If None, the session's
+            default region is used.
 
     Returns:
         A boto3 client for the specified service
     """
-    return session.client(service_name, config=get_default_client_config())
+    if region is None:
+        return session.client(service_name, config=get_default_client_config())
+    return session.client(service_name, config=get_default_client_config(), region_name=region)
 
 
-def get_boto3_client(service_name: str, config: Optional[ConfigParser] = None) -> BaseClient:
+def _resolve_region(
+    config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
+    farm_id: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Resolves which AWS region to use, following this precedence:
+    1. An explicit ``region`` argument.
+    2. The ``defaults.farm_region`` config setting, if set (non-empty).
+    3. ``None`` (let boto3/the session decide, preserving single-region behavior).
+
+    Contract / region-value convention: this normalizes "no region" to ``None`` and never
+    returns ``""``. Both an explicit ``region=""`` and an empty ``defaults.farm_region`` are
+    treated as "not set" (the falsy ``if region:`` / ``if farm_region:`` checks below).
+    Callers downstream of resolution therefore test ``if region is not None:`` -- a
+    resolved region is either ``None`` (use the session/profile default) or a real region.
+    Raw, pre-resolution inputs (CLI args, config reads) may legitimately be ``""`` and use a
+    truthy ``if region:`` check instead; the two conventions are intentional, not arbitrary.
+
+    Args:
+        config (ConfigParser, optional): The AWS Deadline Cloud config to use.
+        region (str, optional): An explicit region override.
+        farm_id (str, optional): The farm the region is being resolved for. When given,
+            the per-farm ``defaults.farm_region`` is looked up for *this* farm (which may
+            differ from the default farm). When ``None``, the default farm's region is used.
+
+    Returns:
+        The resolved region name, or ``None`` if nothing is configured (never ``""``).
+    """
+    # Truthy (not "is not None"): an explicit region="" means "not provided", so fall through.
+    if region:
+        return region
+
+    farm_region = _get_farm_region_setting(config=config, farm_id=farm_id)
+    if farm_region:
+        return farm_region
+
+    return None
+
+
+def _get_farm_region_setting(
+    config: Optional[ConfigParser] = None,
+    farm_id: Optional[str] = None,
+) -> str:
+    """
+    Reads ``defaults.farm_region`` for a specific farm.
+
+    ``defaults.farm_region`` is keyed per farm (it depends on ``defaults.farm_id``), so to
+    read a non-default farm's region we read it against a config whose ``defaults.farm_id``
+    is set to that farm. When ``farm_id`` is ``None`` (or matches the default), the live
+    config is read directly. Returns ``""`` when no region is stored.
+    """
+    if farm_id is None:
+        return get_setting("defaults.farm_region", config=config)
+
+    # Read against a copy with defaults.farm_id overridden to the target farm, so the
+    # per-farm section lookup resolves to that farm rather than the default one.
+    if config is None:
+        config = config_file.read_config()
+    farm_scoped_config = ConfigParser()
+    farm_scoped_config.read_dict(config)
+    set_setting("defaults.farm_id", farm_id, config=farm_scoped_config)
+    return get_setting("defaults.farm_region", config=farm_scoped_config)
+
+
+def get_boto3_client(
+    service_name: str,
+    config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
+) -> BaseClient:
     """
     Gets a client from the boto3 session returned by `get_boto3_session`.
 
     Args:
         service_name (str): The AWS service to get the client for, e.g. "deadline".
         config (ConfigParser, optional): If provided, the AWS Deadline Cloud config to use.
+        region (str, optional): The AWS region to create the client for. When omitted,
+            the region is resolved from `defaults.farm_region` (if set), otherwise the
+            session/profile region is used.
     """
 
     session = get_boto3_session(config=config)
-    return get_session_client(session=session, service_name=service_name)
+    resolved_region = _resolve_region(config=config, region=region)
+    return get_session_client(session=session, service_name=service_name, region=resolved_region)
 
 
 def get_credentials_source(
@@ -239,8 +322,13 @@ def get_queue_user_boto3_session(
     if queue_id is None:
         queue_id = get_setting("defaults.queue_id")
 
+    # Resolve the region to scope the queue-user session to, for this specific farm.
+    # When nothing is configured, _resolve_region returns None and we fall back to the
+    # base session's region.
+    region = _resolve_region(config=config, farm_id=farm_id)
+
     return _get_queue_user_boto3_session(
-        deadline, base_session, farm_id, queue_id, queue_display_name
+        deadline, base_session, farm_id, queue_id, queue_display_name, region
     )
 
 
@@ -251,6 +339,7 @@ def _get_queue_user_boto3_session(
     farm_id: str,
     queue_id: str,
     queue_display_name: Optional[str] = None,
+    region: Optional[str] = None,
 ):
     queue_credential_provider = QueueUserCredentialProvider(
         deadline,
@@ -269,7 +358,7 @@ def _get_queue_user_boto3_session(
     return boto3.Session(
         botocore_session=botocore_session,
         profile_name=aws_profile_name,
-        region_name=base_session.region_name,
+        region_name=region if region is not None else base_session.region_name,
     )
 
 
