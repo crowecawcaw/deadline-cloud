@@ -392,3 +392,4 @@ This project is licensed under the Apache-2.0 License.
 
 N.B.: Although this repository is released under the Apache-2.0 license, its optional GUI feature
 uses the third party Qt and PySide projects. The Qt and PySide projects' licensing includes the LGPL-3.0 license.
+
