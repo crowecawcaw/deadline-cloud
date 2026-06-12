@@ -910,8 +910,9 @@ class DeadlineWorkstationConfigWidget(QWidget):
 
     def aws_profile_changed(self, value):
         self.changes["defaults.aws_profile_name"] = value
-        # Clear the farm_id and queue_id since they don't exist in the new profile
+        # Clear the farm_id/region and queue_id since they don't exist in the new profile
         self.changes["defaults.farm_id"] = ""
+        self.changes["defaults.farm_region"] = ""
         self.changes["defaults.queue_id"] = ""
         self.default_farm_box.clear_list()
         self.default_queue_box.clear_list()
@@ -937,6 +938,9 @@ class DeadlineWorkstationConfigWidget(QWidget):
         if farm_id is None:
             return
         self.changes["defaults.farm_id"] = farm_id
+        # Persist the selected farm's region too, per the (region, farm_id) convention.
+        # Empty string means "use the session/profile region" (backwards compatible).
+        self.changes["defaults.farm_region"] = self.default_farm_box.region_for_id(farm_id)
         # Clear the queue_id since the old queue doesn't exist in the new farm
         self.changes["defaults.queue_id"] = ""
         # Clear storage profile lists - they depend on queue which we're about to refresh
@@ -980,8 +984,11 @@ class DeadlineWorkstationConfigWidget(QWidget):
         # Get the currently selected farm from the combo box
         current_farm_id = self.default_farm_box.box.currentData()
         if current_farm_id:
-            # Update the changes dict with the selected farm
+            # Update the changes dict with the selected farm and its region.
             self.changes["defaults.farm_id"] = current_farm_id
+            self.changes["defaults.farm_region"] = self.default_farm_box.region_for_id(
+                current_farm_id
+            )
             self.refresh()
             # Continue cascade - refresh queues with the valid farm_id
             self._awaiting_queues_for_cascade = True

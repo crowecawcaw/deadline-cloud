@@ -17,7 +17,7 @@ from .. import api
 import boto3
 from botocore.client import BaseClient  # type: ignore[import]
 from ..api._list_jobs_by_filter_expression import _list_jobs_by_filter_expression
-from ..api._session import get_session_client
+from ..api._session import get_session_client, _resolve_region
 from ...job_attachments.api import summarize_path_list, human_readable_file_size
 from ...job_attachments._incremental_downloads.incremental_download_state import (
     IncrementalDownloadState,
@@ -73,6 +73,7 @@ def _get_download_candidate_jobs(
     queue_id: str,
     starting_timestamp: datetime,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
+    region: Optional[str] = None,
 ) -> dict[str, dict[str, Any]]:
     """
     Uses deadline:SearchJobs queries to get a dict {job_id: job} of download candidates for the queue.
@@ -85,6 +86,8 @@ def _get_download_candidate_jobs(
         queue_id: The queue id for the operation.
         starting_timestamp: The point in time from which to look for new download outputs.
         print_function_callback: Callback for printing output to the terminal or log.
+        region: The AWS region to scope the deadline client to. When None, the session's
+            default region is used.
 
     Returns:
         A dictionary mapping job id to the job as returned by the deadline.search_jobs API.
@@ -120,6 +123,7 @@ def _get_download_candidate_jobs(
                 ],
                 "operator": "OR",
             },
+            region=region,
         )
     }
     print(f"DEBUG: Got {len(download_candidate_jobs)} active jobs")
@@ -151,6 +155,7 @@ def _get_download_candidate_jobs(
             ],
             "operator": "AND",
         },
+        region=region,
     )
     print(
         f"DEBUG: Got {len(recently_ended_jobs)} jobs with job[endedAt] >= {starting_timestamp.astimezone().isoformat()}"
@@ -206,6 +211,7 @@ def _categorize_jobs_in_checkpoint(
     download_candidate_jobs: dict[str, dict[str, Any]],
     new_completed_timestamp: datetime,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
+    region: Optional[str] = None,
 ) -> CategorizedJobIds:
     """
     Categorizes the provided download candidate jobs by id into a CategorizedJobIds object,
@@ -223,8 +229,10 @@ def _categorize_jobs_in_checkpoint(
         new_completed_timestamp: This is the timestamp value that will be placed in
             checkpoint.downloads_completed_timestamp when saving the checkpoint.
         print_function_callback: Callback for printing output to the terminal or log.
+        region: The AWS region to scope the deadline client to. When None, the session's
+            default region is used.
     """
-    deadline = get_session_client(boto3_session, "deadline")
+    deadline = get_session_client(boto3_session, "deadline", region=region)
     checkpoint_jobs = {job.job_id: job.job for job in checkpoint.jobs}
     checkpoint_job_ids = set(checkpoint_jobs.keys())
 
@@ -522,6 +530,7 @@ def _get_job_sessions(
     checkpoint: IncrementalDownloadState,
     download_candidate_jobs: dict[str, dict[str, Any]],
     print_function_callback: Callable[[Any], None] = lambda msg: None,
+    region: Optional[str] = None,
 ) -> dict[str, list]:
     """
     This function gets all the job sessions and session actions from the completed, added, and updated jobs.
@@ -540,6 +549,8 @@ def _get_job_sessions(
         download_candidate_jobs: The result of a _get_download_candidate_jobs call, {job_id: job} where
             job is a result from a deadline.search_jobs() or deadline.get_job() call.
         print_function_callback: Callback for printing output to the terminal or log.
+        region: The AWS region to scope the deadline client to. When None, the session's
+            default region is used.
 
     Returns:
         Access a session action in the returned job_sessions with
@@ -577,7 +588,7 @@ def _get_job_sessions(
         if job.session_ended_timestamp is not None
     }
 
-    deadline = get_session_client(boto3_session, "deadline")
+    deadline = get_session_client(boto3_session, "deadline", region=region)
     job_sessions: dict[str, list] = {}
 
     # Retrieve all the sessions with some parallelism
@@ -1007,7 +1018,11 @@ def _incremental_output_download(
         An updated checkpoint object.
     """
     durations = IncrementalOutputDownloadLatencies()
-    deadline = get_session_client(boto3_session, "deadline")
+    # Operations here are within a single farm, so scope the deadline client to that
+    # farm's region. _resolve_region returns None when nothing is configured, preserving
+    # the session's default-region behavior.
+    region = _resolve_region(config=config, farm_id=farm_id)
+    deadline = get_session_client(boto3_session, "deadline", region=region)
 
     # When this function is done, we will be confident that downloads are complete up to
     # new_completed_timestamp. We subtract a duration from now() that gives a generous amount of
@@ -1056,6 +1071,7 @@ def _incremental_output_download(
         queue["queueId"],
         checkpoint.downloads_completed_timestamp,
         print_function_callback,
+        region=region,
     )
     durations._get_download_candidate_jobs = time.perf_counter_ns() - start_t
 
@@ -1071,6 +1087,7 @@ def _incremental_output_download(
         download_candidate_jobs,
         new_completed_timestamp,
         print_function_callback,
+        region=region,
     )
     durations._categorize_jobs_in_checkpoint = time.perf_counter_ns() - start_t
 
@@ -1088,6 +1105,7 @@ def _incremental_output_download(
         checkpoint,
         download_candidate_jobs,
         print_function_callback,
+        region=region,
     )
     durations._get_job_sessions = time.perf_counter_ns() - start_t
 

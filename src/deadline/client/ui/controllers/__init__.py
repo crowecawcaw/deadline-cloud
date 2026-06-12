@@ -37,6 +37,9 @@ from ._async_runner import AsyncTaskRunner as AsyncTaskRunner
 from ._deadline_controller import DeadlineUIController as DeadlineUIController
 from ._thread_pool import DeadlineThreadPool as DeadlineThreadPool
 
+# StreamingAsyncTask is intentionally NOT re-exported here: it is internal async
+# plumbing used only by AsyncTaskRunner, which imports it directly from ._async_task.
+# Keeping it out of __all__ keeps it off the public API surface.
 __all__ = [
     "AsyncTask",
     "AsyncTaskRunner",

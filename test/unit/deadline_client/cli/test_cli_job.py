@@ -190,7 +190,7 @@ def test_cli_job_list_override_profile(fresh_deadline_config):
         result = runner.invoke(main, ["job", "list", "--profile", "NonDefaultProfileName"])
 
         assert result.exit_code == 0
-        session_mock.assert_called_once_with(profile_name="NonDefaultProfileName")
+        session_mock.assert_called_once_with(profile_name="NonDefaultProfileName", region_name=None)
         session_mock().client().search_jobs.assert_called_once_with(
             farmId="farm-overriddenid",
             queueIds=["queue-overriddenid"],

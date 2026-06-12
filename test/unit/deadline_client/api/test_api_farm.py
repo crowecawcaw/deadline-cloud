@@ -39,29 +39,39 @@ FARMS_LIST = [
 ]
 
 
-def test_list_farms_paginated(fresh_deadline_config):
+def test_list_farms_paginated(fresh_deadline_config, monkeypatch):
     """Confirm api.list_farms concatenates multiple pages"""
+    # Scope to a single region so the multi-region fan-out queries exactly one region,
+    # keeping this a focused single-region pagination test.
+    monkeypatch.setenv("DEADLINE_CLOUD_REGIONS", "us-west-2")
     with patch.object(api._session, "get_boto3_session") as session_mock:
         session_mock().client("deadline").list_farms.side_effect = [
-            {"farms": FARMS_LIST[:2], "nextToken": "abc"},
-            {"farms": FARMS_LIST[2:3], "nextToken": "def"},
-            {"farms": FARMS_LIST[3:]},
+            {"farms": [dict(f) for f in FARMS_LIST[:2]], "nextToken": "abc"},
+            {"farms": [dict(f) for f in FARMS_LIST[2:3]], "nextToken": "def"},
+            {"farms": [dict(f) for f in FARMS_LIST[3:]]},
         ]
 
         # Call the API
         farms = api.list_farms()
 
-        assert farms["farms"] == FARMS_LIST
+        # Farms are tagged with their region (additive), so compare ignoring region.
+        returned = [{k: v for k, v in f.items() if k != "region"} for f in farms["farms"]]
+        assert returned == FARMS_LIST
+        assert all(f["region"] == "us-west-2" for f in farms["farms"])
 
 
 @pytest.mark.parametrize("pass_principal_id_filter", [True, False])
 @pytest.mark.parametrize("user_identities", [True, False])
-def test_list_farms_principal_id(fresh_deadline_config, pass_principal_id_filter, user_identities):
+def test_list_farms_principal_id(
+    fresh_deadline_config, pass_principal_id_filter, user_identities, monkeypatch
+):
     """Confirm api.list_farms sets the principalId parameter appropriately"""
 
+    # Scope to a single region so the fan-out makes exactly one ListFarms call.
+    monkeypatch.setenv("DEADLINE_CLOUD_REGIONS", "us-west-2")
     with patch.object(api._session, "get_boto3_session") as session_mock:
         session_mock().client("deadline").list_farms.side_effect = [
-            {"farms": FARMS_LIST},
+            {"farms": [dict(f) for f in FARMS_LIST]},
         ]
 
         session_mock()._session.get_scoped_config().get.return_value = "some-monitor-id"
@@ -78,7 +88,8 @@ def test_list_farms_principal_id(fresh_deadline_config, pass_principal_id_filter
         else:
             farms = api.list_farms()
 
-        assert farms["farms"] == FARMS_LIST
+        returned = [{k: v for k, v in f.items() if k != "region"} for f in farms["farms"]]
+        assert returned == FARMS_LIST
 
         if pass_principal_id_filter:
             session_mock().client("deadline").list_farms.assert_called_once_with(

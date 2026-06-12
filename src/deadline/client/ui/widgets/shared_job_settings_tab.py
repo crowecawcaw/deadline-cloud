@@ -25,6 +25,7 @@ from qtpy.QtWidgets import (  # type: ignore
 from .radio_button_widget import HoverRadioButton
 
 from ... import api
+from ...api._session import _resolve_region
 from ...config import get_setting
 from .._utils import tr
 from ..controllers import AsyncTaskRunner, DeadlineUIController
@@ -588,7 +589,9 @@ class DeadlineFarmDisplay(_DeadlineNamedResourceDisplay):
     def get_item(self):
         farm_id = get_setting(self.setting_name)
         if farm_id:
-            deadline = api.get_boto3_client("deadline")
+            # Scope the client to the farm's region (the farm may be in a non-default region).
+            region = _resolve_region(farm_id=farm_id)
+            deadline = api.get_boto3_client("deadline", region=region)
             response = deadline.get_farm(farmId=farm_id)
             return (
                 response["farmId"],
@@ -607,7 +610,9 @@ class DeadlineQueueDisplay(_DeadlineNamedResourceDisplay):
         farm_id = get_setting("defaults.farm_id")
         queue_id = get_setting(self.setting_name)
         if farm_id and queue_id:
-            deadline = api.get_boto3_client("deadline")
+            # Scope the client to the farm's region (the farm may be in a non-default region).
+            region = _resolve_region(farm_id=farm_id)
+            deadline = api.get_boto3_client("deadline", region=region)
             response = deadline.get_queue(farmId=farm_id, queueId=queue_id)
             return (
                 response["queueId"],
@@ -636,7 +641,9 @@ class DeadlineStorageProfileNameDisplay(_DeadlineNamedResourceDisplay):
         storage_profile_id = get_setting(self.setting_name)
 
         if farm_id and queue_id and storage_profile_id:
-            deadline = api.get_boto3_client("deadline")
+            # Scope the client to the farm's region (the farm may be in a non-default region).
+            region = _resolve_region(farm_id=farm_id)
+            deadline = api.get_boto3_client("deadline", region=region)
             response = deadline.list_storage_profiles_for_queue(farmId=farm_id, queueId=queue_id)
             farm_storage_profiles = response.get("storageProfiles", {})
 
