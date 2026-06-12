@@ -5,7 +5,7 @@ Tests for the job monitoring API functions.
 """
 
 import datetime
-from unittest.mock import patch, MagicMock
+from unittest.mock import ANY, patch, MagicMock
 import pytest
 
 from deadline.client.api._job_monitoring import (
@@ -553,7 +553,7 @@ def test_get_session_logs_with_monitor_credentials():
         )
 
         # Verify the logs client was created from the queue session
-        queue_session_mock.client.assert_called_once_with("logs")
+        queue_session_mock.client.assert_called_once_with("logs", config=ANY)
 
         # Verify the logs client was called with correct parameters
         logs_client_mock.get_log_events.assert_called_once_with(
@@ -803,7 +803,9 @@ def test_get_worker_logs_with_monitor_credentials():
             aws_secret_access_key="secret",
             aws_session_token="token",
         )
-        fleet_session_mock.client.assert_called_once_with("logs", region_name="us-west-2")
+        fleet_session_mock.client.assert_called_once_with(
+            "logs", region_name="us-west-2", config=ANY
+        )
 
 
 def test_get_worker_logs_resource_not_found():
