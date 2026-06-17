@@ -9,12 +9,15 @@ ordering of dependent calls and preventing race conditions.
 
 from configparser import ConfigParser
 from logging import getLogger
-from typing import List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 import sys
 
 from qtpy.QtCore import QObject, Qt, Signal
 
 from ... import api
+from ...api._list_apis import _iter_farms_by_region
+from ...api._session import _resolve_region
+from ...exceptions import DeadlineOperationError
 from ...job_bundle.parameters import JobParameter
 from ._async_runner import AsyncTaskRunner
 
@@ -24,6 +27,22 @@ logger = getLogger(__name__)
 
 # Type alias for resource lists: [(display_name, id), ...]
 ResourceList = List[Tuple[str, str]]
+
+# Type alias for farm options, which additionally carry the farm's region per the
+# (region, farm_id) ordering convention: [(label, farm_id, region), ...].
+FarmList = List[Tuple[str, str, str]]
+
+
+def _farm_label(display_name: str, region: str) -> str:
+    """
+    Builds a farm combo-box label, region first per the (region, farm_id) convention.
+
+    e.g. ``(us-west-2) My Farm``. When the region is unknown/empty (legacy
+    single-region responses), fall back to just the display name.
+    """
+    if region:
+        return f"({region}) {display_name}"
+    return display_name
 
 
 class DeadlineUIController(QObject):
@@ -51,7 +70,16 @@ class DeadlineUIController(QObject):
         controller.refresh_farms()
 
     Signals:
-        farms_updated: Emitted when farm list is updated. Args: [(name, farm_id), ...]
+        farms_updated: Emitted when the farm list is (re)set wholesale. Args:
+            [(label, farm_id, region), ...]. For multi-region refreshes this is
+            emitted once with an empty list at the start of a refresh (to clear the
+            box); farms then arrive incrementally via farms_appended.
+        farms_appended: Emitted per region as that region's ListFarms completes, so
+            the combo box fills in incrementally and a slow region does not delay
+            farms that already came back. Args: [(label, farm_id, region), ...]
+        farm_region_warning: Emitted when a single region's ListFarms fails during a
+            multi-region refresh. Non-blocking: surviving regions' farms still show.
+            Args: (region, exception)
         queues_updated: Emitted when queue list is updated. Args: [(name, queue_id), ...]
         storage_profiles_updated: Emitted when storage profiles are updated.
         queue_parameters_updated: Emitted when queue parameters are loaded.
@@ -67,6 +95,8 @@ class DeadlineUIController(QObject):
     # ─────────────────────────────────────────────────────────────
 
     farms_updated = Signal(list)
+    farms_appended = Signal(list)
+    farm_region_warning = Signal(str, BaseException)
     queues_updated = Signal(list)
     storage_profiles_updated = Signal(list)
     queue_parameters_updated = Signal(list)
@@ -125,6 +155,14 @@ class DeadlineUIController(QObject):
         self._current_farm_id: str = ""
         self._current_queue_id: str = ""
 
+        # Maps farm_id -> region, populated as farms stream in from each region.
+        # Used so downstream queue/storage-profile calls target the farm's region
+        # rather than the session default. Reset at the start of each farm refresh.
+        self._farm_regions: Dict[str, str] = {}
+        # Multi-region refresh outcome tracking (to detect the all-fail case).
+        self._farms_any_succeeded: bool = False
+        self._farms_any_failed: bool = False
+
     # ─────────────────────────────────────────────────────────────
     # Configuration
     # ─────────────────────────────────────────────────────────────
@@ -157,35 +195,110 @@ class DeadlineUIController(QObject):
         """Currently selected queue ID."""
         return self._current_queue_id
 
+    def region_for_farm(self, farm_id: str) -> Optional[str]:
+        """
+        Returns the region a farm was discovered in during the last refresh, or None.
+
+        Resolution order: the region observed while streaming farms in this session,
+        then the per-farm persisted ``defaults.farm_region`` setting (so it works even
+        before a refresh has run, e.g. right after dialog open). Returns None when
+        unknown, which lets callers fall back to the session/profile region.
+
+        Because ``defaults.farm_region`` is keyed per farm (it depends on
+        ``defaults.farm_id``), the persisted lookup is scoped to *this* ``farm_id`` via
+        ``_resolve_region`` — selecting a non-default farm must not leak the default
+        farm's region.
+        """
+        region = self._farm_regions.get(farm_id)
+        if region:
+            return region
+        return _resolve_region(config=self._config, farm_id=farm_id)
+
     # ─────────────────────────────────────────────────────────────
     # Farm Operations
     # ─────────────────────────────────────────────────────────────
 
     def refresh_farms(self) -> None:
-        """Fetch the list of farms asynchronously."""
+        """
+        Fetch the list of farms across all regions, incrementally.
+
+        Consumes the streaming :func:`_iter_farms_by_region` generator so farm
+        options are surfaced to the UI as each region's ListFarms completes (out of
+        order). A slow region does not delay farms that have already returned.
+
+        Emission sequence:
+          - ``farms_updated([])`` once up front to clear the box (without losing the
+            user's current selection — the combo box preserves selection on appends).
+          - ``farms_appended([...])`` per successful region as it arrives.
+          - ``farm_region_warning(region, exc)`` per region that fails (non-blocking).
+          - ``operation_failed`` only if *every* region fails (zero successes).
+        """
+        # Reset per-refresh region tracking; clear the box for the new results.
+        self._farm_regions = {}
+        self._farms_any_succeeded = False
+        self._farms_any_failed = False
         self.farms_loading.emit(True)
-        self._task_runner.run(
+        self.farms_updated.emit([])
+        self._task_runner.run_streaming(
             operation_key="list_farms",
-            fn=self._fetch_farms,
-            on_success=self._on_farms_success,
+            fn=self._iter_farms_by_region,
+            on_progress=self._on_farms_region_result,
+            on_finished=self._on_farms_stream_finished,
             on_error=self._on_farms_error,
         )
 
-    def _fetch_farms(self) -> ResourceList:
-        """Fetch farms from API. Runs in background thread."""
-        response = api.list_farms(config=self._config)
-        return sorted(
-            [(item["displayName"], item["farmId"]) for item in response["farms"]],
-            key=lambda item: (item[0].casefold(), item[1]),
-        )
+    def _iter_farms_by_region(
+        self,
+    ) -> Iterator[Tuple[str, Optional[List[dict]], Optional[BaseException]]]:
+        """Yield each region's ListFarms result as it completes. Runs in a thread."""
+        return _iter_farms_by_region(config=self._config)
 
-    def _on_farms_success(self, farms: ResourceList) -> None:
-        """Handle successful farm list fetch."""
+    def _on_farms_region_result(
+        self,
+        region_result: Tuple[str, Optional[List[dict]], Optional[BaseException]],
+    ) -> None:
+        """
+        Handle a single region's streamed ListFarms result (main thread).
+
+        Per the (region, farm_id) convention each tuple leads with the region.
+        Success appends that region's farms; failure emits a non-blocking warning.
+        """
+        region, farms, exc = region_result
+        if exc is not None:
+            self._farms_any_failed = True
+            # AccessDeniedException is expected when a region isn't opted-in / lacks perms.
+            error_name = type(exc).__name__
+            if "AccessDeniedException" in error_name:
+                logger.debug("Could not fetch farms in region %s: %s", region, exc)
+            else:
+                logger.warning("Failed to list farms in region %s: %s", region, exc)
+            self.farm_region_warning.emit(region, exc)
+            return
+
+        self._farms_any_succeeded = True
+        farm_options: FarmList = []
+        for item in farms or []:
+            farm_id = item["farmId"]
+            self._farm_regions[farm_id] = region
+            farm_options.append((_farm_label(item["displayName"], region), farm_id, region))
+
+        farm_options.sort(key=lambda option: (option[0].casefold(), option[1]))
+        # Append this region's farms; the combo box adds them without resetting selection.
+        self.farms_appended.emit(farm_options)
+
+    def _on_farms_stream_finished(self) -> None:
+        """Handle completion of the multi-region farm stream (main thread)."""
         self.farms_loading.emit(False)
-        self.farms_updated.emit(farms)
+        # If no region succeeded but at least one failed, surface a hard error so the
+        # combo box can show the failed state rather than an empty success.
+        if not self._farms_any_succeeded and self._farms_any_failed:
+            self.operation_failed.emit(
+                "list_farms",
+                DeadlineOperationError("Failed to list farms in all regions."),
+            )
 
     def _on_farms_error(self, error: BaseException) -> None:
-        """Handle farm list fetch error."""
+        """Handle a fatal farm stream error (e.g. all regions failed in the API layer)."""
         # AccessDeniedException is expected when credentials are invalid or expired.
         # Don't log this as an exception.
         error_name = type(error).__name__
@@ -214,6 +327,7 @@ class DeadlineUIController(QObject):
             self.queues_updated.emit([])
             return
 
+        region = self.region_for_farm(farm_id)
         self.queues_loading.emit(True)
         self._task_runner.run(
             operation_key="list_queues",
@@ -221,11 +335,12 @@ class DeadlineUIController(QObject):
             on_success=self._on_queues_success,
             on_error=self._on_queues_error,
             farm_id=farm_id,
+            region=region,
         )
 
-    def _fetch_queues(self, farm_id: str) -> ResourceList:
-        """Fetch queues from API. Runs in background thread."""
-        response = api.list_queues(config=self._config, farmId=farm_id)
+    def _fetch_queues(self, farm_id: str, region: Optional[str] = None) -> ResourceList:
+        """Fetch queues from API in the farm's region. Runs in background thread."""
+        response = api.list_queues(config=self._config, region=region, farmId=farm_id)
         return sorted(
             [(item["displayName"], item["queueId"]) for item in response["queues"]],
             key=lambda item: (item[0].casefold(), item[1]),
@@ -273,6 +388,7 @@ class DeadlineUIController(QObject):
             self.storage_profiles_updated.emit([])
             return
 
+        region = self.region_for_farm(farm_id)
         self.storage_profiles_loading.emit(True)
         self._task_runner.run(
             operation_key="list_storage_profiles",
@@ -281,9 +397,12 @@ class DeadlineUIController(QObject):
             on_error=self._on_storage_profiles_error,
             farm_id=farm_id,
             queue_id=queue_id,
+            region=region,
         )
 
-    def _fetch_storage_profiles(self, farm_id: str, queue_id: str) -> ResourceList:
+    def _fetch_storage_profiles(
+        self, farm_id: str, queue_id: str, region: Optional[str] = None
+    ) -> ResourceList:
         """Fetch storage profiles from API. Runs in background thread."""
         # Determine current OS for filtering
         if sys.platform.startswith("linux"):
@@ -296,7 +415,7 @@ class DeadlineUIController(QObject):
             current_os = "unknown"
 
         response = api.list_storage_profiles_for_queue(
-            config=self._config, farmId=farm_id, queueId=queue_id
+            config=self._config, region=region, farmId=farm_id, queueId=queue_id
         )
 
         profiles: ResourceList = []

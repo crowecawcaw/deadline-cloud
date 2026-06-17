@@ -5,12 +5,14 @@ Tests for the CLI job commands.
 """
 
 import pytest
-from unittest.mock import patch, call
+from unittest.mock import MagicMock, patch, call
 
 import click
 from click.testing import CliRunner
 
 from deadline.client.cli import main
+from deadline.client.cli._groups import job_group
+from deadline.client.config import config_file
 from ..shared_constants import (
     MOCK_FARM_ID,
     MOCK_JOB_ID,
@@ -285,6 +287,52 @@ Requeued a total of 1 tasks.
             targetRunStatus="PENDING",
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    "configured_region,expected_region_name",
+    [("eu-west-1", "eu-west-1"), (None, None)],
+)
+def test_cli_job_requeue_tasks_scopes_requeues_client_to_region(
+    configured_region, expected_region_name, fresh_deadline_config, deadline_mock
+):
+    """
+    The requeues client (with the adaptive-retry config) is created with region_name
+    scoped to the farm's region when defaults.farm_region is set, while still keeping
+    the custom retry config. When no region is configured, region_name is not passed.
+    """
+    add_mocks_for_job_requeue_tasks(deadline_mock)
+
+    config_file.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config_file.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+    config_file.set_setting("defaults.job_id", MOCK_JOB_ID)
+    if configured_region:
+        config_file.set_setting("defaults.farm_region", configured_region)
+
+    # Replace the boto3 session used for the requeues client so we can inspect how the
+    # client is constructed. The read client (get_job/list_steps/list_tasks) still uses
+    # the real, moto-backed path through api.get_boto3_client.
+    fake_session = MagicMock()
+    with (
+        patch.object(job_group.api, "get_boto3_session", return_value=fake_session),
+        patch.object(click, "confirm", return_value=True),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["job", "requeue-tasks", "--run-status", "FAILED"])
+
+    assert result.exit_code == 0, result.output
+
+    # The requeues client must be built off the provided session with the adaptive retry config.
+    fake_session.client.assert_called_once()
+    client_call = fake_session.client.call_args
+    assert client_call.args[0] == "deadline"
+    requeues_config = client_call.kwargs["config"]
+    assert requeues_config.retries == {"mode": "adaptive", "total_max_attempts": 5}
+
+    if expected_region_name is None:
+        assert "region_name" not in client_call.kwargs
+    else:
+        assert client_call.kwargs["region_name"] == expected_region_name
 
 
 def test_cli_job_requeue_tasks_multiple_statuses(fresh_deadline_config, deadline_mock):

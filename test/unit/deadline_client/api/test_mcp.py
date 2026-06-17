@@ -480,3 +480,129 @@ class TestSearchJobs:
 
         with pytest.raises(ValueError, match="queue_ids is required"):
             search_jobs()
+
+
+class TestMcpRegionScoping:
+    """
+    Each per-farm MCP function must scope its deadline client to the farm's region.
+
+    When no explicit region is passed, the region is resolved for the given farm_id via
+    _resolve_region(config, farm_id=farm_id). An explicit region overrides that.
+    """
+
+    def test_get_job_resolves_region_from_farm(self):
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
+            mock_resolve.return_value = "eu-west-1"
+            mock_get_client.return_value = MagicMock()
+
+            get_job(farm_id=MOCK_FARM_ID, queue_id=MOCK_QUEUE_ID, job_id=MOCK_JOB_ID)
+
+            mock_resolve.assert_called_once_with(config=None, region=None, farm_id=MOCK_FARM_ID)
+            assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
+
+    def test_get_session_resolves_region_from_farm(self):
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
+            mock_resolve.return_value = "eu-west-1"
+            mock_get_client.return_value = MagicMock()
+
+            get_session(
+                farm_id=MOCK_FARM_ID,
+                queue_id=MOCK_QUEUE_ID,
+                job_id=MOCK_JOB_ID,
+                session_id=MOCK_SESSION_ID,
+            )
+
+            mock_resolve.assert_called_once_with(config=None, region=None, farm_id=MOCK_FARM_ID)
+            assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
+
+    def test_list_sessions_resolves_region_from_farm(self):
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
+            mock_resolve.return_value = "eu-west-1"
+            deadline_mock = MagicMock()
+            deadline_mock.list_sessions.return_value = {"sessions": []}
+            mock_get_client.return_value = deadline_mock
+
+            list_sessions(farm_id=MOCK_FARM_ID, queue_id=MOCK_QUEUE_ID, job_id=MOCK_JOB_ID)
+
+            mock_resolve.assert_called_once_with(config=None, region=None, farm_id=MOCK_FARM_ID)
+            assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
+
+    def test_list_steps_resolves_region_from_farm(self):
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
+            mock_resolve.return_value = "eu-west-1"
+            deadline_mock = MagicMock()
+            deadline_mock.list_steps.return_value = {"steps": []}
+            mock_get_client.return_value = deadline_mock
+
+            list_steps(farm_id=MOCK_FARM_ID, queue_id=MOCK_QUEUE_ID, job_id=MOCK_JOB_ID)
+
+            mock_resolve.assert_called_once_with(config=None, region=None, farm_id=MOCK_FARM_ID)
+            assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
+
+    def test_list_tasks_resolves_region_from_farm(self):
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
+            mock_resolve.return_value = "eu-west-1"
+            deadline_mock = MagicMock()
+            deadline_mock.list_tasks.return_value = {"tasks": []}
+            mock_get_client.return_value = deadline_mock
+
+            list_tasks(
+                farm_id=MOCK_FARM_ID,
+                queue_id=MOCK_QUEUE_ID,
+                job_id=MOCK_JOB_ID,
+                step_id=MOCK_STEP_ID,
+            )
+
+            mock_resolve.assert_called_once_with(config=None, region=None, farm_id=MOCK_FARM_ID)
+            assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
+
+    def test_search_jobs_resolves_region_from_farm(self, fresh_deadline_config):
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
+            mock_resolve.return_value = "eu-west-1"
+            deadline_mock = MagicMock()
+            deadline_mock.search_jobs.return_value = MOCK_SEARCH_JOBS_RESPONSE
+            mock_get_client.return_value = deadline_mock
+
+            search_jobs(farm_id=MOCK_FARM_ID, queue_ids=[MOCK_QUEUE_ID])
+
+            mock_resolve.assert_called_once_with(config=None, region=None, farm_id=MOCK_FARM_ID)
+            assert mock_get_client.call_args.kwargs.get("region") == "eu-west-1"
+
+    def test_explicit_region_passed_through(self):
+        """An explicit region argument is forwarded to _resolve_region (and wins)."""
+        with (
+            patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client,
+            patch("deadline.client.api._mcp._resolve_region") as mock_resolve,
+        ):
+            mock_resolve.return_value = "ap-south-1"
+            mock_get_client.return_value = MagicMock()
+
+            get_job(
+                farm_id=MOCK_FARM_ID,
+                queue_id=MOCK_QUEUE_ID,
+                job_id=MOCK_JOB_ID,
+                region="ap-south-1",
+            )
+
+            mock_resolve.assert_called_once_with(
+                config=None, region="ap-south-1", farm_id=MOCK_FARM_ID
+            )
+            assert mock_get_client.call_args.kwargs.get("region") == "ap-south-1"

@@ -33,6 +33,7 @@ def cli_fleet():
 @cli_fleet.command(name="list")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @_handle_error
 def fleet_list(**args):
     """
@@ -69,6 +70,7 @@ def fleet_list(**args):
 @click.option(
     "--queue-id", help="If no fleet is provided, gets the fleets associated with this queue."
 )
+@click.option("--region", help="The AWS region of the farm.")
 @_handle_error
 def fleet_get(fleet_id, queue_id, **args):
     """

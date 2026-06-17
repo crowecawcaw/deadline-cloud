@@ -27,6 +27,7 @@ from ._batch_get import batch_get
 @click.command(name="trace-schedule", cls=ContextTrackingCommand)
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to trace.")
 @click.option("-v", "--verbose", is_flag=True, help="Output verbose trace details.")

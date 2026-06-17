@@ -22,6 +22,7 @@ from deadline.client.api._submit_job_bundle import hashing_telemetry_callback
 from deadline.client import api
 from deadline.client.api._session import (
     _get_queue_user_boto3_session,
+    _resolve_region,
     get_default_client_config,
 )
 from deadline.client.config import config_file
@@ -283,6 +284,7 @@ def manifest_diff(
 @click.option("--step-id", help="The AWS Deadline Cloud Step to get. ")
 @click.option("--farm-id", help="The AWS Deadline Cloud Farm to use. ")
 @click.option("--queue-id", help="The AWS Deadline Cloud Queue to use. ")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option(
     "--asset-type",
     default=AssetType.ALL.value,
@@ -329,8 +331,16 @@ def manifest_download(
     farm_id: str = config_file.get_setting("defaults.farm_id", config=config)
 
     boto3_session: boto3.Session = api.get_boto3_session(config=config)
-    # Deadline Client and get the Queue to download.
-    deadline_client = boto3_session.client("deadline", config=get_default_client_config())
+    # Deadline Client and get the Queue to download. This operates within a single farm, so
+    # scope the client to that farm's region. _resolve_region returns None when nothing is
+    # configured; only pass region_name when resolved.
+    region = _resolve_region(config=config, farm_id=farm_id)
+    if region is not None:
+        deadline_client = boto3_session.client(
+            "deadline", config=get_default_client_config(), region_name=region
+        )
+    else:
+        deadline_client = boto3_session.client("deadline", config=get_default_client_config())
     queue: dict = deadline_client.get_queue(
         farmId=farm_id,
         queueId=queue_id,
@@ -338,13 +348,14 @@ def manifest_download(
     # Queue's Job Attachment settings.
     queue_s3_settings = JobAttachmentS3Settings(**queue["jobAttachmentSettings"])
 
-    # assume queue role - session permissions
+    # assume queue role - session permissions, scoped to the same farm region as above.
     queue_role_session: boto3.Session = _get_queue_user_boto3_session(
         deadline=deadline_client,
         base_session=boto3_session,
         farm_id=farm_id,
         queue_id=queue_id,
         queue_display_name=queue["displayName"],
+        region=region,
     )
 
     output = _manifest_download(
@@ -381,6 +392,7 @@ def manifest_download(
     "--queue-id",
     help="The AWS Deadline Cloud Queue to use. Alternative to using --s3-cas-uri.",
 )
+@click.option("--region", help="The AWS region of the farm.")
 @click.option(
     "--json",
     default=None,

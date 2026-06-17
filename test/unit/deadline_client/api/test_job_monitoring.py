@@ -836,6 +836,158 @@ def test_get_worker_logs_with_monitor_credentials():
         )
 
 
+def test_get_worker_logs_fleet_session_uses_resolved_farm_region():
+    """
+    get_worker_logs must scope the fleet-credentials logs client to the FARM's region
+    (resolved from defaults.farm_region), not the session/profile region. Worker logs for
+    a farm in region X live in region X.
+    """
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch(
+            "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
+        ) as mock_get_user,
+        patch("deadline.client.api._job_monitoring._resolve_region") as mock_resolve_region,
+        patch("deadline.client.api._job_monitoring.boto3") as mock_boto3,
+    ):
+        mock_get_user.return_value = ("user-123", "identity-store-456")
+        mock_resolve_region.return_value = "eu-central-1"
+
+        deadline_mock = MagicMock()
+        deadline_mock.assume_fleet_role_for_read.return_value = {
+            "credentials": {
+                "accessKeyId": "AKIA...",
+                "secretAccessKey": "secret",
+                "sessionToken": "token",
+            }
+        }
+        mock_get_client.return_value = deadline_mock
+
+        logs_client_mock = MagicMock()
+        logs_client_mock.get_log_events.return_value = MOCK_GET_LOG_EVENTS_RESPONSE
+        fleet_session_mock = MagicMock()
+        fleet_session_mock.client.return_value = logs_client_mock
+        mock_boto3.Session.return_value = fleet_session_mock
+
+        get_worker_logs(
+            farm_id=MOCK_FARM_ID,
+            fleet_id=MOCK_FLEET_ID,
+            worker_id=MOCK_WORKER_ID,
+        )
+
+        # Region is resolved for THIS farm.
+        mock_resolve_region.assert_called_once_with(config=None, farm_id=MOCK_FARM_ID)
+        # The deadline client used to assume the fleet role is scoped to the farm region.
+        assert mock_get_client.call_args.kwargs.get(
+            "region"
+        ) == "eu-central-1" or mock_get_client.call_args.args[1:] == ("eu-central-1",)
+        # The fleet-credentials logs client is created in the farm region.
+        fleet_session_mock.client.assert_called_once_with(
+            "logs", region_name="eu-central-1", config=ANY
+        )
+
+
+def test_get_worker_logs_fleet_session_falls_back_to_session_region():
+    """
+    With no farm_region configured (_resolve_region -> None), get_worker_logs falls back
+    to the base session region for the fleet logs client (preserving prior behavior).
+    """
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch(
+            "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
+        ) as mock_get_user,
+        patch("deadline.client.api._job_monitoring._resolve_region") as mock_resolve_region,
+        patch("deadline.client.api._job_monitoring.get_boto3_session") as mock_get_session,
+        patch("deadline.client.api._job_monitoring.boto3") as mock_boto3,
+    ):
+        mock_get_user.return_value = ("user-123", "identity-store-456")
+        mock_resolve_region.return_value = None
+
+        deadline_mock = MagicMock()
+        deadline_mock.assume_fleet_role_for_read.return_value = {
+            "credentials": {
+                "accessKeyId": "AKIA...",
+                "secretAccessKey": "secret",
+                "sessionToken": "token",
+            }
+        }
+        mock_get_client.return_value = deadline_mock
+
+        base_session_mock = MagicMock()
+        base_session_mock.region_name = "us-west-2"
+        mock_get_session.return_value = base_session_mock
+
+        logs_client_mock = MagicMock()
+        logs_client_mock.get_log_events.return_value = MOCK_GET_LOG_EVENTS_RESPONSE
+        fleet_session_mock = MagicMock()
+        fleet_session_mock.client.return_value = logs_client_mock
+        mock_boto3.Session.return_value = fleet_session_mock
+
+        get_worker_logs(
+            farm_id=MOCK_FARM_ID,
+            fleet_id=MOCK_FLEET_ID,
+            worker_id=MOCK_WORKER_ID,
+        )
+
+        fleet_session_mock.client.assert_called_once_with(
+            "logs", region_name="us-west-2", config=ANY
+        )
+
+
+def test_get_session_logs_resolves_farm_region():
+    """get_session_logs scopes its deadline client to the farm's resolved region."""
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch(
+            "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
+        ) as mock_get_user,
+        patch("deadline.client.api._job_monitoring._resolve_region") as mock_resolve_region,
+    ):
+        mock_get_user.return_value = (None, None)
+        mock_resolve_region.return_value = "ap-northeast-1"
+
+        deadline_mock = MagicMock()
+        deadline_mock.get_log_events.return_value = MOCK_GET_LOG_EVENTS_RESPONSE
+        mock_get_client.return_value = deadline_mock
+
+        get_session_logs(
+            farm_id=MOCK_FARM_ID,
+            queue_id=MOCK_QUEUE_ID,
+            session_id="session-0123456789abcdefabcdefabcdefabcd",
+        )
+
+        mock_resolve_region.assert_called_once_with(config=None, farm_id=MOCK_FARM_ID)
+        # The deadline client is built with the resolved farm region.
+        deadline_calls = [
+            c for c in mock_get_client.call_args_list if c.args and c.args[0] == "deadline"
+        ]
+        assert deadline_calls
+        assert deadline_calls[0].kwargs.get("region") == "ap-northeast-1"
+
+
+def test_wait_for_job_completion_resolves_farm_region():
+    """wait_for_job_completion scopes its deadline client to the farm's resolved region."""
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch("deadline.client.api._job_monitoring._resolve_region") as mock_resolve_region,
+    ):
+        mock_resolve_region.return_value = "ap-southeast-2"
+
+        deadline_mock = MagicMock()
+        deadline_mock.get_job.return_value = MOCK_JOB_SUCCEEDED
+        mock_get_client.return_value = deadline_mock
+
+        wait_for_job_completion(
+            farm_id=MOCK_FARM_ID,
+            queue_id=MOCK_QUEUE_ID,
+            job_id=MOCK_JOB_ID,
+        )
+
+        mock_resolve_region.assert_called_once_with(config=None, farm_id=MOCK_FARM_ID)
+        mock_get_client.assert_called_once_with("deadline", config=None, region="ap-southeast-2")
+
+
 def test_get_worker_logs_resource_not_found():
     """
     Test that get_worker_logs handles ResourceNotFoundException correctly.

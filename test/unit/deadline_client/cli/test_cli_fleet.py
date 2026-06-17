@@ -75,6 +75,37 @@ def test_cli_fleet_list(fresh_deadline_config, mock_telemetry):
         assert result.exit_code == 0
 
 
+def test_cli_fleet_list_region_reaches_client(fresh_deadline_config, mock_telemetry):
+    """
+    Passing --region persists `defaults.farm_region` and scopes the deadline client
+    to that region (it reaches get_session_client).
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+
+    with (
+        patch.object(api._session, "get_boto3_session") as session_mock,
+        patch.object(api._session, "get_session_client") as get_session_client_mock,
+    ):
+        get_session_client_mock().list_fleets.return_value = {"fleets": MOCK_FLEETS_LIST}
+        get_session_client_mock.reset_mock()
+        get_session_client_mock.return_value.list_fleets.return_value = {"fleets": MOCK_FLEETS_LIST}
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["fleet", "list", "--region", "us-east-1"])
+
+        assert result.exit_code == 0
+        # The deadline client was created scoped to the requested region.
+        assert any(
+            call.kwargs.get("region") == "us-east-1"
+            and call.kwargs.get("service_name") == "deadline"
+            for call in get_session_client_mock.call_args_list
+        )
+        # The region was persisted to the per-farm region config setting.
+        assert config.get_setting("defaults.farm_region") == "us-east-1"
+        # Don't leak the boto3 session mock as unused.
+        assert session_mock is not None
+
+
 def test_cli_fleet_list_client_error(fresh_deadline_config):
     config.set_setting("defaults.farm_id", MOCK_FARM_ID)
 
@@ -230,7 +261,7 @@ def test_cli_fleet_get_override_profile(fresh_deadline_config):
             ["fleet", "get", "--profile", "NonDefaultProfileName", "--fleet-id", MOCK_FLEET_ID],
         )
 
-        session_mock.assert_called_once_with(profile_name="NonDefaultProfileName")
+        session_mock.assert_called_once_with(profile_name="NonDefaultProfileName", region_name=None)
         session_mock().client().get_fleet.assert_called_once_with(
             farmId="farm-overriddenid", fleetId=MOCK_FLEET_ID
         )
