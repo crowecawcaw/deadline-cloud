@@ -8,7 +8,11 @@ import pytest
 from unittest.mock import Mock
 
 try:
-    from deadline.client.ui.controllers._async_task import AsyncTask, WorkerSignals
+    from deadline.client.ui.controllers._async_task import (
+        AsyncTask,
+        StreamingAsyncTask,
+        WorkerSignals,
+    )
 except ImportError:
     pytest.importorskip("deadline.client.ui.controllers._async_task")
 
@@ -209,3 +213,111 @@ class TestAsyncTask:
         task = AsyncTask(fn)
 
         assert task.autoDelete() is True
+
+
+class TestStreamingAsyncTask:
+    """Tests for StreamingAsyncTask, the progressive-result variant of AsyncTask."""
+
+    def test_run_emits_progress_per_item_then_terminal_result(self, qtbot):
+        """Each yielded item is emitted via progress; a single terminal result follows."""
+        task = StreamingAsyncTask(lambda: iter(["a", "b", "c"]))
+
+        progress = []
+        results = []
+        finished = []
+        task.signals.progress.connect(lambda x: progress.append(x))
+        task.signals.result.connect(lambda x: results.append(x))
+        task.signals.finished.connect(lambda: finished.append(True))
+
+        task.run()
+
+        assert progress == ["a", "b", "c"]
+        # Terminal result carries no aggregate payload (progress already delivered items).
+        assert results == [None]
+        assert finished == [True]
+
+    def test_run_does_not_execute_if_canceled_before_start(self, qtbot):
+        """A task canceled before start emits nothing and does not consume the generator."""
+        consumed = []
+
+        def gen():
+            consumed.append("started")
+            yield "a"
+
+        task = StreamingAsyncTask(gen)
+
+        progress = []
+        task.signals.progress.connect(lambda x: progress.append(x))
+
+        task.cancel()
+        task.run()
+
+        assert consumed == []
+        assert progress == []
+
+    def test_run_stops_emitting_progress_after_cancel_mid_stream(self, qtbot):
+        """
+        The in-loop cancellation guard: once canceled mid-stream, no further progress
+        items and no terminal result are emitted (no stale partial updates after a
+        superseded refresh). This directly exercises the per-item _is_canceled check.
+        """
+        progress = []
+        results = []
+        finished = []
+
+        def gen():
+            yield "a"
+            # Cancel after the first item is yielded; the loop must not emit "b"/"c".
+            task.cancel()
+            yield "b"
+            yield "c"
+
+        task = StreamingAsyncTask(gen)
+        task.signals.progress.connect(lambda x: progress.append(x))
+        task.signals.result.connect(lambda x: results.append(x))
+        task.signals.finished.connect(lambda: finished.append(True))
+
+        task.run()
+
+        # Only the item yielded before cancellation was delivered.
+        assert progress == ["a"]
+        # No terminal result and no finished emission after cancellation.
+        assert results == []
+        assert finished == []
+
+    def test_run_does_not_emit_error_if_canceled_during_execution(self, qtbot):
+        """A generator that raises after cancellation must not emit an error signal."""
+
+        def gen():
+            yield "a"
+            task.cancel()
+            raise ValueError("boom")
+
+        task = StreamingAsyncTask(gen)
+
+        errors = []
+        task.signals.error.connect(lambda e: errors.append(e))
+
+        task.run()
+
+        assert errors == []
+
+    def test_run_emits_error_when_generator_raises(self, qtbot):
+        """A generator that raises (without cancellation) routes to the error signal."""
+        test_error = ValueError("boom")
+
+        def gen():
+            yield "a"
+            raise test_error
+
+        task = StreamingAsyncTask(gen)
+
+        progress = []
+        errors = []
+        task.signals.progress.connect(lambda x: progress.append(x))
+        task.signals.error.connect(lambda e: errors.append(e))
+
+        task.run()
+
+        assert progress == ["a"]
+        assert errors == [test_error]

@@ -38,6 +38,100 @@ DEFAULT_DEADLINE_ENDPOINT_URL = os.getenv(
     f"https://deadline.{boto3.Session().region_name}.amazonaws.com",
 )
 
+# Environment variable that, if set, points all Deadline Cloud clients at a single
+# explicit endpoint (boto3 honors it natively). The list-farms fan-out treats its
+# presence as a single-region signal (see _list_apis._iter_farms_by_region).
+AWS_ENDPOINT_URL_DEADLINE_ENV_VAR = "AWS_ENDPOINT_URL_DEADLINE"
+
+# Environment variable that, if set, overrides which AWS regions Deadline Cloud is
+# scanned across (comma-separated list of region names).
+DEADLINE_REGIONS_ENV_VAR = "DEADLINE_CLOUD_REGIONS"
+
+# Curated list of AWS commercial regions where AWS Deadline Cloud is available.
+#
+# Source of truth: the AWS Deadline Cloud "Service endpoints" table at
+# https://docs.aws.amazon.com/general/latest/gr/deadlinecloud.html
+# (last reconciled 2026-06-08). Keep this list in sync with that page.
+#
+# This hardcoded list is the default set of regions scanned during the list-farms
+# fan-out. We don't auto-discover regions at runtime (botocore's
+# get_available_regions("deadline") returns [] -- deadline is absent from its
+# endpoints.json -- and querying SSM on every CLI call isn't worth the latency).
+# Because it's hardcoded, this list may go stale as AWS Deadline Cloud launches in
+# new regions, so it MUST be updated when the service-endpoints page above changes.
+# Users can override it without waiting for a release via the DEADLINE_CLOUD_REGIONS
+# env var or the settings.deadline_regions config setting (see get_deadline_regions).
+DEADLINE_REGIONS: List[str] = [
+    "us-east-1",
+    "us-east-2",
+    "us-west-2",
+    "ap-northeast-1",
+    "ap-northeast-2",
+    "ap-southeast-1",
+    "ap-southeast-2",
+    "eu-central-1",
+    "eu-west-1",
+    "eu-west-2",
+]
+
+
+def _dedupe_preserve_order(items: List[str]) -> List[str]:
+    """Returns the items de-duplicated while preserving first-seen order."""
+    seen: set = set()
+    result: List[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _split_regions_csv(value: str) -> List[str]:
+    """Splits a comma-separated region string into a cleaned list of region names."""
+    return [region.strip() for region in value.split(",") if region.strip()]
+
+
+def get_deadline_regions(config: Optional[ConfigParser] = None) -> List[str]:
+    """
+    Gets the list of AWS regions where AWS Deadline Cloud should be scanned.
+
+    The list is resolved using the following precedence:
+    1. The ``DEADLINE_CLOUD_REGIONS`` environment variable (comma-separated), if set.
+    2. The ``settings.deadline_regions`` config setting (comma-separated), if set.
+    3. The curated ``DEADLINE_REGIONS`` list (see the constant for where it comes from
+       and how to keep it current).
+
+    Regions are not auto-discovered at runtime: the curated list is the default, and a
+    user who needs a different set overrides it via the env var or config setting above.
+
+    Args:
+        config (ConfigParser, optional): The AWS Deadline Cloud config to read the
+            ``settings.deadline_regions`` override from. When omitted, the live on-disk
+            config is read. Passing it through matters when a caller is operating on an
+            in-memory config (e.g. a CLI ``--profile`` override that hasn't been persisted)
+            so the region set honors that config rather than the global one.
+
+    Returns:
+        A de-duplicated, order-preserving list of region names.
+    """
+    # 1. Environment variable override
+    env_value = os.getenv(DEADLINE_REGIONS_ENV_VAR)
+    if env_value and env_value.strip():
+        regions = _split_regions_csv(env_value)
+        if regions:
+            return _dedupe_preserve_order(regions)
+
+    # 2. Config setting override
+    config_value = get_setting("settings.deadline_regions", config=config)
+    if config_value and config_value.strip():
+        regions = _split_regions_csv(config_value)
+        if regions:
+            return _dedupe_preserve_order(regions)
+
+    # 3. Curated default
+    return _dedupe_preserve_order(list(DEADLINE_REGIONS))
+
+
 # Default directories used by various Deadline CLI commands
 DEFAULT_JOB_HISTORY_DIR = os.path.join("~", ".deadline", "job_history", "{aws_profile_name}")
 DEFAULT_CACHE_DIR = os.path.join("~", ".deadline", "cache")
@@ -87,6 +181,12 @@ SETTINGS: Dict[str, Dict[str, Any]] = {
         "section_format": "{}",
         "description": "The Farm ID to use by default.",
     },
+    "defaults.farm_region": {
+        "default": "",
+        "depend": "defaults.farm_id",
+        "section_format": "{}",
+        "description": "The AWS region of the default Farm. Empty means use the session/profile region.",
+    },
     "settings.storage_profile_id": {
         "default": "",
         "depend": _SETTING_FARM_ID,
@@ -115,6 +215,14 @@ SETTINGS: Dict[str, Dict[str, Any]] = {
     "settings.log_level": {
         "default": "WARNING",
         "description": "The logging level to use in the CLI and GUIs.",
+    },
+    "settings.deadline_regions": {
+        "default": "",
+        "description": (
+            "A comma-separated list of AWS regions to scan for Deadline Cloud farms, "
+            "overriding the auto-discovered/curated set. Empty means auto-discover the "
+            "available Deadline Cloud regions (with a curated fallback)."
+        ),
     },
     "telemetry.opt_out": {
         "default": "false",

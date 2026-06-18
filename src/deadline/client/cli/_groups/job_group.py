@@ -20,7 +20,7 @@ import textwrap
 import click
 from botocore.exceptions import ClientError
 
-from ...api._session import _modified_logging_level
+from ...api._session import _modified_logging_level, _resolve_region
 from ....job_attachments.models import (
     FileConflictResolution,
     JobAttachmentS3Settings,
@@ -146,6 +146,7 @@ def cli_job():
 @cli_job.command(name="list")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--page-size", default=5, help="The number of jobs to load at a time.")
 @click.option("--item-offset", default=0, help="The index of the job to start listing from.")
@@ -215,6 +216,7 @@ def job_list(page_size, item_offset, **args):
 @click.argument("search_term", required=False)
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to get.")
 @_handle_error
@@ -254,6 +256,7 @@ def job_get(search_term: Optional[str], **args):
 @cli_job.command(name="cancel")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to cancel.")
 @click.option(
@@ -348,6 +351,7 @@ def job_cancel(mark_as: str, yes: bool, **args):
 @cli_job.command(name="requeue-tasks")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to requeue tasks for.")
 @click.option(
@@ -398,7 +402,16 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
     requeues_client_config = get_default_client_config(
         retries=dict(mode="adaptive", total_max_attempts=5)
     )
-    deadline_client_for_requeues = session.client("deadline", config=requeues_client_config)
+    # Requeues operate within a single farm, so scope the client to that farm's region.
+    # _resolve_region returns None when nothing is configured; only pass
+    # region_name when resolved so the custom retry config is otherwise unchanged.
+    requeues_region = _resolve_region(config=config, farm_id=farm_id)
+    if requeues_region is not None:
+        deadline_client_for_requeues = session.client(
+            "deadline", config=requeues_client_config, region_name=requeues_region
+        )
+    else:
+        deadline_client_for_requeues = session.client("deadline", config=requeues_client_config)
 
     # Print a summary of the job's task run statuses
     job = deadline_client.get_job(farmId=farm_id, queueId=queue_id, jobId=job_id)
@@ -1007,6 +1020,7 @@ def _assert_valid_path(path: str) -> None:
 @cli_job.command(name="download-output")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to use.")
 @click.option("--step-id", help="The step to use.")
@@ -1282,6 +1296,7 @@ def _download_job_input(
 @cli_job.command(name="download-input")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to use.")
 @click.option(
@@ -1387,6 +1402,7 @@ def job_download_input(include, match_paths_by, output, ignore_storage_profiles,
 @cli_job.command(name="wait")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to wait for.")
 @click.option("--max-poll-interval", default=120, help="Maximum polling interval in seconds.")
@@ -1568,6 +1584,7 @@ def job_wait_for_completion(max_poll_interval, timeout, output, **args):
 @cli_job.command(name="logs")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
+@click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to get logs for.")
 @click.option(

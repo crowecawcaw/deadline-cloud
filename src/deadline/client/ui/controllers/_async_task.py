@@ -7,7 +7,7 @@ This module provides a clean pattern for running background operations
 with proper Qt signal integration and automatic cancellation handling.
 """
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from qtpy.QtCore import QObject, QRunnable, Signal
 
@@ -23,11 +23,17 @@ class WorkerSignals(QObject):
         finished: Emitted when the task completes (success or failure)
         error: Emitted with the exception when the task fails
         result: Emitted with the return value when the task succeeds
+        progress: Emitted with an intermediate value for progressive/streaming
+                  tasks. A streaming worker (one that consumes a generator) emits
+                  this once per item as the item arrives, then emits ``result``
+                  with a terminal value once the generator is exhausted. Single
+                  result tasks never emit ``progress``.
     """
 
     finished = Signal()
     error = Signal(BaseException)
     result = Signal(object)
+    progress = Signal(object)
 
 
 class AsyncTask(QRunnable):
@@ -118,6 +124,55 @@ class AsyncTask(QRunnable):
             result = self.fn(*self.args, **self.kwargs)
             if not self._is_canceled:
                 self.signals.result.emit(result)
+        except Exception as e:
+            if not self._is_canceled:
+                self.signals.error.emit(e)
+        finally:
+            if not self._is_canceled:
+                self.signals.finished.emit()
+
+
+class StreamingAsyncTask(AsyncTask):
+    """
+    A QRunnable that consumes a generator and emits a ``progress`` signal per item.
+
+    This is the progressive-result variant of :class:`AsyncTask`. The wrapped
+    callable must return an iterable/generator; each yielded item is delivered via
+    ``signals.progress`` (in arrival order, which for a fan-out generator is the
+    order regions complete, not request order). Once the generator is exhausted the
+    terminal ``signals.result`` is emitted (with ``None``) so existing
+    finished/result wiring still fires exactly once at the end.
+
+    Like the base class, all emissions are guarded by the cancellation flag so a
+    superseded refresh delivers no stale partial updates.
+
+    Args:
+        fn: A callable returning an iterator/generator to consume in the background.
+        *args: Positional arguments for fn
+        operation_id: Optional ID for tracking/cancellation
+        **kwargs: Keyword arguments for fn
+    """
+
+    def run(self) -> None:
+        """
+        Execute the streaming task in the thread pool.
+
+        Runs in a background thread. Emits ``progress`` per yielded item, a single
+        terminal ``result`` once exhausted, ``error`` if the generator raises, and
+        ``finished`` at the end. All emissions are guarded by cancellation checks.
+        """
+        if self._is_canceled:
+            return
+
+        try:
+            iterator: Iterator[Any] = iter(self.fn(*self.args, **self.kwargs))
+            for item in iterator:
+                if self._is_canceled:
+                    return
+                self.signals.progress.emit(item)
+            if not self._is_canceled:
+                # Terminal result (no aggregate payload; progress already delivered each item).
+                self.signals.result.emit(None)
         except Exception as e:
             if not self._is_canceled:
                 self.signals.error.emit(e)

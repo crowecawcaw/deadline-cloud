@@ -109,6 +109,52 @@ class TestAsyncTaskRunner:
 
         assert result_received[0] == {"data": "test"}
 
+    def test_run_streaming_emits_progress_per_item(self, qtbot):
+        """run_streaming delivers each yielded item to on_progress, then on_finished."""
+        runner = AsyncTaskRunner()
+
+        progress_received = []
+        finished_called = []
+
+        def gen():
+            yield "a"
+            yield "b"
+            yield "c"
+
+        runner.run_streaming(
+            "stream_op",
+            gen,
+            on_progress=lambda item: progress_received.append(item),
+            on_finished=lambda: finished_called.append(True),
+        )
+
+        qtbot.waitUntil(lambda: len(finished_called) > 0, timeout=2000)
+
+        assert progress_received == ["a", "b", "c"]
+        assert finished_called == [True]
+
+    def test_run_streaming_calls_on_error(self, qtbot):
+        """run_streaming routes a generator exception to on_error."""
+        runner = AsyncTaskRunner()
+
+        error_received = []
+        test_error = ValueError("boom")
+
+        def gen():
+            yield "a"
+            raise test_error
+
+        runner.run_streaming(
+            "stream_op",
+            gen,
+            on_progress=lambda item: None,
+            on_error=lambda e: error_received.append(e),
+        )
+
+        qtbot.waitUntil(lambda: len(error_received) > 0, timeout=2000)
+
+        assert error_received[0] is test_error
+
     def test_run_calls_on_error_callback(self, qtbot):
         """Test that on_error callback is called on exception."""
         runner = AsyncTaskRunner()

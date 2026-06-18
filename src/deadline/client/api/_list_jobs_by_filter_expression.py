@@ -4,7 +4,7 @@ from __future__ import annotations
 
 __all__ = ["_list_jobs_by_filter_expression"]
 
-from typing import Any
+from typing import Any, Optional
 import boto3
 
 from deadline.client.api._session import get_session_client
@@ -23,6 +23,7 @@ def _list_jobs_by_filter_expression(
     farm_id: str,
     queue_id: str,
     filter_expression: dict[str, Any],
+    region: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """
     This function retrieves all jobs in the queue that satisfy a provided filter expression, except potentially
@@ -62,6 +63,8 @@ def _list_jobs_by_filter_expression(
       queue_id (str): The Queue ID.
       filter_expressions (dict[str, Any]): The filter expression to apply to jobs. This is nested one level in a
             filter expression provided to deadline:SearchJobs, so cannot include a groupFilter.
+      region (str, optional): The AWS region to scope the deadline client to. When None, the
+            session's default region is used.
 
     Returns:
       The list of all jobs in the queue that satisfy the provided filter expression. Each job is as returned by the deadline:SearchJobs API.
@@ -102,7 +105,7 @@ def _list_jobs_by_filter_expression(
     # This holds {job_id: job_from_search_jobs_call, ...}
     result_jobs = {}
 
-    deadline = get_session_client(boto3_session, "deadline")
+    deadline = get_session_client(boto3_session, "deadline", region=region)
 
     # Sort jobs in ascending order of the timestamp field
     sort_expressions = [{"fieldSort": {"name": "CREATED_AT", "sortOrder": "ASCENDING"}}]
