@@ -29,7 +29,8 @@ def test_cli_auth_status_json(deadline_env, run_cli, configure_cli_defaults):
 
 def test_cli_auth_status_api_available_when_backend_reachable(seeded_farm_queue, run_cli):
     # seeded_farm_queue configures defaults.farm_id + defaults.queue_id, which
-    # makes `check_deadline_api_available` actually hit the mock backend.
+    # makes the auth-status ListFarms probe actually hit the mock backend, so
+    # the derived api_availability resolves to True.
     _, _, _, env = seeded_farm_queue
     r = run_cli(env, "auth", "status", "--output", "json")
     assert r.returncode == 0, r.stderr or r.stdout

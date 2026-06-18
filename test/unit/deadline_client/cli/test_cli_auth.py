@@ -149,7 +149,8 @@ def test_cli_auth_status_json(fresh_deadline_config):
         "profile_name": profile_name,
         "source": "DEADLINE_CLOUD_MONITOR_LOGIN",
         "status": "AUTHENTICATED",
-        "api_availability": False,
+        # api_availability is derived from status: AUTHENTICATED -> True.
+        "api_availability": True,
     }
     scoped_config = {
         "credential_process": "/bin/DeadlineCloudMonitor get-credentials --profile sandbox-us-west-2",
@@ -168,7 +169,6 @@ def test_cli_auth_status_json(fresh_deadline_config):
             "check_authentication_status",
             return_value=api.AwsAuthenticationStatus.AUTHENTICATED,
         ),
-        patch.object(api, "check_deadline_api_available", return_value=False),
     ):
         # The profile name
         session_mock().profile_name = profile_name

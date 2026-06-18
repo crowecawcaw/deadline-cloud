@@ -155,15 +155,19 @@ def check_deadline_api_available(config: Optional[ConfigParser] = None) -> bool:
     Args:
         config (ConfigParser, optional): The AWS Deadline Cloud configuration
                 object to use instead of the config file.
+
+    .. deprecated::
+        Use :func:`check_authentication_status` instead, which performs the same
+        ``deadline:ListFarms`` probe but also distinguishes NEEDS_LOGIN from
+        CONFIGURATION_ERROR. This function is equivalent to checking that
+        ``check_authentication_status(config) == AwsAuthenticationStatus.AUTHENTICATED``.
     """
-    import logging
+    import warnings
 
-    from ._session import _list_farms_for_auth_probe, _modified_logging_level
-
-    with _modified_logging_level(logging.getLogger("botocore.credentials"), logging.ERROR):
-        try:
-            _list_farms_for_auth_probe(config=config)
-            return True
-        except Exception:
-            logger.exception("Error invoking ListFarms")
-            return False
+    warnings.warn(
+        "check_deadline_api_available is deprecated; use check_authentication_status "
+        "and compare against AwsAuthenticationStatus.AUTHENTICATED instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return check_authentication_status(config=config) == AwsAuthenticationStatus.AUTHENTICATED

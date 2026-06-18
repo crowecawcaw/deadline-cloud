@@ -106,8 +106,10 @@ def auth_status(output, **args):
         auth_status = api.check_authentication_status(config=config)
         auth_status_results = auth_status.name
 
-        # always returns True/False
-        api_availability_result = api.check_deadline_api_available(config=config)
+        # API availability is equivalent to being AUTHENTICATED: both rely on the
+        # same deadline:ListFarms probe. Derive it from the single status check
+        # above rather than making a second, redundant ListFarms call.
+        api_availability_result = auth_status == api.AwsAuthenticationStatus.AUTHENTICATED
 
     if not is_json_format:
         width = 17

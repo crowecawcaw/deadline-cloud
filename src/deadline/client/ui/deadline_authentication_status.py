@@ -46,7 +46,8 @@ class DeadlineAuthenticationStatus(QObject):
 
        status.creds_source: result of api.get_credentials_source()
        status.auth_status: result of api.check_authentication_status()
-       status.api_availability: result of api.check_deadline_api_available()
+       status.api_availability: True iff auth_status is AUTHENTICATED (derived
+                                from the same api.check_authentication_status() probe)
 
     To initialize the status of a non-default AWS Deadline Cloud configuration, pass in
     an AWS Deadline Cloud configuration object to config, call set_config to change it.
@@ -209,25 +210,17 @@ class DeadlineAuthenticationStatus(QObject):
         """Handle successful authentication status check."""
         self.__auth_status = result
         self.auth_status_changed.emit()
+        # API availability is equivalent to being AUTHENTICATED: both derive from
+        # the same deadline:ListFarms probe. Compute it from the status result
+        # rather than issuing a second, redundant probe.
+        self.__api_availability = result == api.AwsAuthenticationStatus.AUTHENTICATED
+        self.api_availability_changed.emit()
 
     def _on_auth_status_error(self, error: BaseException) -> None:
         """Handle authentication status check error."""
         logger.exception(error)
         self.__auth_status = api.AwsAuthenticationStatus.CONFIGURATION_ERROR
         self.auth_status_changed.emit()
-
-    def _refresh_api_availability(self) -> bool:
-        """Background task to check API availability."""
-        return api.check_deadline_api_available(config=self.config)
-
-    def _on_api_availability_success(self, result: bool) -> None:
-        """Handle successful API availability check."""
-        self.__api_availability = result
-        self.api_availability_changed.emit()
-
-    def _on_api_availability_error(self, error: BaseException) -> None:
-        """Handle API availability check error."""
-        logger.exception(error)
         self.__api_availability = False
         self.api_availability_changed.emit()
 
@@ -250,15 +243,12 @@ class DeadlineAuthenticationStatus(QObject):
             on_success=self._on_creds_source_success,
             on_error=self._on_creds_source_error,
         )
+        # The auth_status task also resolves api_availability (both rely on the
+        # same deadline:ListFarms probe), so no separate api_availability task
+        # is needed — see _on_auth_status_success / _on_auth_status_error.
         self._runner.run(
             operation_key="auth_status",
             fn=self._refresh_auth_status,
             on_success=self._on_auth_status_success,
             on_error=self._on_auth_status_error,
-        )
-        self._runner.run(
-            operation_key="api_availability",
-            fn=self._refresh_api_availability,
-            on_success=self._on_api_availability_success,
-            on_error=self._on_api_availability_error,
         )
