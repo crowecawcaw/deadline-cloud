@@ -95,6 +95,8 @@ class AuthenticationState(enum.Enum):
         NEEDS_LOGIN: User needs to log in to authenticate with a DCM profile
         CONFIGURATION_ERROR: There is a configuration issue with the AWS profile.
         UNEXPECTED_ERROR: An unknown or unexpected error occurred during authentication.
+        AUTHENTICATED_NO_API: Deprecated. The authenticated-but-no-API-access state has been
+            consolidated into the general authentication status check and is no longer used.
     """
 
     REFRESHING = enum.auto()
@@ -102,6 +104,10 @@ class AuthenticationState(enum.Enum):
     NEEDS_LOGIN = enum.auto()
     CONFIGURATION_ERROR = enum.auto()
     UNEXPECTED_ERROR = enum.auto()
+    # Deprecated: retained for backwards compatibility only. This state is no longer
+    # produced or handled; the authenticated-but-no-API-access case has been consolidated
+    # into check_authentication_status. Do not use; it will be removed in a future release.
+    AUTHENTICATED_NO_API = enum.auto()
 
 
 class DeadlineAuthenticationStatusWidget(QGroupBox):
