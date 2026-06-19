@@ -12,6 +12,7 @@ import pytest
 from deadline.client import api, config
 from deadline.client.api._session import (
     get_boto3_client,
+    get_default_client_config,
     get_session_client,
     precache_clients,
     _resolve_region,
@@ -261,6 +262,78 @@ def test_get_boto3_client_without_region_backcompat(fresh_deadline_config):
 
     # region_name must NOT be passed to preserve existing single-region behavior.
     mock_session.client.assert_called_once_with("deadline", config=ANY)
+
+
+# ---- settings.https_proxy / settings.ca_bundle wiring (issue #1046) --------
+
+
+def test_default_client_config_no_proxy_by_default(fresh_deadline_config):
+    """With settings.https_proxy unset, the Config carries no proxies."""
+    cfg = get_default_client_config()
+    # botocore stores configured proxies on the .proxies attribute (None/empty
+    # when unset).
+    assert not cfg.proxies
+
+
+def test_default_client_config_applies_https_proxy(fresh_deadline_config):
+    """settings.https_proxy is applied to the botocore Config for both schemes."""
+    config.set_setting("settings.https_proxy", "http://proxy.example.com:8080")
+    cfg = get_default_client_config()
+    assert cfg.proxies == {
+        "http": "http://proxy.example.com:8080",
+        "https": "http://proxy.example.com:8080",
+    }
+
+
+def test_default_client_config_explicit_proxies_win(fresh_deadline_config):
+    """An explicit proxies kwarg is not overridden by the config setting."""
+    config.set_setting("settings.https_proxy", "http://from-config:8080")
+    cfg = get_default_client_config(proxies={"https": "http://explicit:9090"})
+    assert cfg.proxies == {"https": "http://explicit:9090"}
+
+
+def test_get_session_client_applies_ca_bundle(fresh_deadline_config):
+    """settings.ca_bundle is forwarded as the client's verify kwarg."""
+    config.set_setting("settings.ca_bundle", "/etc/ssl/my-ca.pem")
+    # ca_bundle is an is_path setting, so the stored value is normalized to the
+    # native path form on read (backslashes on Windows). Assert against what the
+    # config layer actually returns rather than the raw forward-slash input.
+    expected_ca = config.get_setting("settings.ca_bundle")
+    mock_session = MagicMock()
+    with patch.object(api._session, "get_boto3_session", return_value=mock_session):
+        get_session_client.cache_clear()
+        get_boto3_client("deadline")
+
+    mock_session.client.assert_called_once_with("deadline", config=ANY, verify=expected_ca)
+
+
+def test_get_session_client_no_ca_bundle_omits_verify(fresh_deadline_config):
+    """Without settings.ca_bundle, verify is not passed (default behavior)."""
+    mock_session = MagicMock()
+    with patch.object(api._session, "get_boto3_session", return_value=mock_session):
+        get_session_client.cache_clear()
+        get_boto3_client("deadline")
+
+    mock_session.client.assert_called_once_with("deadline", config=ANY)
+
+
+def test_get_session_client_proxy_and_ca_bundle_together(fresh_deadline_config):
+    """Both settings apply on the same client: proxy via Config, CA via verify."""
+    config.set_setting("settings.https_proxy", "http://proxy.example.com:8080")
+    config.set_setting("settings.ca_bundle", "/etc/ssl/my-ca.pem")
+    # See note in test_get_session_client_applies_ca_bundle re: path normalization.
+    expected_ca = config.get_setting("settings.ca_bundle")
+    mock_session = MagicMock()
+    with patch.object(api._session, "get_boto3_session", return_value=mock_session):
+        get_session_client.cache_clear()
+        get_boto3_client("deadline")
+
+    mock_session.client.assert_called_once_with("deadline", config=ANY, verify=expected_ca)
+    passed_config = mock_session.client.call_args.kwargs["config"]
+    assert passed_config.proxies == {
+        "http": "http://proxy.example.com:8080",
+        "https": "http://proxy.example.com:8080",
+    }
 
 
 def test_get_boto3_session_with_region_builds_region_scoped_session(fresh_deadline_config):
