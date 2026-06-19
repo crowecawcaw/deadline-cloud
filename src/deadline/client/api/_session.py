@@ -117,11 +117,18 @@ def invalidate_boto3_session_cache() -> None:
     _get_queue_user_boto3_session.cache_clear()
 
 
-def get_default_client_config(**kwargs) -> botocore.config.Config:
+def get_default_client_config(
+    config: Optional[ConfigParser] = None, **kwargs
+) -> botocore.config.Config:
     """
     Gets the default botocore Config object to use with `boto3 clients`.
     This method adds user agent version and submitter context into botocore calls.
     Additional arguments are forwarded to the Config constructor.
+
+    If the ``settings.https_proxy`` config setting is set (and the caller hasn't
+    already supplied ``proxies``), it is applied to the returned Config so that
+    Deadline Cloud API calls route through the configured proxy without relying
+    on the process-wide HTTPS_PROXY environment variable.
     """
     user_agent_extra = f"app/deadline-client#{version}"
     if session_context.get("submitter-name"):
@@ -136,6 +143,16 @@ def get_default_client_config(**kwargs) -> botocore.config.Config:
     agent_name = detect_invoking_agent()
     if agent_name:
         user_agent_extra += f" invoked-by/{agent_name}"
+
+    # Apply the configured proxy unless the caller passed an explicit one. We set
+    # both the "http" and "https" keys so the proxy is honored regardless of the
+    # client endpoint's scheme (botocore selects the proxy by endpoint scheme).
+    if "proxies" not in kwargs:
+        https_proxy = config_file.get_setting("settings.https_proxy", config=config)
+        if https_proxy and https_proxy.strip():
+            proxy = https_proxy.strip()
+            kwargs["proxies"] = {"http": proxy, "https": proxy}
+
     client_config = botocore.config.Config(user_agent_extra=user_agent_extra, **kwargs)
     return client_config
 
@@ -164,20 +181,31 @@ def get_session_client(session: boto3.Session, service_name: str, region: Option
 
     Returns:
         A boto3 client for the specified service
-    """
-    if region is None:
-        return session.client(service_name, config=get_default_client_config())
 
-    client = session.client(service_name, config=get_default_client_config(), region_name=region)
+    The ``settings.https_proxy`` and ``settings.ca_bundle`` config settings, if
+    set, are applied to the created client (proxy via the botocore Config, CA
+    bundle via the ``verify`` kwarg). Like ``region``, the resulting client is
+    cached; a fresh process / session picks up changed settings.
+    """
+    client_kwargs: dict = {"config": get_default_client_config()}
+
+    ca_bundle = config_file.get_setting("settings.ca_bundle")
+    if ca_bundle and ca_bundle.strip():
+        client_kwargs["verify"] = ca_bundle.strip()
+
+    if region is None:
+        return session.client(service_name, **client_kwargs)
+
+    client = session.client(service_name, region_name=region, **client_kwargs)
     resolved = client.meta.endpoint_url
     session_region = session.region_name
     # An override leaked the session's region into a cross-region endpoint.
     if region not in resolved and session_region and session_region in resolved:
         return session.client(
             service_name,
-            config=get_default_client_config(),
             region_name=region,
             endpoint_url=resolved.replace(session_region, region, 1),
+            **client_kwargs,
         )
     return client
 

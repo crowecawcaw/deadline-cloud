@@ -301,6 +301,23 @@ SETTINGS: Dict[str, Dict[str, Any]] = {
         "default": "20",
         "description": "The default maximum number of tasks that can fail before the job is marked as failed.",
     },
+    "settings.https_proxy": {
+        "default": "",
+        "description": (
+            "The HTTPS proxy URL (e.g. 'http://proxy.example.com:8080') to route AWS API calls through. "
+            "When set, this takes precedence over the HTTPS_PROXY environment variable for Deadline Cloud "
+            "clients. Empty means use the environment variable / default behavior."
+        ),
+    },
+    "settings.ca_bundle": {
+        "default": "",
+        "is_path": True,
+        "description": (
+            "The filesystem path to a CA certificate bundle (PEM) used to verify TLS connections for AWS "
+            "API calls. When set, this takes precedence over the AWS_CA_BUNDLE environment variable for "
+            "Deadline Cloud clients. Empty means use the environment variable / default behavior."
+        ),
+    },
 }
 
 
