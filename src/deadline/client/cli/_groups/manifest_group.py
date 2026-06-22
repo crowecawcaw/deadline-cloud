@@ -23,7 +23,7 @@ from deadline.client import api
 from deadline.client.api._session import (
     _get_queue_user_boto3_session,
     _resolve_region,
-    get_default_client_config,
+    create_client,
 )
 from deadline.client.config import config_file
 from deadline.job_attachments._diff import pretty_print_cli
@@ -335,12 +335,7 @@ def manifest_download(
     # scope the client to that farm's region. _resolve_region returns None when nothing is
     # configured; only pass region_name when resolved.
     region = _resolve_region(config=config, farm_id=farm_id)
-    if region is not None:
-        deadline_client = boto3_session.client(
-            "deadline", config=get_default_client_config(), region_name=region
-        )
-    else:
-        deadline_client = boto3_session.client("deadline", config=get_default_client_config())
+    deadline_client = create_client(boto3_session, "deadline", config=config, region=region)
     queue: dict = deadline_client.get_queue(
         farmId=farm_id,
         queueId=queue_id,
