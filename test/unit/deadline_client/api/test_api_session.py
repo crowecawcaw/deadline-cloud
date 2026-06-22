@@ -438,6 +438,31 @@ def test_get_boto3_client_honors_supplied_config(fresh_deadline_config):
     }
 
 
+def test_get_boto3_client_custom_config_without_proxy_ignores_disk_proxy(fresh_deadline_config):
+    """
+    A caller-supplied config with NO proxy must NOT inherit the on-disk default
+    proxy. Regression test: _build_client must be the sole proxy authority and
+    must stop get_default_client_config from re-reading settings.https_proxy from
+    the on-disk default config when a custom config is in play.
+    """
+    from configparser import ConfigParser
+
+    # On-disk default DOES set a proxy...
+    config.set_setting("settings.https_proxy", "http://on-disk:5050")
+    # ...but the caller passes a config that does not.
+    cfg = ConfigParser()
+    assert config.get_setting("settings.https_proxy", config=cfg) == ""
+
+    mock_session = MagicMock()
+    with patch.object(api._session, "get_boto3_session", return_value=mock_session):
+        get_session_client.cache_clear()
+        get_boto3_client("deadline", config=cfg)
+
+    # No proxy should be applied, and no verify either.
+    mock_session.client.assert_called_once_with("deadline", config=ANY)
+    assert not mock_session.client.call_args.kwargs["config"].proxies
+
+
 def test_get_session_client_cache_keyed_on_settings(fresh_deadline_config):
     """
     Clients built with different proxy/ca_bundle settings must not collide in the
