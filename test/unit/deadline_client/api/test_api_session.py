@@ -409,6 +409,67 @@ def test_create_client_honors_explicit_config_parser(fresh_deadline_config):
     }
 
 
+def test_get_boto3_client_honors_supplied_config(fresh_deadline_config):
+    """
+    get_boto3_client resolves proxy/ca_bundle from a caller-supplied ConfigParser,
+    not just the on-disk default. Guards the fix that threads the resolved settings
+    into the cached get_session_client.
+    """
+    from configparser import ConfigParser
+
+    cfg = ConfigParser()
+    config.set_setting("settings.https_proxy", "http://caller-cfg:7070", config=cfg)
+    config.set_setting("settings.ca_bundle", "/etc/ssl/caller.pem", config=cfg)
+    expected_ca = config.get_setting("settings.ca_bundle", config=cfg)
+
+    # On-disk default config has neither set.
+    assert config.get_setting("settings.https_proxy") == ""
+
+    mock_session = MagicMock()
+    with patch.object(api._session, "get_boto3_session", return_value=mock_session):
+        get_session_client.cache_clear()
+        get_boto3_client("deadline", config=cfg)
+
+    mock_session.client.assert_called_once_with("deadline", config=ANY, verify=expected_ca)
+    passed_config = mock_session.client.call_args.kwargs["config"]
+    assert passed_config.proxies == {
+        "http": "http://caller-cfg:7070",
+        "https": "http://caller-cfg:7070",
+    }
+
+
+def test_get_session_client_cache_keyed_on_settings(fresh_deadline_config):
+    """
+    Clients built with different proxy/ca_bundle settings must not collide in the
+    lru_cache: the resolved (https_proxy, ca_bundle) tuple is part of the key.
+    """
+    from configparser import ConfigParser
+
+    cfg_a = ConfigParser()
+    config.set_setting("settings.https_proxy", "http://proxy-a:8080", config=cfg_a)
+    cfg_b = ConfigParser()
+    config.set_setting("settings.https_proxy", "http://proxy-b:9090", config=cfg_b)
+
+    real_session = boto3.Session(region_name="us-west-2")
+    get_session_client.cache_clear()
+    with patch.object(api._session, "get_boto3_session", return_value=real_session):
+        client_a = get_boto3_client("deadline", config=cfg_a)
+        client_b = get_boto3_client("deadline", config=cfg_b)
+        # Same config -> cached (same object); different settings -> distinct.
+        client_a_again = get_boto3_client("deadline", config=cfg_a)
+
+    assert client_a is client_a_again
+    assert client_a is not client_b
+    assert client_a.meta.config.proxies == {
+        "http": "http://proxy-a:8080",
+        "https": "http://proxy-a:8080",
+    }
+    assert client_b.meta.config.proxies == {
+        "http": "http://proxy-b:9090",
+        "https": "http://proxy-b:9090",
+    }
+
+
 def test_get_boto3_session_with_region_builds_region_scoped_session(fresh_deadline_config):
     """
     get_boto3_session(region=...) builds a region-scoped session so boto3 resolves the
