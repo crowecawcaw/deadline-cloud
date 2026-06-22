@@ -52,7 +52,7 @@ from .._common import (
 )
 from .._main import deadline as main
 from ._sigint_handler import SigIntHandler
-from ...api._session import get_default_client_config
+from ...api._session import create_client
 from .._timestamp_formatter import TimestampFormat, TimestampFormatter
 from ._job_helpers import (
     _resolve_job_search,
@@ -401,19 +401,17 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
     # Create a separate API client for the update_task calls, using the "adaptive" retry strategy.
     # This strategy is better suited to repeatedly calling the API for a longer duration, because it
     # retains backoff data across calls instead of starting fresh each time.
-    requeues_client_config = get_default_client_config(
-        retries=dict(mode="adaptive", total_max_attempts=5)
-    )
     # Requeues operate within a single farm, so scope the client to that farm's region.
-    # _resolve_region returns None when nothing is configured; only pass
-    # region_name when resolved so the custom retry config is otherwise unchanged.
+    # _resolve_region returns None when nothing is configured; create_client only
+    # passes region_name when resolved so the custom retry config is otherwise unchanged.
     requeues_region = _resolve_region(config=config, farm_id=farm_id)
-    if requeues_region is not None:
-        deadline_client_for_requeues = session.client(
-            "deadline", config=requeues_client_config, region_name=requeues_region
-        )
-    else:
-        deadline_client_for_requeues = session.client("deadline", config=requeues_client_config)
+    deadline_client_for_requeues = create_client(
+        session,
+        "deadline",
+        config=config,
+        region=requeues_region,
+        retries=dict(mode="adaptive", total_max_attempts=5),
+    )
 
     # Print a summary of the job's task run statuses
     job = deadline_client.get_job(farmId=farm_id, queueId=queue_id, jobId=job_id)

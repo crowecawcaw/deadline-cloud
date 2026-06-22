@@ -574,6 +574,52 @@ def test_get_session_logs_with_monitor_credentials():
         )
 
 
+def test_get_session_logs_monitor_credentials_honor_proxy_and_ca_bundle(fresh_deadline_config):
+    """
+    The queue-credential logs client (built directly, not via get_session_client)
+    must still honor settings.https_proxy and settings.ca_bundle. This guards the
+    fix that routed that client through create_client so the CA bundle reaches
+    log streaming and not only the deadline control-plane client.
+    """
+    from deadline.client import config as dl_config
+
+    dl_config.set_setting("settings.https_proxy", "http://proxy.example.com:8080")
+    dl_config.set_setting("settings.ca_bundle", "/etc/ssl/my-ca.pem")
+    expected_ca = dl_config.get_setting("settings.ca_bundle")
+
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch(
+            "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
+        ) as mock_get_user,
+        patch(
+            "deadline.client.api._job_monitoring.get_queue_user_boto3_session"
+        ) as mock_get_session,
+    ):
+        mock_get_user.return_value = ("user-123", "identity-store-456")
+        queue_session_mock = MagicMock()
+        logs_client_mock = MagicMock()
+        logs_client_mock.get_log_events.return_value = MOCK_GET_LOG_EVENTS_RESPONSE
+        queue_session_mock.client.return_value = logs_client_mock
+        mock_get_session.return_value = queue_session_mock
+        mock_get_client.return_value = MagicMock()
+
+        get_session_logs(
+            farm_id=MOCK_FARM_ID,
+            queue_id=MOCK_QUEUE_ID,
+            session_id="session-test-session",
+            limit=100,
+        )
+
+        # Both settings must reach this directly-built client.
+        queue_session_mock.client.assert_called_once_with("logs", config=ANY, verify=expected_ca)
+        passed_config = queue_session_mock.client.call_args.kwargs["config"]
+        assert passed_config.proxies == {
+            "http": "http://proxy.example.com:8080",
+            "https": "http://proxy.example.com:8080",
+        }
+
+
 def test_get_session_logs_with_next_token():
     """
     Test that get_session_logs works correctly with pagination token.

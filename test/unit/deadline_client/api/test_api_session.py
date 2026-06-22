@@ -11,6 +11,7 @@ import boto3  # type: ignore[import]
 import pytest
 from deadline.client import api, config
 from deadline.client.api._session import (
+    create_client,
     get_boto3_client,
     get_default_client_config,
     get_session_client,
@@ -333,6 +334,78 @@ def test_get_session_client_proxy_and_ca_bundle_together(fresh_deadline_config):
     assert passed_config.proxies == {
         "http": "http://proxy.example.com:8080",
         "https": "http://proxy.example.com:8080",
+    }
+
+
+def test_create_client_applies_both_settings(fresh_deadline_config):
+    """create_client applies BOTH proxy (via Config) and ca_bundle (via verify)."""
+    config.set_setting("settings.https_proxy", "http://proxy.example.com:8080")
+    config.set_setting("settings.ca_bundle", "/etc/ssl/my-ca.pem")
+    expected_ca = config.get_setting("settings.ca_bundle")
+
+    mock_session = MagicMock()
+    create_client(mock_session, "logs")
+
+    mock_session.client.assert_called_once_with("logs", config=ANY, verify=expected_ca)
+    passed_config = mock_session.client.call_args.kwargs["config"]
+    assert passed_config.proxies == {
+        "http": "http://proxy.example.com:8080",
+        "https": "http://proxy.example.com:8080",
+    }
+
+
+def test_create_client_no_settings_omits_verify_and_proxy(fresh_deadline_config):
+    """With neither setting, create_client passes no verify and an empty-proxy Config."""
+    mock_session = MagicMock()
+    create_client(mock_session, "logs")
+
+    mock_session.client.assert_called_once_with("logs", config=ANY)
+    assert not mock_session.client.call_args.kwargs["config"].proxies
+
+
+def test_create_client_passes_region_when_set(fresh_deadline_config):
+    """region is forwarded as region_name only when not None."""
+    mock_session = MagicMock()
+    create_client(mock_session, "logs", region="eu-west-1")
+    mock_session.client.assert_called_once_with("logs", config=ANY, region_name="eu-west-1")
+
+
+def test_create_client_forwards_config_kwargs(fresh_deadline_config):
+    """Extra config_kwargs reach the botocore Config (e.g. retries)."""
+    mock_session = MagicMock()
+    create_client(mock_session, "deadline", retries={"mode": "adaptive", "total_max_attempts": 5})
+    passed_config = mock_session.client.call_args.kwargs["config"]
+    assert passed_config.retries["mode"] == "adaptive"
+
+
+def test_create_client_honors_explicit_config_parser(fresh_deadline_config):
+    """
+    create_client resolves both settings from an explicitly-supplied ConfigParser,
+    not just the on-disk default config. This is the per-config path that the
+    @lru_cache'd get_session_client cannot offer.
+    """
+    # Put values ONLY in a standalone in-memory ConfigParser, leaving the on-disk
+    # (default) config empty. Use a fresh ConfigParser rather than read_config(),
+    # which returns the cached global the default get_setting() also reads.
+    from configparser import ConfigParser
+
+    cfg = ConfigParser()
+    config.set_setting("settings.https_proxy", "http://in-memory:7070", config=cfg)
+    config.set_setting("settings.ca_bundle", "/etc/ssl/in-memory.pem", config=cfg)
+    expected_ca = config.get_setting("settings.ca_bundle", config=cfg)
+
+    # Sanity: the on-disk default config has neither set.
+    assert config.get_setting("settings.https_proxy") == ""
+    assert config.get_setting("settings.ca_bundle") == ""
+
+    mock_session = MagicMock()
+    create_client(mock_session, "deadline", config=cfg)
+
+    mock_session.client.assert_called_once_with("deadline", config=ANY, verify=expected_ca)
+    passed_config = mock_session.client.call_args.kwargs["config"]
+    assert passed_config.proxies == {
+        "http": "http://in-memory:7070",
+        "https": "http://in-memory:7070",
     }
 
 

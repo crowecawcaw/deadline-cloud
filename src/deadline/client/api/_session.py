@@ -157,6 +157,63 @@ def get_default_client_config(
     return client_config
 
 
+def _resolve_ca_bundle(config: Optional[ConfigParser] = None) -> Optional[str]:
+    """
+    Return the configured CA certificate bundle path (``settings.ca_bundle``),
+    or ``None`` when it is unset. The CA bundle is applied to clients via the
+    ``verify`` kwarg of ``session.client(...)`` -- it is *not* a botocore Config
+    field, which is why proxy and CA bundle are applied at different layers.
+    """
+    ca_bundle = config_file.get_setting("settings.ca_bundle", config=config)
+    if ca_bundle and ca_bundle.strip():
+        return ca_bundle.strip()
+    return None
+
+
+def create_client(
+    session: boto3.Session,
+    service_name: str,
+    *,
+    config: Optional[ConfigParser] = None,
+    region: Optional[str] = None,
+    endpoint_url: Optional[str] = None,
+    **config_kwargs,
+):
+    """
+    Create a boto3 client that honors BOTH the ``settings.https_proxy`` and
+    ``settings.ca_bundle`` config settings.
+
+    This is the single place client creation should funnel through so the two
+    settings have consistent coverage: the proxy is applied via the botocore
+    Config (see ``get_default_client_config``) and the CA bundle via the
+    client's ``verify`` kwarg. Applying only one of them -- e.g. routing through
+    a TLS-intercepting proxy without trusting its private CA -- is exactly the
+    misconfiguration this helper avoids.
+
+    Args:
+        session: The boto3 Session used to build the client.
+        service_name: The AWS service name (e.g. "deadline", "logs").
+        config: An optional AWS Deadline Cloud ConfigParser. When provided, both
+            settings are resolved from it rather than the on-disk default config.
+        region: The AWS region for the client. When None, the session/profile
+            region is used (no ``region_name`` is passed).
+        endpoint_url: An explicit endpoint URL to pass to ``session.client``. Used
+            to regionalize a cross-region endpoint when a profile override leaked
+            the session's region into it.
+        **config_kwargs: Extra keyword arguments forwarded to
+            ``get_default_client_config`` (e.g. ``retries=...``).
+    """
+    client_kwargs: dict = {"config": get_default_client_config(config=config, **config_kwargs)}
+    if region is not None:
+        client_kwargs["region_name"] = region
+    if endpoint_url is not None:
+        client_kwargs["endpoint_url"] = endpoint_url
+    ca_bundle = _resolve_ca_bundle(config)
+    if ca_bundle is not None:
+        client_kwargs["verify"] = ca_bundle
+    return session.client(service_name, **client_kwargs)
+
+
 @lru_cache
 def get_session_client(session: boto3.Session, service_name: str, region: Optional[str] = None):
     """
@@ -184,28 +241,25 @@ def get_session_client(session: boto3.Session, service_name: str, region: Option
 
     The ``settings.https_proxy`` and ``settings.ca_bundle`` config settings, if
     set, are applied to the created client (proxy via the botocore Config, CA
-    bundle via the ``verify`` kwarg). Like ``region``, the resulting client is
-    cached; a fresh process / session picks up changed settings.
+    bundle via the ``verify`` kwarg). Because this function is cached and cannot
+    accept an (unhashable) ConfigParser, both settings are read from the on-disk
+    default config; callers needing per-config resolution should use
+    ``create_client`` directly. The resulting client is cached, so a fresh
+    process / session picks up changed settings.
     """
-    client_kwargs: dict = {"config": get_default_client_config()}
-
-    ca_bundle = config_file.get_setting("settings.ca_bundle")
-    if ca_bundle and ca_bundle.strip():
-        client_kwargs["verify"] = ca_bundle.strip()
-
     if region is None:
-        return session.client(service_name, **client_kwargs)
+        return create_client(session, service_name)
 
-    client = session.client(service_name, region_name=region, **client_kwargs)
+    client = create_client(session, service_name, region=region)
     resolved = client.meta.endpoint_url
     session_region = session.region_name
     # An override leaked the session's region into a cross-region endpoint.
     if region not in resolved and session_region and session_region in resolved:
-        return session.client(
+        return create_client(
+            session,
             service_name,
-            region_name=region,
+            region=region,
             endpoint_url=resolved.replace(session_region, region, 1),
-            **client_kwargs,
         )
     return client
 
