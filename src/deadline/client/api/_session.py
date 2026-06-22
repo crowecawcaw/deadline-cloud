@@ -128,7 +128,10 @@ def get_default_client_config(
     If the ``settings.https_proxy`` config setting is set (and the caller hasn't
     already supplied ``proxies``), it is applied to the returned Config so that
     Deadline Cloud API calls route through the configured proxy without relying
-    on the process-wide HTTPS_PROXY environment variable.
+    on the process-wide HTTPS_PROXY environment variable. Pass an explicit
+    ``proxies`` (including ``proxies=None`` / an empty value) to suppress this
+    auto-read -- ``_build_client`` does this so it is the single authority for
+    which proxy gets applied per (possibly custom) config.
     """
     user_agent_extra = f"app/deadline-client#{version}"
     if session_context.get("submitter-name"):
@@ -144,14 +147,18 @@ def get_default_client_config(
     if agent_name:
         user_agent_extra += f" invoked-by/{agent_name}"
 
-    # Apply the configured proxy unless the caller passed an explicit one. We set
-    # both the "http" and "https" keys so the proxy is honored regardless of the
-    # client endpoint's scheme (botocore selects the proxy by endpoint scheme).
+    # Apply the configured proxy unless the caller passed an explicit ``proxies``
+    # key (any value, including None/empty, counts as "caller is authoritative").
+    # We set both the "http" and "https" keys so the proxy is honored regardless
+    # of the client endpoint's scheme (botocore selects the proxy by scheme).
     if "proxies" not in kwargs:
-        https_proxy = config_file.get_setting("settings.https_proxy", config=config)
-        if https_proxy and https_proxy.strip():
-            proxy = https_proxy.strip()
-            kwargs["proxies"] = {"http": proxy, "https": proxy}
+        https_proxy = _resolve_https_proxy(config)
+        if https_proxy:
+            kwargs["proxies"] = {"http": https_proxy, "https": https_proxy}
+    elif not kwargs["proxies"]:
+        # Caller explicitly opted out of a proxy -- drop the empty value so it
+        # isn't forwarded to botocore.config.Config as proxies={}/None.
+        del kwargs["proxies"]
 
     client_config = botocore.config.Config(user_agent_extra=user_agent_extra, **kwargs)
     return client_config
@@ -194,14 +201,6 @@ def _client_settings_key(config: Optional[ConfigParser] = None) -> ClientSetting
     return (_resolve_https_proxy(config), _resolve_ca_bundle(config))
 
 
-def _proxy_config_kwargs(https_proxy: Optional[str]) -> dict:
-    """Build the ``proxies`` kwarg for botocore Config from a resolved proxy URL."""
-    if not https_proxy:
-        return {}
-    # Set both schemes so the proxy is honored regardless of the endpoint scheme.
-    return {"proxies": {"http": https_proxy, "https": https_proxy}}
-
-
 def _build_client(
     session: boto3.Session,
     service_name: str,
@@ -215,10 +214,21 @@ def _build_client(
     settings: the proxy via the botocore Config ``proxies`` field and the CA
     bundle via the client's ``verify`` kwarg. Shared by ``create_client`` and the
     cached ``get_session_client`` so both apply the settings identically.
+
+    This is the single authority for which proxy is applied: it always passes an
+    explicit ``proxies`` to ``get_default_client_config`` (the resolved value, or
+    an empty value to opt out) so that helper never re-reads the on-disk default
+    proxy behind a custom config's back. A caller-supplied ``proxies`` in
+    ``config_kwargs`` (none today) would take precedence.
     """
     https_proxy, ca_bundle = settings_key
-    proxy_kwargs = {} if "proxies" in config_kwargs else _proxy_config_kwargs(https_proxy)
-    client_kwargs: dict = {"config": get_default_client_config(**proxy_kwargs, **config_kwargs)}
+    if "proxies" not in config_kwargs:
+        # Set both schemes so the proxy is honored regardless of the endpoint
+        # scheme; an empty dict means "no proxy" and suppresses the auto-read.
+        config_kwargs["proxies"] = (
+            {"http": https_proxy, "https": https_proxy} if https_proxy else {}
+        )
+    client_kwargs: dict = {"config": get_default_client_config(**config_kwargs)}
     if region is not None:
         client_kwargs["region_name"] = region
     if endpoint_url is not None:
