@@ -28,7 +28,9 @@ def fleet_setup(seeded_farm_queue):
 
 def test_cli_fleet_list(fleet_setup, run_cli):
     _, _, _, fleet_id, env = fleet_setup
-    r = run_cli(env, "fleet", "list")
+    # --output verbose forces human output; the subprocess stdout is not a TTY,
+    # which would otherwise auto-select JSON.
+    r = run_cli(env, "fleet", "list", "--output", "verbose")
     assert r.returncode == 0, r.stderr or r.stdout
     assert fleet_id in r.stdout
     assert "Test Fleet" in r.stdout
@@ -39,7 +41,7 @@ def test_cli_fleet_list(fleet_setup, run_cli):
 
 def test_cli_fleet_get_with_fleet_id(fleet_setup, run_cli):
     _, farm_id, _, fleet_id, env = fleet_setup
-    r = run_cli(env, "fleet", "get", "--fleet-id", fleet_id)
+    r = run_cli(env, "fleet", "get", "--fleet-id", fleet_id, "--output", "verbose")
     assert r.returncode == 0, r.stderr or r.stdout
     assert fleet_id in r.stdout
     assert f"farmId: {farm_id}" in r.stdout

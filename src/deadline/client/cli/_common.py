@@ -7,14 +7,19 @@ Functionality common to all the CLI groups.
 from __future__ import annotations
 
 __all__ = [
+    "_OUTPUT_FORMAT_HELP",
     "_PROMPT_WHEN_COMPLETE",
     "_ProgressBarCallbackManager",
     "_apply_cli_options_to_config",
     "_cli_object_repr",
+    "_confirm_or_abort",
+    "_echo_result",
     "_handle_error",
+    "_output_option",
     "_parse_file_parameter",
     "_parse_multi_format_parameters",
     "_prompt_at_completion",
+    "_resolve_output_format",
     "_suggest_resources_on_client_error",
 ]
 
@@ -43,6 +48,148 @@ from ._groups._sigint_handler import SigIntHandler
 logger = logging.getLogger("deadline.client.cli")
 
 _PROMPT_WHEN_COMPLETE = "PROMPT_WHEN_COMPLETE"
+
+# Shared help text for the `--output` option, documenting the TTY-aware default.
+_OUTPUT_FORMAT_HELP = (
+    "Specifies the output format of the messages printed to stdout.\n"
+    "VERBOSE: Displays messages in a human-readable text format.\n"
+    "JSON: Displays messages in JSON line format, so that the info can be easily "
+    "parsed/consumed by custom scripts.\n"
+    "When this option is not specified, the format is chosen automatically: "
+    "VERBOSE when stdout is an interactive terminal, and JSON otherwise (for example "
+    "when the output is piped, redirected, or run without a TTY such as in CI or by an agent)."
+)
+
+
+def _stdout_is_tty() -> bool:
+    """
+    Returns whether stdout is connected to an interactive terminal.
+
+    A missing or non-TTY stdout (e.g. a closed or redirected stream) is treated as
+    non-interactive. ``isatty()`` can raise on unusual streams, so this is defensive.
+    """
+    try:
+        return bool(sys.stdout.isatty())
+    except (AttributeError, ValueError):
+        return False
+
+
+def _resolve_output_format(output: Optional[str]) -> str:
+    """
+    Resolves the effective ``--output`` format for a CLI command.
+
+    An explicit value always wins. When ``output`` is ``None`` (the option was not
+    provided), the format is auto-detected from whether stdout is an interactive
+    terminal: ``"verbose"`` for a TTY (a human reader) and ``"json"`` otherwise
+    (pipes, redirection, CI, or agents), matching the behavior of tools like the
+    AWS CLI and kubectl.
+
+    Args:
+        output (Optional[str]): The value of the ``--output`` option, or ``None`` if
+            it was not specified. Comparison is case-insensitive.
+
+    Returns:
+        str: The resolved format, either ``"verbose"`` or ``"json"`` (lowercased).
+    """
+    if output is not None:
+        return output.lower()
+
+    return "verbose" if _stdout_is_tty() else "json"
+
+
+def _output_option(func: Callable) -> Callable:
+    """
+    Decorator that adds the standard ``--output verbose|json`` option to a command.
+
+    The option defaults to ``None`` so that :func:`_resolve_output_format` can
+    auto-detect the format from whether stdout is a TTY. Apply this instead of
+    repeating the ``click.option`` declaration on every command.
+    """
+    return click.option(
+        "--output",
+        type=click.Choice(["verbose", "json"], case_sensitive=False),
+        default=None,
+        help=_OUTPUT_FORMAT_HELP,
+    )(func)
+
+
+def _echo_result(obj: Any, output: Optional[str]) -> None:
+    """
+    Prints a structured result object to stdout in the resolved output format.
+
+    In ``verbose`` format the object is rendered as human-readable YAML (via
+    :func:`_cli_object_repr`); in ``json`` format it is serialized as a single
+    JSON document. Use this for commands whose output is a queryable result
+    (a dict or list), so that the JSON contract is the same data, not prose.
+
+    Args:
+        obj (Any): The result to print. Must be JSON-serializable for json output.
+        output (Optional[str]): The ``--output`` value, resolved via
+            :func:`_resolve_output_format`.
+    """
+    if _resolve_output_format(output) == "json":
+        click.echo(json.dumps(obj, default=str))
+    else:
+        click.echo(_cli_object_repr(obj))
+
+
+def _confirm_or_abort(
+    message: str,
+    *,
+    output: Optional[str],
+    auto_accept: bool,
+    destructive: bool = True,
+    abort_message: str = "Aborted.",
+) -> None:
+    """
+    Gates a destructive action on confirmation, honoring the non-interactive contract.
+
+    The contract (see AGENTS.md "CLI output & confirmation contract"):
+
+    * If ``auto_accept`` is set (``--yes`` or ``settings.auto_accept``), proceed.
+    * Otherwise, when output is interactive (verbose at a TTY), prompt the user.
+    * Otherwise (json / non-TTY) the command is running non-interactively: a
+      ``destructive`` action is refused with a structured error and a non-zero
+      exit, because proceeding would auto-accept a binding action. A purely
+      informational confirmation (``destructive=False``) is auto-accepted.
+
+    Trust/security boundaries (e.g. running bundle hooks) are NOT gated here —
+    they have their own explicit opt-in settings and are never auto-accepted.
+
+    Args:
+        message (str): The confirmation question to show an interactive user.
+        output (Optional[str]): The ``--output`` value for this command.
+        auto_accept (bool): Whether ``--yes``/``settings.auto_accept`` is in effect.
+        destructive (bool): Whether the action is binding/state-changing. Defaults
+            to True. Set False for informational-only confirmations.
+        abort_message (str): Message printed when an interactive user declines.
+
+    Raises:
+        SystemExit: With code 1 if the user declines, or if confirmation is
+            required but unavailable in a non-interactive context.
+    """
+    if auto_accept:
+        return
+
+    resolved = _resolve_output_format(output)
+    if resolved == "verbose" and _stdout_is_tty():
+        # Interactive human at a terminal: ask.
+        if not click.confirm(message, default=None):
+            click.echo(abort_message)
+            sys.exit(1)
+        return
+
+    # Non-interactive context.
+    if not destructive:
+        return
+
+    detail = "This action requires confirmation. Re-run with --yes to proceed."
+    if resolved == "json":
+        click.echo(json.dumps({"status": "error", "error": detail}))
+    else:
+        click.echo(detail)
+    sys.exit(1)
+
 
 # Set up the signal handler for handling Ctrl + C interruptions.
 sigint_handler = SigIntHandler()

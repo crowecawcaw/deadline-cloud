@@ -64,7 +64,8 @@ def test_cli_job_list(one_job, run_cli):
 
 def test_cli_job_list_empty(seeded_farm_queue, run_cli):
     _, _, _, env = seeded_farm_queue
-    r = run_cli(env, "job", "list")
+    # --output verbose forces the human summary; subprocess stdout is not a TTY.
+    r = run_cli(env, "job", "list", "--output", "verbose")
     assert r.returncode == 0, r.stderr or r.stdout
     assert "0 of 0" in r.stdout or "Displaying 0" in r.stdout
 
@@ -103,19 +104,36 @@ def test_cli_job_get_without_id_or_search_fails(seeded_farm_queue, run_cli):
     assert r.returncode != 0
 
 
+def test_cli_job_get_defaults_to_json_non_tty(one_job, run_cli):
+    # No --output: subprocess stdout is not a TTY, so the CLI must auto-select
+    # JSON. The stdout must parse as JSON and carry the jobId.
+    _, _, _, job_id, env = one_job
+    r = run_cli(env, "job", "get", "--job-id", job_id)
+    assert r.returncode == 0, r.stderr or r.stdout
+    payload = json.loads(r.stdout)
+    assert payload["jobId"] == job_id
+
+
 def test_cli_job_cancel_without_yes_aborts(one_job, run_cli):
     backend, farm_id, queue_id, job_id, env = one_job
-    # stdin closed -> click.confirm returns False / aborts; returncode != 0.
+    # Non-TTY without --yes: the destructive contract refuses with a JSON error
+    # object and a non-zero exit, and must NOT perform the cancel.
     r = run_cli(env, "job", "cancel", "--job-id", job_id)
     assert r.returncode != 0
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "error"
     # Job should NOT be canceled.
     assert backend.jobs[(farm_id, queue_id, job_id)]["taskRunStatus"] != "CANCELED"
 
 
 def test_cli_job_cancel_updates_backend(one_job, run_cli):
     backend, farm_id, queue_id, job_id, env = one_job
+    # No --output: JSON result by default; --yes satisfies the contract.
     r = run_cli(env, "job", "cancel", "--job-id", job_id, "--yes")
     assert r.returncode == 0, r.stderr or r.stdout
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "submitted"
+    assert payload["jobId"] == job_id
     assert backend.jobs[(farm_id, queue_id, job_id)]["taskRunStatus"] == "CANCELED"
 
 
@@ -129,15 +147,13 @@ def test_cli_job_cancel_mark_as_suspended(one_job, run_cli):
 def test_cli_job_requeue_tasks_no_matches(one_job, run_cli):
     _, _, _, job_id, env = one_job
     # Status counts seeded above have no FAILED/CANCELED/SUSPENDED tasks.
-    r = run_cli(env, "job", "requeue-tasks", "--job-id", job_id, "--yes")
+    r = run_cli(env, "job", "requeue-tasks", "--job-id", job_id, "--yes", "--output", "verbose")
     assert r.returncode == 0, r.stderr or r.stdout
     assert "No tasks to requeue" in r.stdout
 
 
-@requires_openjd
-def test_cli_job_requeue_tasks_with_matching(seeded_farm_queue, run_cli):
-    backend, farm_id, queue_id, env = seeded_farm_queue
-    # Create a job whose single task is FAILED so there's something to requeue.
+def _seed_job_with_failed_task(backend, farm_id, queue_id):
+    """Create a job whose single task is FAILED so there's something to requeue."""
     job = backend.create_job(
         farmId=farm_id, queueId=queue_id, template=_MINIMAL_TEMPLATE, priority=50
     )
@@ -155,10 +171,49 @@ def test_cli_job_requeue_tasks_with_matching(seeded_farm_queue, run_cli):
     for key in list(backend.steps):
         if key[:3] == (farm_id, queue_id, job_id):
             backend.steps[key]["taskRunStatusCounts"] = {"FAILED": 1}
+    return job_id
 
-    r = run_cli(env, "job", "requeue-tasks", "--job-id", job_id, "--yes")
+
+@requires_openjd
+def test_cli_job_requeue_tasks_with_matching(seeded_farm_queue, run_cli):
+    backend, farm_id, queue_id, env = seeded_farm_queue
+    job_id = _seed_job_with_failed_task(backend, farm_id, queue_id)
+
+    r = run_cli(env, "job", "requeue-tasks", "--job-id", job_id, "--yes", "--output", "verbose")
     assert r.returncode == 0, r.stderr or r.stdout
     assert "Requeued a total of 1 tasks" in r.stdout
+
+
+@requires_openjd
+def test_cli_job_requeue_tasks_without_yes_aborts(seeded_farm_queue, run_cli):
+    backend, farm_id, queue_id, env = seeded_farm_queue
+    job_id = _seed_job_with_failed_task(backend, farm_id, queue_id)
+
+    # Non-TTY without --yes, with matching tasks present: the destructive
+    # contract refuses with a JSON error object and a non-zero exit, and must
+    # NOT requeue anything (the FAILED task stays FAILED).
+    r = run_cli(env, "job", "requeue-tasks", "--job-id", job_id)
+    assert r.returncode != 0
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "error"
+    assert backend.jobs[(farm_id, queue_id, job_id)]["taskRunStatus"] == "FAILED"
+    for key in list(backend.tasks):
+        if key[:3] == (farm_id, queue_id, job_id):
+            assert backend.tasks[key]["runStatus"] == "FAILED"
+
+
+@requires_openjd
+def test_cli_job_requeue_tasks_with_yes_defaults_to_json(seeded_farm_queue, run_cli):
+    backend, farm_id, queue_id, env = seeded_farm_queue
+    job_id = _seed_job_with_failed_task(backend, farm_id, queue_id)
+
+    # No --output: JSON result by default; --yes satisfies the contract.
+    r = run_cli(env, "job", "requeue-tasks", "--job-id", job_id, "--yes")
+    assert r.returncode == 0, r.stderr or r.stdout
+    payload = json.loads(r.stdout)
+    assert payload["status"] == "submitted"
+    assert payload["jobId"] == job_id
+    assert payload["tasksRequeued"] >= 1
 
 
 @requires_openjd

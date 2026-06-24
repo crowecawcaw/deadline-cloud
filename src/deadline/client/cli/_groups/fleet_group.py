@@ -13,7 +13,10 @@ from ...exceptions import DeadlineOperationError
 from .._common import (
     _apply_cli_options_to_config,
     _cli_object_repr,
+    _echo_result,
     _handle_error,
+    _output_option,
+    _resolve_output_format,
     _suggest_resources_on_client_error,
 )
 from .._main import deadline as main
@@ -34,8 +37,9 @@ def cli_fleet():
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
 @click.option("--region", help="The AWS region of the farm.")
+@_output_option
 @_handle_error
-def fleet_list(**args):
+def fleet_list(output, **args):
     """
     Lists the available Deadline Cloud fleets in the farm. If the AWS profile
     is created from a Deadline Cloud monitor login, it will list only the
@@ -60,7 +64,7 @@ def fleet_list(**args):
         for fleet in response["fleets"]
     ]
 
-    click.echo(_cli_object_repr(structured_fleet_list))
+    _echo_result(structured_fleet_list, output)
 
 
 @cli_fleet.command(name="get")
@@ -71,8 +75,9 @@ def fleet_list(**args):
     "--queue-id", help="If no fleet is provided, gets the fleets associated with this queue."
 )
 @click.option("--region", help="The AWS region of the farm.")
+@_output_option
 @_handle_error
-def fleet_get(fleet_id, queue_id, **args):
+def fleet_get(fleet_id, queue_id, output, **args):
     """
     Get the details of a Deadline Cloud fleet in the farm. If no fleet ID is
     provided, it gets the details of all fleets associated with the queue.
@@ -107,7 +112,7 @@ def fleet_get(fleet_id, queue_id, **args):
             ) from exc
         response.pop("ResponseMetadata", None)
 
-        click.echo(_cli_object_repr(response))
+        _echo_result(response, output)
     else:
         try:
             response = deadline.get_queue(farmId=farm_id, queueId=queue_id)
@@ -129,13 +134,21 @@ def fleet_get(fleet_id, queue_id, **args):
         response.pop("ResponseMetadata", None)
         qfa_list = response["queueFleetAssociations"]
 
-        click.echo(
-            f"Showing all fleets ({len(qfa_list)} total) associated with queue: {queue_name}"
-        )
+        fleets = []
         for qfa in qfa_list:
-            response = deadline.get_fleet(farmId=farm_id, fleetId=qfa["fleetId"])
-            response.pop("ResponseMetadata", None)
-            response["queueFleetAssociationStatus"] = qfa["status"]
+            fleet = deadline.get_fleet(farmId=farm_id, fleetId=qfa["fleetId"])
+            fleet.pop("ResponseMetadata", None)
+            fleet["queueFleetAssociationStatus"] = qfa["status"]
+            fleets.append(fleet)
 
-            click.echo("")
-            click.echo(_cli_object_repr(response))
+        if _resolve_output_format(output) == "json":
+            # Emit a single structured object rather than a text header plus
+            # multiple YAML blocks, so the output parses as one JSON document.
+            _echo_result({"queueId": queue_id, "queueName": queue_name, "fleets": fleets}, output)
+        else:
+            click.echo(
+                f"Showing all fleets ({len(qfa_list)} total) associated with queue: {queue_name}"
+            )
+            for fleet in fleets:
+                click.echo("")
+                click.echo(_cli_object_repr(fleet))

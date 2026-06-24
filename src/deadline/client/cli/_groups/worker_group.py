@@ -13,7 +13,10 @@ from ...exceptions import DeadlineOperationError
 from .._common import (
     _apply_cli_options_to_config,
     _cli_object_repr,
+    _echo_result,
     _handle_error,
+    _output_option,
+    _resolve_output_format,
     _suggest_resources_on_client_error,
 )
 from .._main import deadline as main
@@ -38,8 +41,9 @@ def cli_worker():
 @click.option("--fleet-id", help="The fleet to use.", required=True)
 @click.option("--page-size", default=5, help="The number of workers to load at a time.")
 @click.option("--item-offset", default=0, help="The index of the worker to start listing from.")
+@_output_option
 @_handle_error
-def worker_list(page_size, item_offset, fleet_id, **args):
+def worker_list(page_size, item_offset, fleet_id, output, **args):
     """
     Lists the Deadline Cloud workers in a fleet.
     """
@@ -69,11 +73,22 @@ def worker_list(page_size, item_offset, fleet_id, **args):
         for worker in response["workers"]
     ]
 
-    click.echo(
-        f"Displaying {len(structured_worker_list)} of {total_results} workers starting at {item_offset}"
-    )
-    click.echo()
-    click.echo(_cli_object_repr(structured_worker_list))
+    if _resolve_output_format(output) == "json":
+        # Fold the pagination header into a single structured object.
+        _echo_result(
+            {
+                "workers": structured_worker_list,
+                "totalResults": total_results,
+                "itemOffset": item_offset,
+            },
+            output,
+        )
+    else:
+        click.echo(
+            f"Displaying {len(structured_worker_list)} of {total_results} workers starting at {item_offset}"
+        )
+        click.echo()
+        click.echo(_cli_object_repr(structured_worker_list))
 
 
 @cli_worker.command(name="get")
@@ -82,8 +97,9 @@ def worker_list(page_size, item_offset, fleet_id, **args):
 @click.option("--region", help="The AWS region of the farm.")
 @click.option("--fleet-id", help="The fleet to use.", required=True)
 @click.option("--worker-id", help="The worker to get.", required=True)
+@_output_option
 @_handle_error
-def worker_get(fleet_id, worker_id, **args):
+def worker_get(fleet_id, worker_id, output, **args):
     """
     Get the details of a Deadline Cloud worker in a fleet.
     """
@@ -104,4 +120,4 @@ def worker_get(fleet_id, worker_id, **args):
         ) from exc
     response.pop("ResponseMetadata", None)
 
-    click.echo(_cli_object_repr(response))
+    _echo_result(response, output)

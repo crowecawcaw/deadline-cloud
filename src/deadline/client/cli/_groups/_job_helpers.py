@@ -14,7 +14,12 @@ from botocore.exceptions import ClientError
 from ... import api
 from ...config import config_file
 from ...exceptions import DeadlineOperationError
-from .._common import _cli_object_repr, _suggest_resources_on_client_error
+from .._common import (
+    _cli_object_repr,
+    _echo_result,
+    _resolve_output_format,
+    _suggest_resources_on_client_error,
+)
 
 
 def _format_timestamp(dt: datetime) -> str:
@@ -76,12 +81,14 @@ def _format_task_summary(task_counts: dict) -> str:
     return ", ".join(parts) if parts else "no tasks"
 
 
-def _resolve_job_search(config: Optional[ConfigParser], search_term: str) -> Optional[str]:
+def _resolve_job_search(
+    config: Optional[ConfigParser], search_term: str, output: Optional[str] = None
+) -> Optional[str]:
     """
     Search for jobs with a search term and resolve to a single job ID.
 
     Returns the job ID if exactly one job matches.
-    If multiple jobs match, prints a summary table and returns None.
+    If multiple jobs match, prints a summary (table or JSON) and returns None.
     If no jobs match, prints a message and returns None.
     """
     farm_id = config_file.get_setting("defaults.farm_id", config=config)
@@ -114,15 +121,37 @@ def _resolve_job_search(config: Optional[ConfigParser], search_term: str) -> Opt
     jobs = response.get("jobs", [])
     total = response.get("totalResults", 0)
 
-    if not jobs:
-        click.echo(f'No jobs found matching "{search_term}"')
-        return None
-
     # Single result - return job ID for detailed lookup
     if total == 1:
         return jobs[0]["jobId"]
 
-    # Multiple results - display summary
+    is_json = _resolve_output_format(output) == "json"
+
+    if not jobs:
+        if is_json:
+            _echo_result({"searchTerm": search_term, "totalResults": 0, "jobs": []}, output)
+        else:
+            click.echo(f'No jobs found matching "{search_term}"')
+        return None
+
+    # Multiple results - emit a single structured object in JSON mode, or a
+    # human-readable summary otherwise.
+    if is_json:
+        summary_jobs = [
+            {
+                "jobId": job["jobId"],
+                "name": job.get("name", job.get("displayName", "")),
+                "taskRunStatus": job.get("taskRunStatus"),
+                "createdAt": job.get("createdAt"),
+                "taskRunStatusCounts": job.get("taskRunStatusCounts", {}),
+            }
+            for job in jobs
+        ]
+        _echo_result(
+            {"searchTerm": search_term, "totalResults": total, "jobs": summary_jobs}, output
+        )
+        return None
+
     click.echo(f'Found {total} job(s) matching "{search_term}", showing most recent {len(jobs)}:\n')
 
     for job in jobs:
@@ -143,7 +172,9 @@ def _resolve_job_search(config: Optional[ConfigParser], search_term: str) -> Opt
     return None
 
 
-def _print_job_details(config: Optional[ConfigParser], job_id: str) -> None:
+def _print_job_details(
+    config: Optional[ConfigParser], job_id: str, output: Optional[str] = None
+) -> None:
     """Fetch and print full job details."""
     farm_id = config_file.get_setting("defaults.farm_id", config=config)
     queue_id = config_file.get_setting("defaults.queue_id", config=config)
@@ -159,9 +190,14 @@ def _print_job_details(config: Optional[ConfigParser], job_id: str) -> None:
             f"Failed to get Job from Deadline:\n{exc}{suggestion}"
         ) from exc
     response.pop("ResponseMetadata", None)
-    click.echo(_cli_object_repr(response))
     est = _estimate_remaining_time(response)
-    click.echo(f"estimatedTimeRemaining: {est if est else 'N/A'}")
+
+    if _resolve_output_format(output) == "json":
+        # Include the derived estimate in the single JSON object.
+        _echo_result({**response, "estimatedTimeRemaining": est}, output)
+    else:
+        click.echo(_cli_object_repr(response))
+        click.echo(f"estimatedTimeRemaining: {est if est else 'N/A'}")
 
 
 def _format_duration(seconds: float) -> str:

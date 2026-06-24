@@ -12,8 +12,9 @@ from ...config import config_file
 from ...exceptions import DeadlineOperationError
 from .._common import (
     _apply_cli_options_to_config,
-    _cli_object_repr,
+    _echo_result,
     _handle_error,
+    _output_option,
     _suggest_resources_on_client_error,
 )
 from .._main import deadline as main
@@ -33,8 +34,9 @@ def cli_farm():
 @cli_farm.command(name="list")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--region", help="The AWS region of the farm.")
+@_output_option
 @_handle_error
-def farm_list(region, **args):
+def farm_list(region, output, **args):
     """
     Lists the available Deadline Cloud farms. If the AWS profile is created
     from a Deadline Cloud monitor login, it will list only the farms you have
@@ -70,15 +72,16 @@ def farm_list(region, **args):
         for farm in response["farms"]
     ]
 
-    click.echo(_cli_object_repr(structured_farm_list))
+    _echo_result(structured_farm_list, output)
 
 
 @cli_farm.command(name="get")
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
 @click.option("--region", help="The AWS region of the farm.")
+@_output_option
 @_handle_error
-def farm_get(**args):
+def farm_get(output, **args):
     """
     Get the details of a Deadline Cloud farm.
     """
@@ -97,4 +100,4 @@ def farm_get(**args):
         ) from exc
     response.pop("ResponseMetadata", None)
 
-    click.echo(_cli_object_repr(response))
+    _echo_result(response, output)

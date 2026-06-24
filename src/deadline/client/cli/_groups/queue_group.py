@@ -20,8 +20,9 @@ from ...config import config_file
 from ...exceptions import DeadlineOperationError
 from .._common import (
     _apply_cli_options_to_config,
-    _cli_object_repr,
+    _echo_result,
     _handle_error,
+    _output_option,
     _suggest_resources_on_client_error,
 )
 from ....job_attachments.models import (
@@ -55,8 +56,9 @@ def cli_queue():
 @click.option("--profile", help="The AWS profile to use.")
 @click.option("--farm-id", help="The farm to use.")
 @click.option("--region", help="The AWS region of the farm.")
+@_output_option
 @_handle_error
-def queue_list(**args):
+def queue_list(output, **args):
     """
     Lists the available Deadline Cloud queues in the farm. If the AWS profile
     is created from a Deadline Cloud monitor login, it will list only the
@@ -81,7 +83,7 @@ def queue_list(**args):
         for queue in response["queues"]
     ]
 
-    click.echo(_cli_object_repr(structured_queue_list))
+    _echo_result(structured_queue_list, output)
 
 
 @cli_queue.command(name="export-credentials")
@@ -191,8 +193,9 @@ def queue_export_credentials(mode, output_format, **args):
 @click.option("--farm-id", help="The farm to use.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--region", help="The AWS region of the farm.")
+@_output_option
 @_handle_error
-def queue_paramdefs(**args):
+def queue_paramdefs(output, **args):
     """
     Lists the parameter definitions for a Deadline Cloud queue in the farm.
 
@@ -218,7 +221,7 @@ def queue_paramdefs(**args):
             f"Failed to get Queue Parameter Definitions from Deadline:\n{exc}{suggestion}"
         ) from exc
 
-    click.echo(_cli_object_repr(response))
+    _echo_result(response, output)
 
 
 @cli_queue.command(name="get")
@@ -226,8 +229,9 @@ def queue_paramdefs(**args):
 @click.option("--farm-id", help="The farm to use.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--region", help="The AWS region of the farm.")
+@_output_option
 @_handle_error
-def queue_get(**args):
+def queue_get(output, **args):
     """
     Get the details of a Deadline Cloud queue in the farm.
     """
@@ -249,7 +253,7 @@ def queue_get(**args):
         ) from exc
     response.pop("ResponseMetadata", None)
 
-    click.echo(_cli_object_repr(response))
+    _echo_result(response, output)
 
 
 @cli_queue.command(name="sync-output")

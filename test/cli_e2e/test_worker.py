@@ -1,6 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 """End-to-end tests for `deadline worker` subcommands."""
 
+import json
+
 import pytest
 
 
@@ -22,7 +24,9 @@ def worker_setup(seeded_farm_queue):
 
 def test_cli_worker_list(worker_setup, run_cli):
     _, _, fleet_id, worker_id, env = worker_setup
-    r = run_cli(env, "worker", "list", "--fleet-id", fleet_id)
+    # --output verbose forces the human (yaml-ish) summary; subprocess stdout is
+    # not a TTY, which would otherwise auto-select JSON.
+    r = run_cli(env, "worker", "list", "--fleet-id", fleet_id, "--output", "verbose")
     assert r.returncode == 0, r.stderr or r.stdout
     assert worker_id in r.stdout
     assert "Displaying 1 of 1 workers" in r.stdout
@@ -30,9 +34,32 @@ def test_cli_worker_list(worker_setup, run_cli):
     assert "status: CREATED" in r.stdout
 
 
+def test_cli_worker_list_defaults_to_json_envelope_non_tty(worker_setup, run_cli):
+    _, _, fleet_id, worker_id, env = worker_setup
+    # No --output: subprocess stdout is not a TTY, so the CLI must auto-select
+    # JSON and emit the list envelope.
+    r = run_cli(env, "worker", "list", "--fleet-id", fleet_id)
+    assert r.returncode == 0, r.stderr or r.stdout
+    payload = json.loads(r.stdout)
+    assert isinstance(payload, dict)
+    assert "workers" in payload
+    assert "totalResults" in payload
+    assert any(w["workerId"] == worker_id for w in payload["workers"])
+
+
 def test_cli_worker_get(worker_setup, run_cli):
     _, farm_id, fleet_id, worker_id, env = worker_setup
-    r = run_cli(env, "worker", "get", "--fleet-id", fleet_id, "--worker-id", worker_id)
+    r = run_cli(
+        env,
+        "worker",
+        "get",
+        "--fleet-id",
+        fleet_id,
+        "--worker-id",
+        worker_id,
+        "--output",
+        "verbose",
+    )
     assert r.returncode == 0, r.stderr or r.stdout
     assert f"workerId: {worker_id}" in r.stdout
     assert f"fleetId: {fleet_id}" in r.stdout
@@ -49,7 +76,7 @@ def test_cli_worker_list_empty(seeded_farm_queue, run_cli):
         maxWorkerCount=10,
         configuration=backend._DEFAULT_FLEET_CONFIG,
     )
-    r = run_cli(env, "worker", "list", "--fleet-id", fleet["fleetId"])
+    r = run_cli(env, "worker", "list", "--fleet-id", fleet["fleetId"], "--output", "verbose")
     assert r.returncode == 0, r.stderr or r.stdout
     assert "0 of 0" in r.stdout
 

@@ -79,6 +79,25 @@ Use [conventional commits](https://www.conventionalcommits.org/):
 - `perf:` - Performance improvements
 - `feat!:` or `fix!:` - Breaking changes (Also include `BREAKING CHANGES:` section in message body)
 
+### CLI output & confirmation contract
+
+Commands that print a queryable result take `--output verbose|json`. When
+`--output` is omitted the format is auto-detected: `verbose` at an interactive
+terminal, `json` otherwise (pipes, redirection, CI, agents). An explicit
+`--output` always wins. Use the shared `_echo_result()` / `_resolve_output_format()`
+helpers rather than hand-rolling this per command.
+
+Non-interactive output (json, or no TTY) implies non-interactive input:
+
+- **Warnings / informational prompts** ("this is large", "N files") — auto-accepted.
+- **Destructive / state-changing actions** (cancel, requeue, anything binding) —
+  require `--yes` or `settings.auto_accept`; without it the command emits a
+  structured error and exits non-zero. Never auto-proceed. Gate these with
+  `_confirm_or_abort(...)`.
+- **Trust / security boundaries** (e.g. running bundle hooks) — never auto-accepted
+  by `--yes`; they keep their own explicit opt-in setting and a missing
+  confirmation cancels the action.
+
 ### CHANGELOG.md is auto-generated — do not edit it
 
 `CHANGELOG.md` is generated automatically from conventional commit messages

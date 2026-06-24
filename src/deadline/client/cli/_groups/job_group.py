@@ -43,9 +43,14 @@ from ... import api
 from ...config import config_file
 from ...exceptions import DeadlineOperationError, DeadlineOperationTimedOut
 from .._common import (
+    _OUTPUT_FORMAT_HELP,
     _apply_cli_options_to_config,
     _cli_object_repr,
+    _confirm_or_abort,
+    _echo_result,
     _handle_error,
+    _output_option,
+    _resolve_output_format,
     _suggest_resources_on_client_error,
 )
 from .._main import deadline as main
@@ -150,8 +155,9 @@ def cli_job():
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--page-size", default=5, help="The number of jobs to load at a time.")
 @click.option("--item-offset", default=0, help="The index of the job to start listing from.")
+@_output_option
 @_handle_error
-def job_list(page_size, item_offset, **args):
+def job_list(page_size, item_offset, output, **args):
     """
     Lists the Deadline Cloud jobs in the queue.
 
@@ -205,11 +211,21 @@ def job_list(page_size, item_offset, **args):
         job_entry["estimatedTimeRemaining"] = est if est else "N/A"
         structured_job_list.append(job_entry)
 
-    click.echo(
-        f"Displaying {len(structured_job_list)} of {total_results} Jobs starting at {item_offset}"
-    )
-    click.echo()
-    click.echo(_cli_object_repr(structured_job_list))
+    if _resolve_output_format(output) == "json":
+        _echo_result(
+            {
+                "jobs": structured_job_list,
+                "totalResults": total_results,
+                "itemOffset": item_offset,
+            },
+            output,
+        )
+    else:
+        click.echo(
+            f"Displaying {len(structured_job_list)} of {total_results} Jobs starting at {item_offset}"
+        )
+        click.echo()
+        click.echo(_cli_object_repr(structured_job_list))
 
 
 @cli_job.command(name="get")
@@ -219,8 +235,9 @@ def job_list(page_size, item_offset, **args):
 @click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to get.")
+@_output_option
 @_handle_error
-def job_get(search_term: Optional[str], **args):
+def job_get(search_term: Optional[str], output, **args):
     """
     Get the details of a Deadline Cloud job, or search for jobs with a search term.
 
@@ -239,9 +256,9 @@ def job_get(search_term: Optional[str], **args):
     if search_term:
         # Search with term - don't require job_id
         config = _apply_cli_options_to_config(required_options={"farm_id", "queue_id"}, **args)
-        found_job_id = _resolve_job_search(config, search_term)
+        found_job_id = _resolve_job_search(config, search_term, output)
         if found_job_id:
-            _print_job_details(config, found_job_id)
+            _print_job_details(config, found_job_id, output)
     else:
         # Get job by ID (from arg or config default)
         config = _apply_cli_options_to_config(
@@ -250,7 +267,7 @@ def job_get(search_term: Optional[str], **args):
         job_id = config_file.get_setting("defaults.job_id", config=config)
         if job_id is None:
             raise DeadlineOperationError("Missing job ID. Provide a job ID or search term.")
-        _print_job_details(config, job_id)
+        _print_job_details(config, job_id, output)
 
 
 @cli_job.command(name="cancel")
@@ -270,8 +287,9 @@ def job_get(search_term: Optional[str], **args):
     is_flag=True,
     help="Automatically accept any confirmation prompts",
 )
+@_output_option
 @_handle_error
-def job_cancel(mark_as: str, yes: bool, **args):
+def job_cancel(mark_as: str, yes: bool, output, **args):
     """
     Cancel a Deadline Cloud job from running, optionally marking it with an
     alternative status such as SUSPENDED, SUCCEEDED or FAILED.
@@ -289,6 +307,10 @@ def job_cancel(mark_as: str, yes: bool, **args):
     job_id = config_file.get_setting("defaults.job_id", config=config)
 
     mark_as = mark_as.upper()
+    is_json_output = _resolve_output_format(output) == "json"
+    auto_accept = yes or config_file.str2bool(
+        config_file.get_setting("settings.auto_accept", config=config)
+    )
 
     deadline = api.get_boto3_client("deadline", config=config)
 
@@ -320,32 +342,45 @@ def job_cancel(mark_as: str, yes: bool, **args):
             "createdAt",
         ]
     }
-    click.echo(_cli_object_repr(filtered_job))
+    # In verbose mode show the job summary before prompting. In JSON mode the
+    # summary is folded into the final result object instead.
+    if not is_json_output:
+        click.echo(_cli_object_repr(filtered_job))
 
-    # Ask for confirmation about canceling this job.
-    if not (
-        yes or config_file.str2bool(config_file.get_setting("settings.auto_accept", config=config))
-    ):
-        if mark_as == "CANCELED":
-            cancel_message = "Are you sure you want to cancel this job?"
-        else:
-            cancel_message = (
-                f"Are you sure you want to cancel this job and mark its taskRunStatus as {mark_as}?"
-            )
-        # We explicitly require a yes/no response, as this is an operation that will interrupt the work in progress
-        # on their job.
-        if not click.confirm(
-            cancel_message,
-            default=None,
-        ):
-            click.echo("Job not canceled.")
-            sys.exit(1)
-
+    # Canceling interrupts work in progress, so it is a destructive action:
+    # require explicit confirmation (interactively, or --yes when non-interactive).
     if mark_as == "CANCELED":
-        click.echo("Canceling job...")
+        cancel_message = "Are you sure you want to cancel this job?"
     else:
-        click.echo(f"Canceling job and marking as {mark_as}...")
+        cancel_message = (
+            f"Are you sure you want to cancel this job and mark its taskRunStatus as {mark_as}?"
+        )
+    _confirm_or_abort(
+        cancel_message,
+        output=output,
+        auto_accept=auto_accept,
+        destructive=True,
+        abort_message="Job not canceled.",
+    )
+
+    if not is_json_output:
+        if mark_as == "CANCELED":
+            click.echo("Canceling job...")
+        else:
+            click.echo(f"Canceling job and marking as {mark_as}...")
+
     deadline.update_job(farmId=farm_id, queueId=queue_id, jobId=job_id, targetTaskRunStatus=mark_as)
+
+    if is_json_output:
+        _echo_result(
+            {
+                "status": "submitted",
+                "jobId": job_id,
+                "targetTaskRunStatus": mark_as,
+                "job": filtered_job,
+            },
+            output,
+        )
 
 
 @cli_job.command(name="requeue-tasks")
@@ -368,8 +403,9 @@ def job_cancel(mark_as: str, yes: bool, **args):
     is_flag=True,
     help="Automatically accept any confirmation prompts",
 )
+@_output_option
 @_handle_error
-def job_requeue_tasks(run_status: Optional[list[str]], **args):
+def job_requeue_tasks(run_status: Optional[list[str]], output, **args):
     """
     Requeue tasks of a Deadline Cloud job. By default, requeues all FAILED,
     CANCELED, and SUSPENDED tasks.
@@ -379,6 +415,8 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
     \b
     Learn more about [Deadline Cloud jobs](https://docs.aws.amazon.com/deadline-cloud/latest/userguide/deadline-cloud-jobs.html)
     """
+    yes = args.pop("yes", False)
+
     # Get a temporary config object with the standard options handled
     config = _apply_cli_options_to_config(
         required_options={"farm_id", "queue_id", "job_id"}, **args
@@ -387,6 +425,11 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
     farm_id = config_file.get_setting("defaults.farm_id", config=config)
     queue_id = config_file.get_setting("defaults.queue_id", config=config)
     job_id = config_file.get_setting("defaults.job_id", config=config)
+
+    is_json_output = _resolve_output_format(output) == "json"
+    auto_accept = yes or config_file.str2bool(
+        config_file.get_setting("settings.auto_accept", config=config)
+    )
 
     if not run_status:
         run_status_set = {"SUSPENDED", "CANCELED", "FAILED"}
@@ -416,13 +459,10 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
     # Print a summary of the job's task run statuses
     job = deadline_client.get_job(farmId=farm_id, queueId=queue_id, jobId=job_id)
 
-    click.echo(f"Job: {job['name']} ({job['jobId']})")
     # Remove the zero-count status counts for a shorter summary
     task_run_status_counts = {
         name.upper(): count for name, count in job["taskRunStatusCounts"].items() if count != 0
     }
-    click.echo(_cli_object_repr({"taskRunStatusCounts": task_run_status_counts}))
-    click.echo(f"Requeuing all tasks with run status among: {', '.join(sorted(run_status_set))}")
 
     total_task_count_to_requeue = sum(
         count for name, count in task_run_status_counts.items() if name in run_status_set
@@ -434,25 +474,40 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
     )
     summary_tasks_message = f"{total_task_count_to_requeue} total tasks"
 
+    if not is_json_output:
+        click.echo(f"Job: {job['name']} ({job['jobId']})")
+        click.echo(_cli_object_repr({"taskRunStatusCounts": task_run_status_counts}))
+        click.echo(
+            f"Requeuing all tasks with run status among: {', '.join(sorted(run_status_set))}"
+        )
+
     if total_task_count_to_requeue == 0:
-        click.echo("No tasks to requeue.")
+        if is_json_output:
+            _echo_result({"status": "submitted", "jobId": job_id, "tasksRequeued": 0}, output)
+        else:
+            click.echo("No tasks to requeue.")
         return
 
-    # Ask for confirmation about requeuing the selected tasks
-    if config_file.str2bool(config_file.get_setting("settings.auto_accept", config=config)):
+    # Requeuing changes task state, so it is a destructive action: require explicit
+    # confirmation (interactively, or --yes/auto_accept when non-interactive).
+    if not is_json_output and auto_accept:
         click.echo(
             f"Estimated {summary_tasks_message} ({summary_task_count_by_status}) to requeue."
         )
-    else:
+    elif not is_json_output:
         click.echo(
             f"This action will requeue an estimated {summary_tasks_message} ({summary_task_count_by_status})"
         )
-        if not click.confirm(
-            "Are you sure you want to requeue these tasks?",
-            default=None,
-        ):
-            click.echo("No tasks were requeued.")
-            sys.exit(1)
+    _confirm_or_abort(
+        "Are you sure you want to requeue these tasks?",
+        output=output,
+        auto_accept=auto_accept,
+        destructive=True,
+        abort_message="No tasks were requeued.",
+    )
+    # Preserve the original behavior of only announcing "Requeuing tasks..." after
+    # an interactive confirmation (not when auto-accepted).
+    if not is_json_output and not auto_accept:
         click.echo("Requeuing tasks...")
 
     total_count_requeued = 0
@@ -464,7 +519,6 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
 
     # For each step, requeue all the tasks matching the run statuses
     for step in steps:
-        click.echo(f"\nStep: {step['name']} ({step['stepId']})")
         step_task_count_to_requeue = sum(
             count for name, count in step["taskRunStatusCounts"].items() if name in run_status_set
         )
@@ -474,10 +528,13 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
             if name in run_status_set and count != 0
         )
         summary_tasks_message = f"{step_task_count_to_requeue} total tasks"
+        if not is_json_output:
+            click.echo(f"\nStep: {step['name']} ({step['stepId']})")
         if step_task_count_to_requeue == 0:
-            click.echo("  Step has no tasks to requeue.")
+            if not is_json_output:
+                click.echo("  Step has no tasks to requeue.")
             continue
-        else:
+        elif not is_json_output:
             click.echo(
                 f"  Requeuing an estimated {summary_tasks_message} ({summary_task_count_by_status})..."
             )
@@ -488,18 +545,19 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
         ):
             for task in page["tasks"]:
                 if task["runStatus"].upper() in run_status_set:
-                    parameters = task.get("parameters", {})
-                    if parameters:
-                        task_summary = (
-                            ",".join(
-                                f"{param}={list(parameters[param].values())[0]}"
-                                for param in parameters
+                    if not is_json_output:
+                        parameters = task.get("parameters", {})
+                        if parameters:
+                            task_summary = (
+                                ",".join(
+                                    f"{param}={list(parameters[param].values())[0]}"
+                                    for param in parameters
+                                )
+                                + f" ({task['taskId']})"
                             )
-                            + f" ({task['taskId']})"
-                        )
-                    else:
-                        task_summary = task["taskId"]
-                    click.echo(f"    {task['runStatus']} {task_summary}")
+                        else:
+                            task_summary = task["taskId"]
+                        click.echo(f"    {task['runStatus']} {task_summary}")
                     # Requeue means to set the target run status to PENDING. If a task has no dependencies,
                     # it will switch to READY immediately.
                     deadline_client_for_requeues.update_task(
@@ -512,7 +570,13 @@ def job_requeue_tasks(run_status: Optional[list[str]], **args):
                     )
                     total_count_requeued += 1
 
-    click.echo(f"\nRequeued a total of {total_count_requeued} tasks.")
+    if is_json_output:
+        _echo_result(
+            {"status": "submitted", "jobId": job_id, "tasksRequeued": total_count_requeued},
+            output,
+        )
+    else:
+        click.echo(f"\nRequeued a total of {total_count_requeued} tasks.")
 
 
 def _prompt_for_os_mismatch_roots(
@@ -1070,17 +1134,7 @@ def _assert_valid_path(path: str) -> None:
     is_flag=True,
     help="Automatically accept any confirmation prompts",
 )
-@click.option(
-    "--output",
-    type=click.Choice(
-        ["verbose", "json"],
-        case_sensitive=False,
-    ),
-    help="Specifies the output format of the messages printed to stdout.\n"
-    "VERBOSE: Displays messages in a human-readable text format.\n"
-    "JSON: Displays messages in JSON line format, so that the info can be easily "
-    "parsed/consumed by custom scripts.",
-)
+@_output_option
 @_handle_error
 def job_download_output(
     step_id,
@@ -1101,6 +1155,7 @@ def job_download_output(
     if task_id and not step_id:
         raise click.UsageError("Missing option '--step-id' required with '--task-id'")
 
+    is_json_output = _resolve_output_format(output) == "json"
     include_patterns = _normalize_filters(list(include)) or None
 
     # Get a temporary config object with the standard options handled
@@ -1119,13 +1174,13 @@ def job_download_output(
             job_id=job_id,
             step_id=step_id,
             task_id=task_id,
-            is_json_format=output == "json",
+            is_json_format=is_json_output,
             ignore_storage_profiles=ignore_storage_profiles,
             include_patterns=include_patterns,
             match_paths_by=MatchPathsBy(match_paths_by),
         )
     except Exception as e:
-        if output == "json":
+        if is_json_output:
             error_one_liner = str(e).replace("\n", ". ")
             click.echo(_get_json_line(JSON_MSG_TYPE_ERROR, error_one_liner))
             sys.exit(1)
@@ -1344,17 +1399,7 @@ def _download_job_input(
     is_flag=True,
     help="Automatically accept any confirmation prompts",
 )
-@click.option(
-    "--output",
-    type=click.Choice(
-        ["verbose", "json"],
-        case_sensitive=False,
-    ),
-    help="Specifies the output format of the messages printed to stdout.\n"
-    "VERBOSE: Displays messages in a human-readable text format.\n"
-    "JSON: Displays messages in JSON line format, so that the info can be easily "
-    "parsed/consumed by custom scripts.",
-)
+@_output_option
 @_handle_error
 def job_download_input(include, match_paths_by, output, ignore_storage_profiles, **args):
     """
@@ -1375,6 +1420,7 @@ def job_download_input(include, match_paths_by, output, ignore_storage_profiles,
     farm_id = config_file.get_setting("defaults.farm_id", config=config)
     queue_id = config_file.get_setting("defaults.queue_id", config=config)
     job_id = config_file.get_setting("defaults.job_id", config=config)
+    is_json_output = _resolve_output_format(output) == "json"
     include_patterns = _normalize_filters(list(include)) or None
 
     try:
@@ -1383,13 +1429,13 @@ def job_download_input(include, match_paths_by, output, ignore_storage_profiles,
             farm_id=farm_id,
             queue_id=queue_id,
             job_id=job_id,
-            is_json_format=output == "json",
+            is_json_format=is_json_output,
             ignore_storage_profiles=ignore_storage_profiles,
             include_patterns=include_patterns,
             match_paths_by=MatchPathsBy(match_paths_by),
         )
     except Exception as e:
-        if output == "json":
+        if is_json_output:
             error_one_liner = str(e).replace("\n", ". ")
             click.echo(_get_json_line(JSON_MSG_TYPE_ERROR, error_one_liner))
             sys.exit(1)
@@ -1410,8 +1456,8 @@ def job_download_input(include, match_paths_by, output, ignore_storage_profiles,
 @click.option(
     "--output",
     type=click.Choice(["verbose", "json"], case_sensitive=False),
-    default="verbose",
-    help="Output format (verbose or json).",
+    default=None,
+    help=_OUTPUT_FORMAT_HELP,
 )
 @_handle_error
 def job_wait_for_completion(max_poll_interval, timeout, output, **args):
@@ -1448,7 +1494,7 @@ def job_wait_for_completion(max_poll_interval, timeout, output, **args):
     queue_id = config_file.get_setting("defaults.queue_id", config=config)
     job_id = config_file.get_setting("defaults.job_id", config=config)
 
-    is_json_output = output.lower() == "json"
+    is_json_output = _resolve_output_format(output) == "json"
 
     # Get job name for output
     deadline = api.get_boto3_client("deadline", config=config)
@@ -1605,8 +1651,8 @@ def job_wait_for_completion(max_poll_interval, timeout, output, **args):
 @click.option(
     "--output",
     type=click.Choice(["verbose", "json"], case_sensitive=False),
-    default="verbose",
-    help="Output format (verbose or json).",
+    default=None,
+    help=_OUTPUT_FORMAT_HELP,
 )
 @click.option(
     "--timestamp-format",
@@ -1659,7 +1705,7 @@ def job_logs(
     queue_id = config_file.get_setting("defaults.queue_id", config=config)
     job_id = config_file.get_setting("defaults.job_id", config=config)
 
-    is_json_output = output.lower() == "json"
+    is_json_output = _resolve_output_format(output) == "json"
 
     # Check if --timestamp-format was explicitly provided by the user
     timestamp_format_provided = (
