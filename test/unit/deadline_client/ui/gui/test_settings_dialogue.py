@@ -355,13 +355,18 @@ class TestSettingsDialogue:
         farm2 = backend.create_farm(displayName="Empty Farm")
         farm2_id = farm2["farmId"]
 
-        # Switch to the new farm — queue list should be empty
+        # Switch to the new farm — queue list should be empty. The combo box applies
+        # the update via a Qt.QueuedConnection to queues_updated, so the controller
+        # emitting the signal does not guarantee the widget has been repainted yet. A
+        # single processEvents() pass is not a reliable barrier for the queued slot, so
+        # poll the widget state until the stale queue is gone (this was the source of
+        # the CI flakiness).
+        def queue_items() -> list:
+            return [queue_combo.itemText(i) for i in range(queue_combo.count())]
+
         with qtbot.waitSignal(controller.queues_updated, timeout=5000):
             controller.refresh_queues(farm_id=farm2_id)
-        QApplication.processEvents()
-
-        items = [queue_combo.itemText(i) for i in range(queue_combo.count())]
-        assert "Test Queue" not in items
+        qtbot.waitUntil(lambda: "Test Queue" not in queue_items(), timeout=5000)
 
     def test_single_farm_auto_selected_on_profile_change(self, qtbot, config_widget, mock_backend):
         """When a profile has exactly one farm, switching profiles should auto-select it.
