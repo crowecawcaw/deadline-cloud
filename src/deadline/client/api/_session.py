@@ -8,6 +8,7 @@ of the Deadline-configured IAM credentials.
 from __future__ import annotations
 
 import logging
+import os
 from configparser import ConfigParser
 from contextlib import contextmanager
 from enum import Enum
@@ -184,7 +185,11 @@ def _resolve_ca_bundle(config: Optional[ConfigParser] = None) -> Optional[str]:
     """
     ca_bundle = config_file.get_setting("settings.ca_bundle", config=config)
     if ca_bundle and ca_bundle.strip():
-        return ca_bundle.strip()
+        # ``settings.ca_bundle`` is declared ``is_path: True``, but ``get_setting``
+        # only normalizes slashes -- it does not expand ``~``. Expand it here so a
+        # value like ``~/certs/ca.pem`` resolves before being handed to boto3's
+        # ``verify=`` kwarg (botocore does not expand ``~`` either).
+        return os.path.expanduser(ca_bundle.strip())
     return None
 
 

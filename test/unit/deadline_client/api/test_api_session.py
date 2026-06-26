@@ -4,6 +4,7 @@
 tests the deadline.client.api functions relating to boto3.Client
 """
 
+import os
 from typing import Optional
 from unittest.mock import call, patch, MagicMock, ANY
 
@@ -300,6 +301,25 @@ def test_get_session_client_applies_ca_bundle(fresh_deadline_config):
     # native path form on read (backslashes on Windows). Assert against what the
     # config layer actually returns rather than the raw forward-slash input.
     expected_ca = config.get_setting("settings.ca_bundle")
+    mock_session = MagicMock()
+    with patch.object(api._session, "get_boto3_session", return_value=mock_session):
+        get_session_client.cache_clear()
+        get_boto3_client("deadline")
+
+    mock_session.client.assert_called_once_with("deadline", config=ANY, verify=expected_ca)
+
+
+def test_get_session_client_ca_bundle_expands_user(fresh_deadline_config):
+    """A ``~``-relative settings.ca_bundle is expanded before reaching verify=.
+
+    settings.ca_bundle is an is_path setting, but the config layer only
+    normalizes slashes -- it does not expand ``~`` (and botocore doesn't
+    either). The value must be expanded to an absolute path so a bundle like
+    ``~/certs/ca.pem`` is actually found at TLS-verification time.
+    """
+    config.set_setting("settings.ca_bundle", "~/certs/ca.pem")
+    expected_ca = os.path.expanduser(config.get_setting("settings.ca_bundle"))
+    assert "~" not in expected_ca
     mock_session = MagicMock()
     with patch.object(api._session, "get_boto3_session", return_value=mock_session):
         get_session_client.cache_clear()
