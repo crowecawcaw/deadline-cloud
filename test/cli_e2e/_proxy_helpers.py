@@ -209,3 +209,135 @@ class RedirectingConnectProxy:
                     dest.setblocking(False)
                 except (OSError, ConnectionError):
                     return
+
+
+class TLSInterceptConnectProxy:
+    """HTTP CONNECT proxy that *terminates* TLS and forwards plaintext to a fixed backend.
+
+    Models a TLS-intercepting corporate proxy -- the exact scenario ``settings.ca_bundle``
+    exists for. For each ``CONNECT host:port`` it records the requested target (proof the
+    client routed through the proxy), answers ``200 Connection Established``, performs the
+    server-side TLS handshake *itself* using ``ssl_context`` (serving a cert the client
+    trusts only because ``settings.ca_bundle`` points at the signing CA), then relays the
+    decrypted HTTP to a fixed plaintext backend (e.g. a moto S3 server), ignoring the host
+    the client asked for.
+
+    This lets a client configured with a realistic ``https://s3.<region>.amazonaws.com``
+    endpoint actually reach a localhost moto server -- the traffic only gets there by
+    going through the proxy and trusting its CA, which is the behavior under test.
+    """
+
+    def __init__(self, target_host: str, target_port: int, ssl_context: ssl.SSLContext):
+        self._target = (target_host, target_port)
+        self._ssl_context = ssl_context
+        self.connect_targets: List[str] = []
+        self._lock = threading.Lock()
+        self._server: Optional[socket.socket] = None
+        self._thread: Optional[threading.Thread] = None
+        self._stop = False
+
+    @property
+    def port(self) -> int:
+        assert self._server is not None
+        return self._server.getsockname()[1]
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def start(self) -> "TLSInterceptConnectProxy":
+        self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server.bind(("127.0.0.1", 0))
+        self._server.listen(16)
+        self._server.settimeout(0.5)
+        self._thread = threading.Thread(target=self._accept_loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop = True
+        if self._thread:
+            self._thread.join(timeout=5)
+        if self._server:
+            self._server.close()
+
+    def _accept_loop(self) -> None:
+        assert self._server is not None
+        while not self._stop:
+            try:
+                client, _ = self._server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            threading.Thread(target=self._handle, args=(client,), daemon=True).start()
+
+    def _handle(self, client: socket.socket) -> None:
+        tls_client = None
+        remote = None
+        try:
+            # Read the CONNECT request line + headers (terminated by a blank line). The
+            # client waits for our 200 before starting TLS, so nothing past the headers
+            # is on the wire yet -- we won't accidentally swallow the TLS ClientHello.
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                chunk = client.recv(4096)
+                if not chunk:
+                    return
+                buf += chunk
+            line = buf.split(b"\r\n", 1)[0].decode("latin-1")
+            parts = line.split()
+            if len(parts) < 2 or parts[0].upper() != "CONNECT":
+                client.sendall(b"HTTP/1.1 405 Method Not Allowed\r\n\r\n")
+                return
+            with self._lock:
+                self.connect_targets.append(parts[1])
+
+            client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+
+            # Terminate TLS here (the intercept), then forward decrypted bytes to the
+            # fixed plaintext backend, ignoring the host the client asked for.
+            tls_client = self._ssl_context.wrap_socket(client, server_side=True)
+            remote = socket.create_connection(self._target, timeout=10)
+            self._relay(tls_client, remote)
+        except Exception:
+            # Best-effort test proxy: a malformed request, a TLS handshake failure, or a
+            # peer that hangs up mid-tunnel should drop this connection, never crash the
+            # accept loop. The test asserts on recorded CONNECTs / CLI output.
+            pass
+        finally:
+            for s in (tls_client, client, remote):
+                if s is not None:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+
+    @staticmethod
+    def _relay(tls_sock: ssl.SSLSocket, plain_sock: socket.socket) -> None:
+        # SSLSocket buffers records internally, which doesn't compose with select(), so
+        # use two simple blocking pump threads (one per direction) instead. When either
+        # side closes, shut both down so the other pump unblocks and exits.
+        def pump(src, dst):
+            try:
+                while True:
+                    data = src.recv(65536)
+                    if not data:
+                        break
+                    dst.sendall(data)
+            except (OSError, ConnectionError, ssl.SSLError):
+                pass
+            finally:
+                for s in (src, dst):
+                    try:
+                        s.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+        t1 = threading.Thread(target=pump, args=(tls_sock, plain_sock), daemon=True)
+        t2 = threading.Thread(target=pump, args=(plain_sock, tls_sock), daemon=True)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()

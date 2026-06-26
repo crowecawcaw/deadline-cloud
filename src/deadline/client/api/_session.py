@@ -127,13 +127,6 @@ def get_default_client_config(**kwargs) -> botocore.config.Config:
     Gets the default botocore Config object to use with `boto3 clients`.
     This method adds user agent version and submitter context into botocore calls.
     Additional arguments are forwarded to the Config constructor.
-
-    Note: the ``settings.https_proxy`` / ``settings.ca_bundle`` config settings are
-    *not* applied here. They are applied once at the session level (see
-    ``apply_proxy_settings``), and botocore merges the session's default client
-    config into every per-client ``Config`` -- so clients built with this Config
-    still route through the configured proxy and verify against the configured CA
-    bundle without this function needing to know about them.
     """
     user_agent_extra = f"app/deadline-client#{version}"
     if session_context.get("submitter-name"):
