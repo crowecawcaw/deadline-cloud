@@ -576,16 +576,34 @@ def test_get_session_logs_with_monitor_credentials():
 
 def test_get_session_logs_monitor_credentials_honor_proxy_and_ca_bundle(fresh_deadline_config):
     """
-    The queue-credential logs client (built directly, not via get_session_client)
-    must still honor settings.https_proxy and settings.ca_bundle. This guards the
-    fix that routed that client through create_client so the CA bundle reaches
-    log streaming and not only the deadline control-plane client.
+    The queue-credential logs client (built directly off the queue-user session,
+    not via get_session_client) must still honor settings.https_proxy and
+    settings.ca_bundle. Because proxy/CA are applied at the session level
+    (apply_proxy_settings), a logs client built from that session inherits both --
+    so log streaming routes through the proxy and trusts the custom CA, not only
+    the deadline control-plane client.
     """
+    import boto3
     from deadline.client import config as dl_config
+    from deadline.client.api._session import apply_proxy_settings
 
     dl_config.set_setting("settings.https_proxy", "http://proxy.example.com:8080")
     dl_config.set_setting("settings.ca_bundle", "/etc/ssl/my-ca.pem")
     expected_ca = dl_config.get_setting("settings.ca_bundle")
+
+    # A real session configured the way get_queue_user_boto3_session would configure it.
+    queue_session = apply_proxy_settings(boto3.Session(region_name="us-west-2"))
+
+    # Spy on the session's client factory so we capture the *actual* logs client that
+    # get_session_logs builds off the queue-user session (and stub its network call).
+    captured: dict = {}
+    real_client_factory = queue_session.client
+
+    def spy_client(*args, **kwargs):
+        built = real_client_factory(*args, **kwargs)
+        captured["logs_client"] = built
+        built.get_log_events = MagicMock(return_value=MOCK_GET_LOG_EVENTS_RESPONSE)
+        return built
 
     with (
         patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
@@ -593,15 +611,12 @@ def test_get_session_logs_monitor_credentials_honor_proxy_and_ca_bundle(fresh_de
             "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
         ) as mock_get_user,
         patch(
-            "deadline.client.api._job_monitoring.get_queue_user_boto3_session"
-        ) as mock_get_session,
+            "deadline.client.api._job_monitoring.get_queue_user_boto3_session",
+            return_value=queue_session,
+        ),
+        patch.object(queue_session, "client", side_effect=spy_client),
     ):
         mock_get_user.return_value = ("user-123", "identity-store-456")
-        queue_session_mock = MagicMock()
-        logs_client_mock = MagicMock()
-        logs_client_mock.get_log_events.return_value = MOCK_GET_LOG_EVENTS_RESPONSE
-        queue_session_mock.client.return_value = logs_client_mock
-        mock_get_session.return_value = queue_session_mock
         mock_get_client.return_value = MagicMock()
 
         get_session_logs(
@@ -611,13 +626,14 @@ def test_get_session_logs_monitor_credentials_honor_proxy_and_ca_bundle(fresh_de
             limit=100,
         )
 
-        # Both settings must reach this directly-built client.
-        queue_session_mock.client.assert_called_once_with("logs", config=ANY, verify=expected_ca)
-        passed_config = queue_session_mock.client.call_args.kwargs["config"]
-        assert passed_config.proxies == {
-            "http": "http://proxy.example.com:8080",
-            "https": "http://proxy.example.com:8080",
-        }
+    # The logs client built off the queue-user session inherited BOTH settings from
+    # the session -- proxy via the merged client config, CA bundle via verify.
+    logs_client = captured["logs_client"]
+    assert logs_client.meta.config.proxies == {
+        "http": "http://proxy.example.com:8080",
+        "https": "http://proxy.example.com:8080",
+    }
+    assert logs_client._endpoint.http_session._verify == expected_ca
 
 
 def test_get_session_logs_with_next_token():

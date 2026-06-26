@@ -306,7 +306,10 @@ SETTINGS: Dict[str, Dict[str, Any]] = {
         "description": (
             "The HTTPS proxy URL (e.g. 'http://proxy.example.com:8080') to route AWS API calls through. "
             "When set, this takes precedence over the HTTPS_PROXY environment variable for Deadline Cloud "
-            "clients. Empty means use the environment variable / default behavior."
+            "clients. Empty means use the environment variable / default behavior. As a machine-level "
+            "setting it is applied to a boto3 session the first time that session is created and is not "
+            "overridden later; the proxy is taken from the first config that configures a given "
+            "(profile, region) session."
         ),
     },
     "settings.ca_bundle": {
@@ -315,7 +318,10 @@ SETTINGS: Dict[str, Dict[str, Any]] = {
         "description": (
             "The filesystem path to a CA certificate bundle (PEM) used to verify TLS connections for AWS "
             "API calls. When set, this takes precedence over the AWS_CA_BUNDLE environment variable for "
-            "Deadline Cloud clients. Empty means use the environment variable / default behavior."
+            "Deadline Cloud clients. Empty means use the environment variable / default behavior. As a "
+            "machine-level setting it is applied to a boto3 session the first time that session is created "
+            "and is not overridden later; the CA bundle is taken from the first config that configures a "
+            "given (profile, region) session."
         ),
     },
 }

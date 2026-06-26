@@ -16,9 +16,9 @@ from botocore.exceptions import ClientError
 from deadline.client.exceptions import DeadlineOperationError, DeadlineOperationTimedOut
 from deadline.client.api._session import (
     _resolve_region,
-    create_client,
     get_boto3_client,
     get_boto3_session,
+    get_default_client_config,
     get_queue_user_boto3_session,
     get_user_and_identity_store_id,
 )
@@ -309,7 +309,7 @@ def get_session_logs(
             queue_session = get_queue_user_boto3_session(
                 deadline=deadline, config=config, farm_id=farm_id, queue_id=queue_id
             )
-            logs_client = create_client(queue_session, "logs", config=config)
+            logs_client = queue_session.client("logs", config=get_default_client_config())
         except Exception as e:
             raise DeadlineOperationError(f"Failed to get queue credentials: {e}")
     else:
@@ -454,11 +454,10 @@ def get_worker_logs(
             logs_region = (
                 region if region is not None else get_boto3_session(config=config).region_name
             )
-            logs_client = create_client(
-                fleet_session,
+            logs_client = fleet_session.client(
                 "logs",
-                config=config,
-                region=logs_region,
+                region_name=logs_region,
+                config=get_default_client_config(),
             )
         except Exception as e:
             raise DeadlineOperationError(f"Failed to get fleet credentials: {e}")
