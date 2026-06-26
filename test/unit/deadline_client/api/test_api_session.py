@@ -380,10 +380,10 @@ def test_apply_proxy_settings_honors_explicit_config_parser(fresh_deadline_confi
     assert client._endpoint.http_session._verify == expected_ca
 
 
-def test_apply_proxy_settings_first_config_wins(fresh_deadline_config):
+def test_apply_proxy_settings_first_config_wins_and_warns(fresh_deadline_config, caplog):
     """
     Proxy/CA are machine-level, not per-config: once applied to a (cached) session,
-    a later call with a different config does NOT override them.
+    a later call with a DIFFERENT config does NOT override them, and warns.
     """
     from configparser import ConfigParser
 
@@ -394,14 +394,28 @@ def test_apply_proxy_settings_first_config_wins(fresh_deadline_config):
 
     session = boto3.Session(region_name="us-west-2")
     api._session.apply_proxy_settings(session, config=cfg_a)
-    # Second application with a different config is a no-op (session already configured).
-    api._session.apply_proxy_settings(session, config=cfg_b)
+    # Second application with a conflicting config is ignored (session already configured).
+    with caplog.at_level("WARNING", logger="deadline.client.api._session"):
+        api._session.apply_proxy_settings(session, config=cfg_b)
 
+    assert any("already-configured boto3 session" in r.message for r in caplog.records)
     client = get_session_client(session, "deadline")
     assert client.meta.config.proxies == {
         "http": "http://proxy-a:8080",
         "https": "http://proxy-a:8080",
     }
+
+
+def test_apply_proxy_settings_reapply_same_config_no_warning(fresh_deadline_config, caplog):
+    """Re-applying the SAME settings to a session is a silent no-op (no warning)."""
+    config.set_setting("settings.https_proxy", "http://proxy.example.com:8080")
+    session = boto3.Session(region_name="us-west-2")
+
+    api._session.apply_proxy_settings(session)
+    with caplog.at_level("WARNING", logger="deadline.client.api._session"):
+        api._session.apply_proxy_settings(session)
+
+    assert not any("already-configured boto3 session" in r.message for r in caplog.records)
 
 
 def test_apply_proxy_settings_returns_same_session(fresh_deadline_config):

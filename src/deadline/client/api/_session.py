@@ -179,10 +179,11 @@ def _resolve_ca_bundle(config: Optional[ConfigParser] = None) -> Optional[str]:
     return None
 
 
-# Marker attribute set on a boto3.Session once proxy/CA settings have been applied,
-# so apply_proxy_settings is idempotent and does not re-read config for a session it
-# has already configured (sessions are cached and reused across many client builds).
-_PROXY_SETTINGS_APPLIED_ATTR = "_deadline_proxy_settings_applied"
+# Attribute stashing the (https_proxy, ca_bundle) tuple that was first applied to a
+# boto3.Session, so apply_proxy_settings stays idempotent (sessions are cached and
+# reused across many client builds) and can detect when a later config disagrees with
+# the settings already baked into the session and its already-built clients.
+_PROXY_SETTINGS_APPLIED_ATTR = "_deadline_applied_proxy_settings"
 
 
 def apply_proxy_settings(
@@ -206,8 +207,12 @@ def apply_proxy_settings(
     they are taken from the *first* ``config`` that configures a given cached session.
     Sessions are cached on ``(profile, region)`` (see ``get_boto3_session``), so a later
     call with a different ``config`` that resolves to the same cached session does not
-    re-apply or override the proxy/CA already set on it. Pass ``force_refresh=True`` to
-    ``get_boto3_session`` to drop the cached session and pick up changed settings.
+    re-apply or override the proxy/CA already set on it -- clients already built from the
+    session captured the original values at build time, so silently changing the session
+    now would split-brain old and new clients. A later config that *disagrees* with the
+    already-applied settings is therefore ignored with a warning. Pass
+    ``force_refresh=True`` to ``get_boto3_session`` to drop the cached session and pick up
+    changed settings cleanly.
 
     Args:
         session: The boto3 session to configure, modified in place.
@@ -217,13 +222,25 @@ def apply_proxy_settings(
     Returns:
         The same ``session``, for convenient chaining.
     """
-    if getattr(session, _PROXY_SETTINGS_APPLIED_ATTR, False):
-        # Already configured (first config wins) -- leave it untouched.
-        return session
-    setattr(session, _PROXY_SETTINGS_APPLIED_ATTR, True)
+    resolved = (_resolve_https_proxy(config), _resolve_ca_bundle(config))
 
+    applied = getattr(session, _PROXY_SETTINGS_APPLIED_ATTR, None)
+    if applied is not None:
+        # Already configured (first config wins). Warn if a later config disagrees,
+        # since the session and its already-built clients keep the original values.
+        if resolved != applied:
+            logging.getLogger(__name__).warning(
+                "Ignoring https_proxy/ca_bundle %s for an already-configured boto3 session; "
+                "keeping the values applied first %s. Proxy and CA bundle are machine-level "
+                "settings fixed per session -- use force_refresh to apply changed settings.",
+                resolved,
+                applied,
+            )
+        return session
+    setattr(session, _PROXY_SETTINGS_APPLIED_ATTR, resolved)
+
+    https_proxy, ca_bundle = resolved
     botocore_session = session._session
-    https_proxy = _resolve_https_proxy(config)
     if https_proxy:
         existing = botocore_session.get_default_client_config() or botocore.config.Config()
         # Set both schemes so the proxy is honored regardless of the endpoint's scheme.
@@ -233,7 +250,6 @@ def apply_proxy_settings(
             )
         )
 
-    ca_bundle = _resolve_ca_bundle(config)
     if ca_bundle:
         # botocore feeds the session's ``ca_bundle`` config variable into each client's
         # ``verify``. (_resolve_ca_bundle has already expanded ``~``.)
