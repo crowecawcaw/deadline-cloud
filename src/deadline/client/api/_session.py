@@ -8,6 +8,7 @@ of the Deadline-configured IAM credentials.
 from __future__ import annotations
 
 import logging
+import os
 from configparser import ConfigParser
 from contextlib import contextmanager
 from enum import Enum
@@ -83,7 +84,11 @@ def get_boto3_session(
     if force_refresh:
         invalidate_boto3_session_cache()
 
-    return _get_boto3_session_for_profile(profile_name, region)
+    session = _get_boto3_session_for_profile(profile_name, region)
+    # Apply proxy / CA-bundle settings once per cached session. Idempotent: a later
+    # call with a different config that resolves to the same cached session keeps the
+    # proxy/CA first applied (these are machine-level, not per-config, settings).
+    return apply_proxy_settings(session, config=config)
 
 
 @lru_cache
@@ -117,21 +122,18 @@ def invalidate_boto3_session_cache() -> None:
     _get_queue_user_boto3_session.cache_clear()
 
 
-def get_default_client_config(
-    config: Optional[ConfigParser] = None, **kwargs
-) -> botocore.config.Config:
+def get_default_client_config(**kwargs) -> botocore.config.Config:
     """
     Gets the default botocore Config object to use with `boto3 clients`.
     This method adds user agent version and submitter context into botocore calls.
     Additional arguments are forwarded to the Config constructor.
 
-    If the ``settings.https_proxy`` config setting is set (and the caller hasn't
-    already supplied ``proxies``), it is applied to the returned Config so that
-    Deadline Cloud API calls route through the configured proxy without relying
-    on the process-wide HTTPS_PROXY environment variable. Pass an explicit
-    ``proxies`` (including ``proxies=None`` / an empty value) to suppress this
-    auto-read -- ``_build_client`` does this so it is the single authority for
-    which proxy gets applied per (possibly custom) config.
+    Note: the ``settings.https_proxy`` / ``settings.ca_bundle`` config settings are
+    *not* applied here. They are applied once at the session level (see
+    ``apply_proxy_settings``), and botocore merges the session's default client
+    config into every per-client ``Config`` -- so clients built with this Config
+    still route through the configured proxy and verify against the configured CA
+    bundle without this function needing to know about them.
     """
     user_agent_extra = f"app/deadline-client#{version}"
     if session_context.get("submitter-name"):
@@ -147,19 +149,6 @@ def get_default_client_config(
     if agent_name:
         user_agent_extra += f" invoked-by/{agent_name}"
 
-    # Apply the configured proxy unless the caller passed an explicit ``proxies``
-    # key (any value, including None/empty, counts as "caller is authoritative").
-    # We set both the "http" and "https" keys so the proxy is honored regardless
-    # of the client endpoint's scheme (botocore selects the proxy by scheme).
-    if "proxies" not in kwargs:
-        https_proxy = _resolve_https_proxy(config)
-        if https_proxy:
-            kwargs["proxies"] = {"http": https_proxy, "https": https_proxy}
-    elif not kwargs["proxies"]:
-        # Caller explicitly opted out of a proxy -- drop the empty value so it
-        # isn't forwarded to botocore.config.Config as proxies={}/None.
-        del kwargs["proxies"]
-
     client_config = botocore.config.Config(user_agent_extra=user_agent_extra, **kwargs)
     return client_config
 
@@ -167,7 +156,7 @@ def get_default_client_config(
 def _resolve_https_proxy(config: Optional[ConfigParser] = None) -> Optional[str]:
     """
     Return the configured HTTPS proxy URL (``settings.https_proxy``), or ``None``
-    when it is unset. Applied to clients via the botocore Config ``proxies`` field.
+    when it is unset.
     """
     https_proxy = config_file.get_setting("settings.https_proxy", config=config)
     if https_proxy and https_proxy.strip():
@@ -178,123 +167,94 @@ def _resolve_https_proxy(config: Optional[ConfigParser] = None) -> Optional[str]
 def _resolve_ca_bundle(config: Optional[ConfigParser] = None) -> Optional[str]:
     """
     Return the configured CA certificate bundle path (``settings.ca_bundle``),
-    or ``None`` when it is unset. The CA bundle is applied to clients via the
-    ``verify`` kwarg of ``session.client(...)`` -- it is *not* a botocore Config
-    field, which is why proxy and CA bundle are applied at different layers.
+    or ``None`` when it is unset.
     """
     ca_bundle = config_file.get_setting("settings.ca_bundle", config=config)
     if ca_bundle and ca_bundle.strip():
-        return ca_bundle.strip()
+        # ``settings.ca_bundle`` is declared ``is_path: True``, but ``get_setting``
+        # only normalizes slashes -- it does not expand ``~``. Expand it here so a
+        # value like ``~/certs/ca.pem`` resolves before being handed to boto3's
+        # ``verify`` (botocore does not expand ``~`` either).
+        return os.path.expanduser(ca_bundle.strip())
     return None
 
 
-# Cache key for the proxy/CA-bundle settings. A ConfigParser is unhashable and
-# cannot be part of an lru_cache key, so we resolve the two settings to a small
-# hashable tuple of plain strings and use *that* as the key instead. This both
-# lets callers' per-config values flow through the cache and keeps clients built
-# from different configs from colliding on the same cache entry.
-ClientSettingsKey = Tuple[Optional[str], Optional[str]]  # (https_proxy, ca_bundle)
+# Marker attribute set on a boto3.Session once proxy/CA settings have been applied,
+# so apply_proxy_settings is idempotent and does not re-read config for a session it
+# has already configured (sessions are cached and reused across many client builds).
+_PROXY_SETTINGS_APPLIED_ATTR = "_deadline_proxy_settings_applied"
 
 
-def _client_settings_key(config: Optional[ConfigParser] = None) -> ClientSettingsKey:
-    """Resolve (https_proxy, ca_bundle) from ``config`` into a hashable cache key."""
-    return (_resolve_https_proxy(config), _resolve_ca_bundle(config))
-
-
-def _build_client(
-    session: boto3.Session,
-    service_name: str,
-    settings_key: ClientSettingsKey,
-    region: Optional[str] = None,
-    endpoint_url: Optional[str] = None,
-    **config_kwargs,
-):
+def apply_proxy_settings(
+    session: boto3.Session, config: Optional[ConfigParser] = None
+) -> boto3.Session:
     """
-    Build a boto3 client applying the resolved ``(https_proxy, ca_bundle)``
-    settings: the proxy via the botocore Config ``proxies`` field and the CA
-    bundle via the client's ``verify`` kwarg. Shared by ``create_client`` and the
-    cached ``get_session_client`` so both apply the settings identically.
+    Apply the ``settings.https_proxy`` and ``settings.ca_bundle`` config settings to
+    ``session`` so that *every* client built from it -- the Deadline Cloud clients
+    created here as well as the S3 / Deadline clients job_attachments builds from the
+    same session -- routes through the configured proxy and verifies TLS against the
+    configured CA bundle.
 
-    This is the single authority for which proxy is applied: it always passes an
-    explicit ``proxies`` to ``get_default_client_config`` (the resolved value, or
-    an empty value to opt out) so that helper never re-reads the on-disk default
-    proxy behind a custom config's back. A caller-supplied ``proxies`` in
-    ``config_kwargs`` (none today) would take precedence.
-    """
-    https_proxy, ca_bundle = settings_key
-    if "proxies" not in config_kwargs:
-        # Set both schemes so the proxy is honored regardless of the endpoint
-        # scheme; an empty dict means "no proxy" and suppresses the auto-read.
-        config_kwargs["proxies"] = (
-            {"http": https_proxy, "https": https_proxy} if https_proxy else {}
-        )
-    client_kwargs: dict = {"config": get_default_client_config(**config_kwargs)}
-    if region is not None:
-        client_kwargs["region_name"] = region
-    if endpoint_url is not None:
-        client_kwargs["endpoint_url"] = endpoint_url
-    if ca_bundle is not None:
-        client_kwargs["verify"] = ca_bundle
-    return session.client(service_name, **client_kwargs)
+    Both settings are applied once, at the session level, rather than threaded through
+    every client-creation call: botocore merges a session's default client config into
+    every per-client ``botocore.config.Config`` (so ``proxies`` is inherited) and reads
+    the session's ``ca_bundle`` config variable for the client's ``verify`` value. This
+    gives uniform proxy/CA coverage with no per-client plumbing.
 
-
-def create_client(
-    session: boto3.Session,
-    service_name: str,
-    *,
-    config: Optional[ConfigParser] = None,
-    region: Optional[str] = None,
-    endpoint_url: Optional[str] = None,
-    **config_kwargs,
-):
-    """
-    Create a boto3 client that honors BOTH the ``settings.https_proxy`` and
-    ``settings.ca_bundle`` config settings.
-
-    This is the single (uncached) place client creation should funnel through so
-    the two settings have consistent coverage: the proxy is applied via the
-    botocore Config (see ``get_default_client_config``) and the CA bundle via the
-    client's ``verify`` kwarg. Applying only one of them -- e.g. routing through a
-    TLS-intercepting proxy without trusting its private CA -- is exactly the
-    misconfiguration this helper avoids.
+    Proxy and CA bundle are process-global, machine-level settings (a host has one
+    corporate proxy / trust store), so -- unlike region, which is resolved per farm --
+    they are taken from the *first* ``config`` that configures a given cached session.
+    Sessions are cached on ``(profile, region)`` (see ``get_boto3_session``), so a later
+    call with a different ``config`` that resolves to the same cached session does not
+    re-apply or override the proxy/CA already set on it. Pass ``force_refresh=True`` to
+    ``get_boto3_session`` to drop the cached session and pick up changed settings.
 
     Args:
-        session: The boto3 Session used to build the client.
-        service_name: The AWS service name (e.g. "deadline", "logs").
-        config: An optional AWS Deadline Cloud ConfigParser. When provided, both
-            settings are resolved from it rather than the on-disk default config.
-        region: The AWS region for the client. When None, the session/profile
-            region is used (no ``region_name`` is passed).
-        endpoint_url: An explicit endpoint URL to pass to ``session.client``. Used
-            to regionalize a cross-region endpoint when a profile override leaked
-            the session's region into it.
-        **config_kwargs: Extra keyword arguments forwarded to
-            ``get_default_client_config`` (e.g. ``retries=...``).
+        session: The boto3 session to configure, modified in place.
+        config: An optional AWS Deadline Cloud ConfigParser to resolve the settings
+            from. When ``None``, the on-disk default config is read.
+
+    Returns:
+        The same ``session``, for convenient chaining.
     """
-    return _build_client(
-        session,
-        service_name,
-        _client_settings_key(config),
-        region=region,
-        endpoint_url=endpoint_url,
-        **config_kwargs,
-    )
+    if getattr(session, _PROXY_SETTINGS_APPLIED_ATTR, False):
+        # Already configured (first config wins) -- leave it untouched.
+        return session
+    setattr(session, _PROXY_SETTINGS_APPLIED_ATTR, True)
+
+    botocore_session = session._session
+    https_proxy = _resolve_https_proxy(config)
+    if https_proxy:
+        existing = botocore_session.get_default_client_config() or botocore.config.Config()
+        # Set both schemes so the proxy is honored regardless of the endpoint's scheme.
+        botocore_session.set_default_client_config(
+            existing.merge(
+                botocore.config.Config(proxies={"http": https_proxy, "https": https_proxy})
+            )
+        )
+
+    ca_bundle = _resolve_ca_bundle(config)
+    if ca_bundle:
+        # botocore feeds the session's ``ca_bundle`` config variable into each client's
+        # ``verify``. (_resolve_ca_bundle has already expanded ``~``.)
+        botocore_session.set_config_variable("ca_bundle", ca_bundle)
+
+    return session
 
 
 @lru_cache
-def get_session_client(
-    session: boto3.Session,
-    service_name: str,
-    region: Optional[str] = None,
-    settings_key: Optional[ClientSettingsKey] = None,
-):
+def get_session_client(session: boto3.Session, service_name: str, region: Optional[str] = None):
     """
     Create and cache a boto3 client for the given session, service name, and region.
 
-    This function is decorated with @lru_cache so repeated calls with the same
-    arguments return the cached client. ``region`` and ``settings_key`` are part
-    of the cache key, so clients for different regions -- or different proxy /
-    CA-bundle settings -- are never reused for each other.
+    This function is decorated with @lru_cache to ensure that repeated calls
+    with the same session, service name, and region return the cached client to
+    avoid repeating initialization where possible. The ``region`` argument is part
+    of the cache key so clients for different regions are never reused for each other.
+
+    The ``settings.https_proxy`` / ``settings.ca_bundle`` config settings are applied
+    to the session (see ``apply_proxy_settings``), not here, so the created client
+    inherits them automatically via botocore's config merge.
 
     When a profile has a non-standard endpoint override (e.g. via the ``[services ...]``
     section or ``AWS_ENDPOINT_URL*`` env vars), boto3 applies it regardless of the
@@ -307,37 +267,22 @@ def get_session_client(
         service_name: The name of the AWS service (e.g., 'deadline', 's3')
         region: The AWS region to create the client for. If None, the session's
             default region is used.
-        settings_key: A hashable ``(https_proxy, ca_bundle)`` tuple (see
-            ``_client_settings_key``) identifying the proxy / CA-bundle settings
-            to apply. When ``None``, they are resolved from the on-disk default
-            config -- so callers that don't thread a config keep reading the
-            default config exactly as before. A ConfigParser is unhashable and so
-            cannot itself be a cache key; callers with a custom config resolve it
-            to this tuple (``get_boto3_client`` does so) before calling.
 
     Returns:
-        A boto3 client for the specified service.
-
-    The ``settings.https_proxy`` and ``settings.ca_bundle`` config settings are
-    applied to the created client (proxy via the botocore Config, CA bundle via
-    the ``verify`` kwarg).
+        A boto3 client for the specified service
     """
-    if settings_key is None:
-        settings_key = _client_settings_key()
-
     if region is None:
-        return _build_client(session, service_name, settings_key)
+        return session.client(service_name, config=get_default_client_config())
 
-    client = _build_client(session, service_name, settings_key, region=region)
+    client = session.client(service_name, config=get_default_client_config(), region_name=region)
     resolved = client.meta.endpoint_url
     session_region = session.region_name
     # An override leaked the session's region into a cross-region endpoint.
     if region not in resolved and session_region and session_region in resolved:
-        return _build_client(
-            session,
+        return session.client(
             service_name,
-            settings_key,
-            region=region,
+            config=get_default_client_config(),
+            region_name=region,
             endpoint_url=resolved.replace(session_region, region, 1),
         )
     return client
@@ -426,16 +371,7 @@ def get_boto3_client(
 
     session = get_boto3_session(config=config)
     resolved_region = _resolve_region(config=config, region=region)
-    # Resolve the proxy / CA-bundle settings from the caller's config into a
-    # hashable key so the (cached) client honors a custom-supplied config rather
-    # than always reading the on-disk default.
-    settings_key = _client_settings_key(config)
-    return get_session_client(
-        session=session,
-        service_name=service_name,
-        region=resolved_region,
-        settings_key=settings_key,
-    )
+    return get_session_client(session=session, service_name=service_name, region=resolved_region)
 
 
 def get_credentials_source(
@@ -521,9 +457,13 @@ def get_queue_user_boto3_session(
     # base session's region.
     region = _resolve_region(config=config, farm_id=farm_id)
 
-    return _get_queue_user_boto3_session(
+    queue_user_session = _get_queue_user_boto3_session(
         deadline, base_session, farm_id, queue_id, queue_display_name, region
     )
+    # Apply proxy / CA-bundle to the queue-user session too, so clients job_attachments
+    # builds from it (S3 uploads/downloads) route through the proxy and trust the CA
+    # bundle. Idempotent per cached session.
+    return apply_proxy_settings(queue_user_session, config=config)
 
 
 @lru_cache
