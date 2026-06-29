@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Iterator
 
@@ -84,6 +85,17 @@ def proxy_setup(tmp_path: Path) -> Iterator[tuple]:
     ctx = server_ssl_context(server_cert, server_key)
     server, _base_url, _ = start_server(backend, ssl_context=ctx)
     backend_port = server.server_address[1]
+    # The mock backend is a single-threaded HTTPServer whose accept thread also
+    # performs the (synchronous) TLS handshake inside ``socket.accept()``. A
+    # half-open client connection -- e.g. a botocore connection-pool socket the
+    # CONNECT proxy relayed but that never finishes a handshake -- would block
+    # ``accept()`` indefinitely, wedging ``serve_forever``. Once wedged, the
+    # ``server.shutdown()`` in this fixture's teardown blocks the main pytest
+    # thread forever, which is exactly how this harness hung the macOS CI job
+    # until it was cancelled (uniform ~6m57s, conclusion=cancelled). Bounding the
+    # listening-socket handshake with a generous timeout guarantees the accept
+    # thread always returns, so ``serve_forever``/``shutdown`` can never wedge.
+    server.socket.settimeout(30)
 
     proxy = RedirectingConnectProxy("127.0.0.1", backend_port).start()
 
@@ -120,7 +132,14 @@ def proxy_setup(tmp_path: Path) -> Iterator[tuple]:
         yield backend, env, proxy, ca_pem
     finally:
         proxy.stop()
-        server.shutdown()
+        # ``server.shutdown()`` blocks until ``serve_forever`` observes the stop
+        # flag. The socket timeout above keeps the accept thread live so this
+        # returns promptly, but run it on a watchdog thread as defence in depth:
+        # a wedged shutdown must never hang the main pytest thread (and thus the
+        # whole CI job) -- the daemon server thread dies with the process anyway.
+        shutdown_thread = threading.Thread(target=server.shutdown, daemon=True)
+        shutdown_thread.start()
+        shutdown_thread.join(timeout=10)
         server.server_close()
 
 
@@ -136,6 +155,7 @@ def _config_set(env: dict, key: str, value: str) -> None:
 
 
 @skip_on_windows
+@pytest.mark.timeout(120)
 def test_farm_list_routes_through_configured_proxy(proxy_setup):
     """With https_proxy + ca_bundle set, the CLI reaches the mock via the proxy."""
     backend, env, proxy, ca_pem = proxy_setup
@@ -159,6 +179,7 @@ def test_farm_list_routes_through_configured_proxy(proxy_setup):
 
 
 @skip_on_windows
+@pytest.mark.timeout(120)
 def test_farm_list_without_proxy_cannot_reach_backend(proxy_setup):
     """Negative control: without the proxy the endpoint is unreachable.
 

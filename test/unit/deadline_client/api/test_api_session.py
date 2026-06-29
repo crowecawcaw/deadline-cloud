@@ -317,7 +317,10 @@ def test_apply_proxy_settings_ca_bundle_expands_user(fresh_deadline_config):
     """
     config.set_setting("settings.ca_bundle", "~/certs/ca.pem")
     expected_ca = os.path.expanduser(config.get_setting("settings.ca_bundle"))
-    assert "~" not in expected_ca
+    # The leading ``~`` must have been expanded. (Don't assert ``~`` is absent from
+    # the whole path: on Windows the home dir can be an 8.3 short path like
+    # ``C:\Users\RUNNER~1\...`` that legitimately contains a tilde.)
+    assert not expected_ca.startswith("~")
     session = boto3.Session(region_name="us-west-2")
     api._session.apply_proxy_settings(session)
 

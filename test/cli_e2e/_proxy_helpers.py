@@ -168,7 +168,7 @@ class RedirectingConnectProxy:
             # Redirect: ignore the requested host, tunnel to our fixed backend.
             remote = socket.create_connection(self._target, timeout=10)
             client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-            self._relay(client, remote)
+            self._relay(client, remote, lambda: self._stop)
         except Exception:
             # Best-effort test proxy: a malformed request or a peer that hangs
             # up mid-tunnel should just drop this connection, never crash the
@@ -186,15 +186,18 @@ class RedirectingConnectProxy:
                         pass
 
     @staticmethod
-    def _relay(a: socket.socket, b: socket.socket) -> None:
+    def _relay(a: socket.socket, b: socket.socket, stopped) -> None:
         import select
 
         a.setblocking(False)
         b.setblocking(False)
-        while True:
-            r, _, _ = select.select([a, b], [], [], 30)
+        # Poll on a short interval so the relay re-checks ``stopped()`` and exits
+        # promptly at teardown instead of sitting in a long ``select`` after the
+        # accept loop has stopped (which would leak this thread + its sockets).
+        while not stopped():
+            r, _, _ = select.select([a, b], [], [], 1)
             if not r:
-                break
+                continue
             for s in r:
                 try:
                     chunk = s.recv(65536)
@@ -300,7 +303,15 @@ class TLSInterceptConnectProxy:
             # fixed plaintext backend, ignoring the host the client asked for.
             tls_client = self._ssl_context.wrap_socket(client, server_side=True)
             remote = socket.create_connection(self._target, timeout=10)
-            self._relay(tls_client, remote)
+            # Bound every blocking ``recv`` in the pump threads. Without this a
+            # half-open peer (common when the CLI subprocess leaves a pooled
+            # connection open at teardown) leaves a pump blocked on ``recv``
+            # forever; the pump never observes ``_stop`` and the connection's
+            # sockets stay open, leaking threads/fds across the run. A read
+            # timeout lets each pump wake, re-check ``_stop``, and exit.
+            tls_client.settimeout(5)
+            remote.settimeout(5)
+            self._relay(tls_client, remote, lambda: self._stop)
         except Exception:
             # Best-effort test proxy: a malformed request, a TLS handshake failure, or a
             # peer that hangs up mid-tunnel should drop this connection, never crash the
@@ -315,14 +326,20 @@ class TLSInterceptConnectProxy:
                         pass
 
     @staticmethod
-    def _relay(tls_sock: ssl.SSLSocket, plain_sock: socket.socket) -> None:
+    def _relay(tls_sock: ssl.SSLSocket, plain_sock: socket.socket, stopped) -> None:
         # SSLSocket buffers records internally, which doesn't compose with select(), so
         # use two simple blocking pump threads (one per direction) instead. When either
-        # side closes, shut both down so the other pump unblocks and exits.
+        # side closes, shut both down so the other pump unblocks and exits. Both sockets
+        # carry a read timeout, so a pump that would otherwise block forever on a
+        # half-open peer instead wakes periodically to re-check ``stopped()`` and the
+        # peer's liveness, guaranteeing it terminates at teardown.
         def pump(src, dst):
             try:
-                while True:
-                    data = src.recv(65536)
+                while not stopped():
+                    try:
+                        data = src.recv(65536)
+                    except socket.timeout:
+                        continue
                     if not data:
                         break
                     dst.sendall(data)

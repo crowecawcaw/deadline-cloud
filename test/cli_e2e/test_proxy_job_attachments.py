@@ -94,6 +94,17 @@ def s3_proxy_setup(tmp_path: Path, moto_server: str) -> Iterator[tuple]:
         )
     except s3_client.exceptions.BucketAlreadyOwnedByYou:
         pass
+    # The moto server + bucket are session-scoped and shared across cli_e2e tests,
+    # so wipe any objects left by a prior test on this xdist worker. Otherwise the
+    # exact-count assertions below (e.g. 2 objects under Data/) can observe another
+    # test's leftovers. (Mirrors the wipe in conftest's seeded_farm_queue fixture.)
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET):
+        if page.get("Contents"):
+            s3_client.delete_objects(
+                Bucket=BUCKET,
+                Delete={"Objects": [{"Key": o["Key"]} for o in page["Contents"]]},
+            )
 
     config_file = tmp_path / "deadline.config"
     config_file.write_text("")
@@ -137,6 +148,7 @@ def _config_set(env: dict, key: str, value: str) -> None:
 
 
 @skip_on_windows
+@pytest.mark.timeout(180)
 def test_attachment_upload_download_routes_s3_through_configured_proxy(s3_proxy_setup, tmp_path):
     """
     With https_proxy + ca_bundle set, ``deadline attachment`` S3 traffic (built by
@@ -208,6 +220,7 @@ def test_attachment_upload_download_routes_s3_through_configured_proxy(s3_proxy_
 
 
 @skip_on_windows
+@pytest.mark.timeout(180)
 def test_attachment_upload_without_proxy_cannot_reach_s3(s3_proxy_setup, tmp_path):
     """
     Negative control: without the proxy the realistic S3 endpoint is unreachable.
