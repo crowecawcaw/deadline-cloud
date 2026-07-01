@@ -233,6 +233,11 @@ def test_resolve_region_backcompat_empty(fresh_deadline_config):
 def test_get_boto3_client_with_region(fresh_deadline_config):
     """get_boto3_client passes region_name to the client when a region is given."""
     mock_session = MagicMock()
+    # Standard regional endpoint already scoped to the requested region -> no recreation.
+    mock_session.region_name = "eu-west-1"
+    mock_session.client.return_value.meta.endpoint_url = (
+        "https://deadline.eu-west-1.amazonaws.com"
+    )
     with patch.object(api._session, "get_boto3_session", return_value=mock_session):
         # Make sure no stale cache entry interferes.
         get_session_client.cache_clear()
@@ -245,6 +250,10 @@ def test_get_boto3_client_with_farm_region_config(fresh_deadline_config):
     """get_boto3_client resolves region from defaults.farm_region when not passed."""
     config.set_setting("defaults.farm_region", "ap-south-1")
     mock_session = MagicMock()
+    mock_session.region_name = "ap-south-1"
+    mock_session.client.return_value.meta.endpoint_url = (
+        "https://deadline.ap-south-1.amazonaws.com"
+    )
     with patch.object(api._session, "get_boto3_session", return_value=mock_session):
         get_session_client.cache_clear()
         get_boto3_client("deadline")
@@ -343,6 +352,117 @@ def test_get_session_client_same_region_cached():
     client2 = get_session_client(session, "s3", region="eu-west-1")
 
     assert client1 is client2
+
+
+class TestGetSessionClientCrossRegion:
+    """
+    Cross-region endpoint handling in get_session_client.
+
+    When a profile carries a ``[services ...]`` endpoint override, botocore pins that
+    single endpoint to every deadline client regardless of the requested region. In a
+    cross-region fan-out each client signs SigV4 for its own region but hits the
+    session-region endpoint, yielding InvalidSignatureException. get_session_client
+    detects that leak via the public ``client.meta.endpoint_url`` and rebuilds the
+    client against a region-appropriate endpoint -- but only when the session region
+    appears as a dot-delimited token, to avoid mangling custom/private endpoints.
+    """
+
+    def test_gamma_override_endpoint_regionalized(self):
+        """A gamma-style override endpoint gets its ``.us-west-2.`` token rewritten
+        to the requested region, and the client is rebuilt with that endpoint."""
+        get_session_client.cache_clear()
+        session = MagicMock()
+        session.region_name = "us-west-2"
+
+        first_client = MagicMock()
+        first_client.meta.endpoint_url = "https://gamma.example.us-west-2.amazonaws.com"
+        second_client = MagicMock()
+        session.client.side_effect = [first_client, second_client]
+
+        result = get_session_client(session, "deadline", region="us-east-1")
+
+        assert result is second_client
+        assert session.client.call_count == 2
+        # The rebuilt client uses the regionalized endpoint URL.
+        session.client.assert_called_with(
+            "deadline",
+            config=ANY,
+            region_name="us-east-1",
+            endpoint_url="https://gamma.example.us-east-1.amazonaws.com",
+        )
+
+    def test_standard_endpoint_already_scoped_not_recreated(self):
+        """A standard AWS endpoint that already contains the requested region is left
+        alone -- the original client is returned and .client() is called once."""
+        get_session_client.cache_clear()
+        session = MagicMock()
+        session.region_name = "us-west-2"
+
+        client = MagicMock()
+        client.meta.endpoint_url = "https://deadline.us-east-1.amazonaws.com"
+        session.client.return_value = client
+
+        result = get_session_client(session, "deadline", region="us-east-1")
+
+        assert result is client
+        session.client.assert_called_once_with(
+            "deadline", config=ANY, region_name="us-east-1"
+        )
+
+    def test_session_without_region_not_recreated(self):
+        """When the session has no region_name, there is nothing to rewrite; the
+        original client is returned and .client() is called once."""
+        get_session_client.cache_clear()
+        session = MagicMock()
+        session.region_name = None
+
+        client = MagicMock()
+        client.meta.endpoint_url = "https://custom.example.us-west-2.amazonaws.com"
+        session.client.return_value = client
+
+        result = get_session_client(session, "deadline", region="us-east-1")
+
+        assert result is client
+        session.client.assert_called_once_with(
+            "deadline", config=ANY, region_name="us-east-1"
+        )
+
+    def test_resolved_endpoint_without_session_region_not_recreated(self):
+        """If the resolved endpoint does not contain the session region at all, no
+        regionalization occurs and the original client is returned."""
+        get_session_client.cache_clear()
+        session = MagicMock()
+        session.region_name = "us-west-2"
+
+        client = MagicMock()
+        client.meta.endpoint_url = "https://custom.example.eu-central-1.amazonaws.com"
+        session.client.return_value = client
+
+        result = get_session_client(session, "deadline", region="us-east-1")
+
+        assert result is client
+        session.client.assert_called_once_with(
+            "deadline", config=ANY, region_name="us-east-1"
+        )
+
+    def test_non_delimited_region_substring_not_rewritten(self):
+        """Hardening: the session region appears only as a NON-delimited substring
+        (e.g. host ``us-west-2-corp.example.com``). It must NOT be rewritten -- the
+        original client is returned and .client() is called once."""
+        get_session_client.cache_clear()
+        session = MagicMock()
+        session.region_name = "us-west-2"
+
+        client = MagicMock()
+        client.meta.endpoint_url = "https://us-west-2-corp.example.com"
+        session.client.return_value = client
+
+        result = get_session_client(session, "deadline", region="us-east-1")
+
+        assert result is client
+        session.client.assert_called_once_with(
+            "deadline", config=ANY, region_name="us-east-1"
+        )
 
 
 def test_get_queue_user_boto3_session_uses_resolved_farm_region(fresh_deadline_config):

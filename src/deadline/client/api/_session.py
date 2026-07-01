@@ -140,6 +140,23 @@ def get_default_client_config(**kwargs) -> botocore.config.Config:
     return client_config
 
 
+def _regionalize_endpoint_url(url: str, session_region: str, region: str) -> Optional[str]:
+    """
+    Rewrite ``session_region`` to ``region`` in ``url`` only when it appears as a
+    dot-delimited token (e.g. ``.us-west-2.``), returning the rewritten URL.
+
+    Anchoring to ``.<region>.`` avoids mangling URLs where the region string occurs
+    in a non-region position -- e.g. a host like ``us-west-2-corp.example.com`` or an
+    account/stage token that merely contains the region. Returns ``None`` when the
+    session region is not present as such a delimited token, signalling the caller
+    to leave the resolved (custom/private) endpoint untouched.
+    """
+    token = f".{session_region}."
+    if token not in url:
+        return None
+    return url.replace(token, f".{region}.")
+
+
 @lru_cache
 def get_session_client(session: boto3.Session, service_name: str, region: Optional[str] = None):
     """
@@ -149,6 +166,16 @@ def get_session_client(session: boto3.Session, service_name: str, region: Option
     with the same session, service name, and region return the cached client to
     avoid repeating initialization where possible. The ``region`` argument is part
     of the cache key so clients for different regions are never reused for each other.
+
+    When a profile carries a ``[services ...]`` endpoint override, botocore applies that
+    single endpoint to every client regardless of the requested ``region_name``. In a
+    cross-region fan-out each client then signs SigV4 for its own region but hits the
+    session-region endpoint, so the service rejects the mismatched signature
+    (``InvalidSignatureException: Credential should be scoped to a valid region``). We
+    detect that case via the public ``client.meta.endpoint_url`` and rebuild the client
+    against a region-appropriate endpoint. Using ``meta.endpoint_url`` lets botocore
+    resolve the full override precedence (incl. ``AWS_ENDPOINT_URL_DEADLINE`` / global
+    ``AWS_ENDPOINT_URL``) for us.
 
     Args:
         session: The boto3 Session to use for creating the client
@@ -161,7 +188,21 @@ def get_session_client(session: boto3.Session, service_name: str, region: Option
     """
     if region is None:
         return session.client(service_name, config=get_default_client_config())
-    return session.client(service_name, config=get_default_client_config(), region_name=region)
+
+    client = session.client(service_name, config=get_default_client_config(), region_name=region)
+    resolved = client.meta.endpoint_url
+    session_region = session.region_name
+    # An endpoint override leaked the session's region into a cross-region endpoint.
+    if region not in resolved and session_region and session_region in resolved:
+        regionalized = _regionalize_endpoint_url(resolved, session_region, region)
+        if regionalized is not None:
+            return session.client(
+                service_name,
+                config=get_default_client_config(),
+                region_name=region,
+                endpoint_url=regionalized,
+            )
+    return client
 
 
 def _resolve_region(
