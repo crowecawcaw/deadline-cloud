@@ -1272,19 +1272,28 @@ def _make_handler(routes, validator, backend):
     return _Handler
 
 
-def start_server(backend: "MockDeadlineBackend", port: int = 0):
+def start_server(backend: "MockDeadlineBackend", port: int = 0, ssl_context=None):
     """Start the HTTP server in a daemon thread. Returns (server, base_url, thread).
 
     Binds to 127.0.0.1. Callers pointing the ``deadline`` CLI at this server via
     ``AWS_ENDPOINT_URL_DEADLINE`` must also disable botocore's ``management.``
     host-prefix injection for Deadline API calls (e.g. via the sitecustomize
     shim in ``test_cli_fleet_worker_subprocess.py``).
+
+    If ``ssl_context`` (an ``ssl.SSLContext``) is provided, the listening socket
+    is wrapped for TLS and the returned base URL uses the ``https`` scheme. This
+    lets the backend stand in for the real (TLS) Deadline endpoint, e.g. when
+    exercising proxy / CA-bundle behavior end-to-end.
     """
     routes = _discover_routes(backend)
     validator = _ResponseValidator()
     handler_cls = _make_handler(routes, validator, backend)
     server = _HTTPServer(("127.0.0.1", port), handler_cls)
     actual_port = server.server_address[1]
+    scheme = "http"
+    if ssl_context is not None:
+        server.socket = ssl_context.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
     thread = _threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    return server, f"http://127.0.0.1:{actual_port}", thread
+    return server, f"{scheme}://127.0.0.1:{actual_port}", thread
