@@ -1,8 +1,8 @@
 # [FORK TEST] Stage 1 (collect) caller -> reusable workflow in the .github fork.
 #
-# Thin caller mirroring production. Points at the fork's fix branch
-# (claude-review-fail-clean-on-no-pr) so the end-to-end reusable-workflow path is exercised before the
-# upstream PR.
+# Thin caller mirroring production. Points at the fork's fix branch so the
+# end-to-end reusable-workflow path (including the fork-PR resolve fix and the
+# pinned-requirements checkout fix) is exercised before the upstream PR.
 name: Claude PR Review (collect)
 
 on:
@@ -17,4 +17,4 @@ permissions: {}
 
 jobs:
   collect:
-    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review_collect.yml@claude-review-fail-clean-on-no-pr
+    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review_collect.yml@claude-review-improvements
