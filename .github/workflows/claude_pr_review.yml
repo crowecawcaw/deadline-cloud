@@ -1,9 +1,9 @@
 # [FORK TEST] Stage 2 (review) caller -> reusable workflow in the .github fork.
 #
 # Thin caller mirroring production. Triggered by completion of the Stage-1
-# collect workflow. Points at the fork's fix branch so the reusable workflow
-# (with the fork-PR resolve fix and the pinned-requirements checkout fix) is
-# exercised end to end. Must live on the default branch for workflow_run to fire.
+# collect workflow. Points at the fork's fix branch (claude-review-fail-clean-on-no-pr) so the
+# skip-cleanly-on-no-open-PR change is exercised end to end. Must live on the
+# default branch for workflow_run to fire.
 name: Claude PR Review
 
 on:
@@ -25,7 +25,7 @@ permissions:
 jobs:
   review:
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
-    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review.yml@claude-review-improvements
+    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review.yml@claude-review-fail-clean-on-no-pr
     permissions:
       contents: read
       pull-requests: write
@@ -34,9 +34,7 @@ jobs:
     with:
       head_repository: ${{ github.event.workflow_run.head_repository.full_name }}
       head_sha: ${{ github.event.workflow_run.head_sha }}
-      # Fork-test override: pull the pinned requirements file from the fork's fix
-      # branch instead of the production default (aws-deadline/.github@mainline).
       tooling_repository: crowecawcaw/deadline-cloud.github
-      tooling_ref: claude-review-improvements
+      tooling_ref: claude-review-fail-clean-on-no-pr
     secrets:
       bedrock_role_arn: ${{ secrets.AWS_CLAUDE_PR_REVIEW_ROLE }}
