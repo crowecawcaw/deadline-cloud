@@ -132,6 +132,7 @@ class _DeadlineResourceListComboBoxController(QWidget):
 
     def _handle_list_update(self, items_list: List) -> None:
         """Handle a wholesale list (re)set from the controller."""
+        self._sync_config()
         with block_signals(self.box):
             self.box.clear()
             self._region_by_id = {}
@@ -276,6 +277,7 @@ class _DeadlineResourceListComboBoxController(QWidget):
 
     def _handle_loading_state(self, is_loading: bool) -> None:
         """Handle loading state changes."""
+        self._sync_config()
         if is_loading:
             # Show refreshing indicator
             selected_id = config_file.get_setting(self._get_setting_name(), config=self.config)
@@ -321,15 +323,36 @@ class _DeadlineResourceListComboBoxController(QWidget):
         ``self.config`` is the object ``_maybe_auto_select_single`` and
         ``refresh_selected_id`` read the configured id from. The host hands us the
         same ``ConfigParser`` instance that ``config_file.read_config`` returns, and
-        the controller persists selections via the module-level ``set_setting``,
-        which mutates that shared instance in place. So a cascade's clears (e.g.
-        ``select_farm`` zeroing ``queue_id``) are visible here without a re-snapshot.
-        This relies on the combo and the controller observing the *same* config
-        object - if config caching ever starts handing out copies, these reads would
-        go stale and a lone-resource auto-select could be wrongly suppressed.
+        the controller persists selections via the module-level ``set_setting``.
+
+        ``set_setting`` writes to disk, and the next ``read_config`` then detects the
+        mtime change and swaps in a *fresh* ``ConfigParser`` — so the object handed in
+        here can go stale after a cascade (e.g. ``select_farm`` zeroing ``queue_id``).
+        ``_sync_config`` re-points ``self.config`` at the live config before each
+        display sync so those reads never observe the pre-cascade values.
         """
         self.config = config
         self._controller.set_config(config)
+
+    def _sync_config(self) -> None:
+        """Re-point ``self.config`` at the live global config before a display sync.
+
+        ``set_setting`` (used by the controller's ``select_*`` cascade) writes to
+        disk, which makes the next ``read_config()`` detect the mtime change and
+        build a *new* ``ConfigParser``, replacing the cached ``__config``. A combo
+        that keeps its original reference in ``self.config`` would then read stale
+        values - e.g. after selecting a farm the user has used before, the old
+        queue/storage-profile ids stored under that farm's section would still be
+        visible, so the combo shows a raw id instead of "<none selected>".
+
+        Re-reading here (only when the combo was configured through ``set_config``,
+        i.e. running inside a real dialog rather than a bare unit test) keeps the
+        display in sync with what the controller just persisted. When nothing was
+        configured yet, ``self.config`` stays ``None`` and reads fall through to the
+        global config as before.
+        """
+        if self.config is not None:
+            self.config = config_file.read_config()
 
     def clear_list(self) -> None:
         """

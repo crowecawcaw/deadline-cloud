@@ -11,6 +11,7 @@ from configparser import ConfigParser
 
 pytest.importorskip("deadline.client.ui.widgets._deadline_list_combo_boxes")
 
+from deadline.client.config import config_file  # noqa: E402
 from deadline.client.ui.widgets._deadline_list_combo_boxes import (  # noqa: E402
     DeadlineFarmListComboBoxController,
     DeadlineQueueListComboBoxController,
@@ -568,4 +569,111 @@ class TestDeadlineStorageProfileListComboBoxController:
             widget._handle_list_update([["Only Profile", "profile-only"]])
 
         # No configured id and no auto-select -> stays on the "<none selected>" entry.
+        assert widget.box.currentData() == ""
+
+
+class TestStaleConfigOnFarmChange:
+    """Regression tests: changing farms must not show stale queue/storage profile IDs.
+
+    When `select_farm` writes to the config file via `set_setting`, `read_config()`
+    detects the on-disk change and creates a new ConfigParser object. If the combo
+    boxes still hold a reference to the OLD object, `refresh_selected_id` reads stale
+    values and shows raw IDs instead of <none selected>.
+
+    The bug triggers when switching to a farm the user has previously used (so the
+    config file has stored queue/storage IDs for that farm in its section) AND the
+    file mtime changes between successive set_setting calls (which happens any time
+    there's >0 seconds between them -- common in practice on real filesystems).
+    """
+
+    def setup_method(self):
+        DeadlineUIController.resetInstance()
+        DeadlineThreadPool.reset()
+
+    def teardown_method(self):
+        DeadlineUIController.resetInstance()
+        DeadlineThreadPool.shutdown(wait_for_done=True, timeout_ms=2000)
+        DeadlineThreadPool.reset()
+
+    @patch("deadline.client.ui.controllers._deadline_controller.api")
+    def test_storage_profile_cleared_after_farm_change(
+        self, mock_api, qtbot, fresh_deadline_config
+    ):
+        """After select_farm, storage profile combo must show <none selected>, not stale ID."""
+        import time
+        from deadline.client.config import set_setting
+
+        mock_api.list_queues.return_value = {"queues": []}
+
+        # Set up TWO farms the user has previously used.
+        set_setting("defaults.farm_id", "farm-A")
+        set_setting("defaults.queue_id", "queue-A")
+        set_setting("settings.storage_profile_id", "sp-A")
+
+        set_setting("defaults.farm_id", "farm-B")
+        set_setting("defaults.queue_id", "queue-B")
+        set_setting("settings.storage_profile_id", "sp-stale-id")
+
+        # User is currently on farm-A.
+        set_setting("defaults.farm_id", "farm-A")
+
+        # Create the storage profile combo and give it the current config (dialog open).
+        widget = DeadlineStorageProfileListComboBoxController()
+        qtbot.addWidget(widget)
+        widget.set_config(config_file.read_config())
+
+        # Force mtime to differ on next write (simulates real-world time between
+        # dialog open and user action).
+        time.sleep(1.1)
+
+        # User picks farm-B. The controller clears queue/storage for farm-B.
+        controller = DeadlineUIController.getInstance()
+        controller.select_farm("farm-B")
+
+        # Simulate storage_profiles_updated([]) signal arriving (QueuedConnection).
+        widget._handle_list_update([])
+
+        # The combo must NOT show the stale "sp-stale-id" from farm-B's old section.
+        assert widget.box.currentText() != "sp-stale-id", (
+            "Storage profile combo shows stale ID after farm change"
+        )
+        assert widget.box.currentData() == ""
+
+    @patch("deadline.client.ui.controllers._deadline_controller.api")
+    def test_queue_cleared_after_farm_change(self, mock_api, qtbot, fresh_deadline_config):
+        """After select_farm, queue combo must show <none selected>, not stale ID."""
+        import time
+        from deadline.client.config import set_setting
+
+        mock_api.list_queues.return_value = {"queues": []}
+
+        # Set up TWO farms the user has previously used.
+        set_setting("defaults.farm_id", "farm-A")
+        set_setting("defaults.queue_id", "queue-A")
+
+        set_setting("defaults.farm_id", "farm-B")
+        set_setting("defaults.queue_id", "queue-stale-id")
+
+        # User is currently on farm-A.
+        set_setting("defaults.farm_id", "farm-A")
+
+        # Create the queue combo and give it the current config.
+        widget = DeadlineQueueListComboBoxController()
+        qtbot.addWidget(widget)
+        widget.set_config(config_file.read_config())
+
+        # Force mtime change.
+        time.sleep(1.1)
+
+        # User picks farm-B.
+        controller = DeadlineUIController.getInstance()
+        controller.select_farm("farm-B")
+
+        # The queues_updated signal arrives with the new farm's queue list (empty).
+        widget._handle_list_update([])
+
+        # The combo must NOT show the stale queue ID.
+        assert widget.box.currentText() != "queue-stale-id", (
+            "Queue combo shows stale ID after farm change"
+        )
         assert widget.box.currentData() == ""
