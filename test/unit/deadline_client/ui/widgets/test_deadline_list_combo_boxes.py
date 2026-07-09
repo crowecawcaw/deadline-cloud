@@ -575,15 +575,18 @@ class TestDeadlineStorageProfileListComboBoxController:
 class TestStaleConfigOnFarmChange:
     """Regression tests: changing farms must not show stale queue/storage profile IDs.
 
-    When `select_farm` writes to the config file via `set_setting`, `read_config()`
-    detects the on-disk change and creates a new ConfigParser object. If the combo
-    boxes still hold a reference to the OLD object, `refresh_selected_id` reads stale
-    values and shows raw IDs instead of <none selected>.
+    When `select_farm` writes to the config file via `set_setting`, the next
+    `read_config()` detects the change and creates a fresh ConfigParser, leaving any
+    combo that still holds the OLD object in `self.config` reading stale values --
+    showing a raw id instead of "<none selected>".
 
-    The bug triggers when switching to a farm the user has previously used (so the
-    config file has stored queue/storage IDs for that farm in its section) AND the
-    file mtime changes between successive set_setting calls (which happens any time
-    there's >0 seconds between them -- common in practice on real filesystems).
+    These tests reproduce that staleness *deterministically*, independent of the host
+    filesystem's mtime granularity: the combo is handed an isolated ConfigParser
+    snapshot (a copy that later `set_setting` writes to the global config cannot
+    update), then the cleared values are persisted. The fix (`_sync_config`) makes the
+    combo re-read the live config on display, so it must reflect the cleared values.
+    Without the fix, `refresh_selected_id` reads the frozen snapshot and shows the
+    stale id.
     """
 
     def setup_method(self):
@@ -595,45 +598,48 @@ class TestStaleConfigOnFarmChange:
         DeadlineThreadPool.shutdown(wait_for_done=True, timeout_ms=2000)
         DeadlineThreadPool.reset()
 
+    @staticmethod
+    def _snapshot_config() -> ConfigParser:
+        """An independent copy of the current global config.
+
+        `set_setting` (without an explicit config) mutates the module-level global,
+        never this copy -- so it stays frozen at the pre-clear state, exactly like a
+        combo's orphaned `self.config` reference after a cascade swapped the global.
+        """
+        snapshot = ConfigParser()
+        snapshot.read_dict(config_file.read_config())
+        return snapshot
+
     @patch("deadline.client.ui.controllers._deadline_controller.api")
     def test_storage_profile_cleared_after_farm_change(
         self, mock_api, qtbot, fresh_deadline_config
     ):
         """After select_farm, storage profile combo must show <none selected>, not stale ID."""
-        import time
         from deadline.client.config import set_setting
 
         mock_api.list_queues.return_value = {"queues": []}
 
-        # Set up TWO farms the user has previously used.
-        set_setting("defaults.farm_id", "farm-A")
-        set_setting("defaults.queue_id", "queue-A")
-        set_setting("settings.storage_profile_id", "sp-A")
-
+        # Persisted state at dialog open: farm-B is selected and still carries the
+        # queue/storage profile the user previously used with it.
         set_setting("defaults.farm_id", "farm-B")
         set_setting("defaults.queue_id", "queue-B")
         set_setting("settings.storage_profile_id", "sp-stale-id")
 
-        # User is currently on farm-A.
-        set_setting("defaults.farm_id", "farm-A")
-
-        # Create the storage profile combo and give it the current config (dialog open).
+        # The combo captures that state in an isolated snapshot (its self.config).
         widget = DeadlineStorageProfileListComboBoxController()
         qtbot.addWidget(widget)
-        widget.set_config(config_file.read_config())
+        widget.set_config(self._snapshot_config())
 
-        # Force mtime to differ on next write (simulates real-world time between
-        # dialog open and user action).
-        time.sleep(1.1)
-
-        # User picks farm-B. The controller clears queue/storage for farm-B.
+        # The user re-selects farm-B; the controller clears the now-invalid queue/
+        # storage selection. These writes hit the global config, NOT the combo's frozen
+        # snapshot -- so the snapshot still holds "sp-stale-id" under farm-B's section.
         controller = DeadlineUIController.getInstance()
         controller.select_farm("farm-B")
 
-        # Simulate storage_profiles_updated([]) signal arriving (QueuedConnection).
+        # storage_profiles_updated([]) arrives -> _handle_list_update([]).
         widget._handle_list_update([])
 
-        # The combo must NOT show the stale "sp-stale-id" from farm-B's old section.
+        # Must reflect the cleared value, not the stale snapshot's "sp-stale-id".
         assert widget.box.currentText() != "sp-stale-id", (
             "Storage profile combo shows stale ID after farm change"
         )
@@ -642,37 +648,27 @@ class TestStaleConfigOnFarmChange:
     @patch("deadline.client.ui.controllers._deadline_controller.api")
     def test_queue_cleared_after_farm_change(self, mock_api, qtbot, fresh_deadline_config):
         """After select_farm, queue combo must show <none selected>, not stale ID."""
-        import time
         from deadline.client.config import set_setting
 
         mock_api.list_queues.return_value = {"queues": []}
 
-        # Set up TWO farms the user has previously used.
-        set_setting("defaults.farm_id", "farm-A")
-        set_setting("defaults.queue_id", "queue-A")
-
+        # Persisted state at dialog open: farm-B selected with its stored queue.
         set_setting("defaults.farm_id", "farm-B")
         set_setting("defaults.queue_id", "queue-stale-id")
 
-        # User is currently on farm-A.
-        set_setting("defaults.farm_id", "farm-A")
-
-        # Create the queue combo and give it the current config.
+        # The combo captures that state in an isolated snapshot.
         widget = DeadlineQueueListComboBoxController()
         qtbot.addWidget(widget)
-        widget.set_config(config_file.read_config())
+        widget.set_config(self._snapshot_config())
 
-        # Force mtime change.
-        time.sleep(1.1)
-
-        # User picks farm-B.
+        # select_farm clears the queue in the global config; the snapshot is untouched.
         controller = DeadlineUIController.getInstance()
         controller.select_farm("farm-B")
 
-        # The queues_updated signal arrives with the new farm's queue list (empty).
+        # queues_updated arrives with the new (empty) list -> _handle_list_update([]).
         widget._handle_list_update([])
 
-        # The combo must NOT show the stale queue ID.
+        # Must reflect the cleared value, not the stale snapshot's "queue-stale-id".
         assert widget.box.currentText() != "queue-stale-id", (
             "Queue combo shows stale ID after farm change"
         )
