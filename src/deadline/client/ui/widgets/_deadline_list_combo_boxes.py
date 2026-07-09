@@ -74,6 +74,12 @@ class _DeadlineResourceListComboBoxController(QWidget):
 
         self.resource_name = resource_name
         self.config: Optional[ConfigParser] = None
+        # True only while ``self.config`` is the live module-level config object
+        # (i.e. ``set_config`` was handed ``config_file.read_config()``). When a
+        # caller injects a *different* parser - e.g. the config dialog's deep copy
+        # with unsaved edits layered on - this stays False so ``_sync_config`` won't
+        # clobber those pending edits by re-reading from disk. See ``_sync_config``.
+        self._config_tracks_global: bool = False
         self._controller = DeadlineUIController.getInstance()
         # Maps resource_id -> region for resources that carry a region (farms).
         self._region_by_id: dict = {}
@@ -321,17 +327,25 @@ class _DeadlineResourceListComboBoxController(QWidget):
         """Updates the AWS Deadline Cloud config object the control uses.
 
         ``self.config`` is the object ``_maybe_auto_select_single`` and
-        ``refresh_selected_id`` read the configured id from. The host hands us the
-        same ``ConfigParser`` instance that ``config_file.read_config`` returns, and
-        the controller persists selections via the module-level ``set_setting``.
+        ``refresh_selected_id`` read the configured id from. Two kinds of caller hand
+        it in:
 
-        ``set_setting`` writes to disk, and the next ``read_config`` then detects the
-        mtime change and swaps in a *fresh* ``ConfigParser`` — so the object handed in
-        here can go stale after a cascade (e.g. ``select_farm`` zeroing ``queue_id``).
-        ``_sync_config`` re-points ``self.config`` at the live config before each
-        display sync so those reads never observe the pre-cascade values.
+        - The submit dialog passes the live ``config_file.read_config()`` object and
+          persists selections through the module-level ``set_setting``. ``set_setting``
+          writes to disk, and the next ``read_config`` detects the mtime change and
+          swaps in a *fresh* ``ConfigParser`` — so the object handed in here can go
+          stale after a cascade (e.g. ``select_farm`` zeroing ``queue_id``).
+          ``_sync_config`` re-points ``self.config`` at the live config before each
+          display sync so those reads never observe the pre-cascade values.
+
+        - The config dialog builds a *copy* of the config and layers the user's
+          unsaved ``changes`` on top before handing it in. That copy intentionally
+          differs from disk, so ``_sync_config`` must NOT re-read over it or the
+          pending edits would vanish from the display. We detect this by identity: the
+          re-sync only happens when the config we were given *is* the live global.
         """
         self.config = config
+        self._config_tracks_global = config is config_file.read_config()
         self._controller.set_config(config)
 
     def _sync_config(self) -> None:
@@ -345,13 +359,14 @@ class _DeadlineResourceListComboBoxController(QWidget):
         queue/storage-profile ids stored under that farm's section would still be
         visible, so the combo shows a raw id instead of "<none selected>".
 
-        Re-reading here (only when the combo was configured through ``set_config``,
-        i.e. running inside a real dialog rather than a bare unit test) keeps the
-        display in sync with what the controller just persisted. When nothing was
+        Only re-read when ``self.config`` is tracking the live global object (see
+        ``set_config``). If a caller injected its own parser - e.g. the config
+        dialog's copy carrying unsaved edits - re-reading would silently discard
+        those edits, so we leave ``self.config`` untouched. When nothing was
         configured yet, ``self.config`` stays ``None`` and reads fall through to the
         global config as before.
         """
-        if self.config is not None:
+        if self.config is not None and self._config_tracks_global:
             self.config = config_file.read_config()
 
     def clear_list(self) -> None:
