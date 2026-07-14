@@ -33,6 +33,7 @@ __all__ = [  # noqa: RUF022  grouped by feature, not sorted
     "check_deadline_api_available",
     "get_credentials_source",
     "get_user_and_identity_store_id",
+    "get_monitor_url",
     "precache_clients",
     "list_farms",
     "list_queues",
@@ -98,6 +99,7 @@ from ._session import (
     get_credentials_source,
     get_user_and_identity_store_id,
 )
+from ._monitor_urls import get_monitor_url
 from ._list_apis import (
     list_farms,
     list_queues,
