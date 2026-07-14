@@ -126,6 +126,54 @@ def test_get_monitor_url_url_encodes_query_values():
     assert "jobId=job+with+spaces%26x%3D1" in url
 
 
+def test_get_monitor_url_cross_region_host_and_path_differ():
+    """A monitor in one region linking to a farm in another: host uses the
+    monitor region, path uses the farm region."""
+    url = get_monitor_url(
+        SUBDOMAIN,
+        "eu-west-1",  # farm/resource region -> path
+        farm_id=FARM_ID,
+        queue_id=QUEUE_ID,
+        monitor_region="us-east-1",  # monitor region -> host
+    )
+    assert url == (
+        f"https://{SUBDOMAIN}.us-east-1.deadlinecloud.amazonaws.com"
+        f"/eu-west-1/farms/{FARM_ID}/queues/{QUEUE_ID}"
+    )
+
+
+def test_get_monitor_url_monitor_region_defaults_to_region():
+    """When monitor_region is omitted, the host uses the resource region."""
+    assert get_monitor_url(SUBDOMAIN, REGION, farm_id=FARM_ID) == (
+        f"https://{SUBDOMAIN}.{REGION}.deadlinecloud.amazonaws.com/{REGION}/farms/{FARM_ID}"
+    )
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        (
+            f"https://{SUBDOMAIN}.us-east-1.deadlinecloud.amazonaws.com",
+            (SUBDOMAIN, "us-east-1"),
+        ),
+        # Trailing path is ignored.
+        (
+            f"https://{SUBDOMAIN}.eu-west-1.deadlinecloud.amazonaws.com/eu-west-1/farms",
+            (SUBDOMAIN, "eu-west-1"),
+        ),
+        (None, (None, None)),
+        ("", (None, None)),
+        ("https://example.com", (None, None)),
+        # Missing region label.
+        ("https://deadlinecloud.amazonaws.com", (None, None)),
+    ],
+)
+def test_parse_monitor_host(url, expected):
+    from deadline.client.api._monitor_urls import _parse_monitor_host
+
+    assert _parse_monitor_host(url) == expected
+
+
 def test_get_monitor_subdomain_returns_none_for_host_creds(fresh_deadline_config):
     """Host-provided credentials have no monitor, so there is no subdomain."""
     with patch.object(
@@ -133,13 +181,17 @@ def test_get_monitor_subdomain_returns_none_for_host_creds(fresh_deadline_config
         "get_credentials_source",
         return_value=AwsCredentialsSource.HOST_PROVIDED,
     ):
-        assert _get_monitor_subdomain() is None
+        assert _get_monitor_subdomain() == (None, None)
 
 
 def test_get_monitor_subdomain_calls_get_monitor(fresh_deadline_config):
-    """For DCM credentials, the subdomain is read from deadline:GetMonitor."""
+    """For DCM credentials, the subdomain and monitor region come from GetMonitor."""
     mock_client = MagicMock()
-    mock_client.get_monitor.return_value = {"subdomain": SUBDOMAIN, "monitorId": "monitor-abc"}
+    mock_client.get_monitor.return_value = {
+        "subdomain": SUBDOMAIN,
+        "monitorId": "monitor-abc",
+        "url": f"https://{SUBDOMAIN}.us-east-1.deadlinecloud.amazonaws.com",
+    }
     with (
         patch.object(
             api._monitor_urls,
@@ -148,14 +200,17 @@ def test_get_monitor_subdomain_calls_get_monitor(fresh_deadline_config):
         ),
         patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
     ):
-        assert _get_monitor_subdomain(deadline_client=mock_client) == SUBDOMAIN
+        assert _get_monitor_subdomain(deadline_client=mock_client) == (SUBDOMAIN, "us-east-1")
     mock_client.get_monitor.assert_called_once_with(monitorId="monitor-abc")
 
 
 def test_get_job_monitor_url_happy_path(fresh_deadline_config):
     config.set_setting("defaults.farm_region", REGION)
     mock_client = MagicMock()
-    mock_client.get_monitor.return_value = {"subdomain": SUBDOMAIN}
+    mock_client.get_monitor.return_value = {
+        "subdomain": SUBDOMAIN,
+        "url": HOST,
+    }
     with (
         patch.object(
             api._monitor_urls,
@@ -170,6 +225,31 @@ def test_get_job_monitor_url_happy_path(fresh_deadline_config):
     assert url == f"{HOST}/{REGION}/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}"
 
 
+def test_get_job_monitor_url_cross_region(fresh_deadline_config):
+    """Monitor in us-east-1, farm in eu-west-1: host and path regions differ."""
+    config.set_setting("defaults.farm_region", "eu-west-1")
+    mock_client = MagicMock()
+    mock_client.get_monitor.return_value = {
+        "subdomain": SUBDOMAIN,
+        "url": f"https://{SUBDOMAIN}.us-east-1.deadlinecloud.amazonaws.com",
+    }
+    with (
+        patch.object(
+            api._monitor_urls,
+            "get_credentials_source",
+            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
+        ),
+        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
+    ):
+        url = _get_job_monitor_url(
+            farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
+        )
+    assert url == (
+        f"https://{SUBDOMAIN}.us-east-1.deadlinecloud.amazonaws.com"
+        f"/eu-west-1/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}"
+    )
+
+
 def test_get_job_monitor_url_none_without_monitor(fresh_deadline_config):
     """Non-monitor credentials yield None (no URL surfaced)."""
     with patch.object(
@@ -180,8 +260,9 @@ def test_get_job_monitor_url_none_without_monitor(fresh_deadline_config):
         assert _get_job_monitor_url(farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID) is None
 
 
-def test_get_job_monitor_url_swallows_errors(fresh_deadline_config):
-    """Any failure while building the URL results in None, never an exception."""
+def test_get_job_monitor_url_none_when_get_monitor_fails(fresh_deadline_config):
+    """If deadline:GetMonitor raises, we omit the URL rather than propagate."""
+    config.set_setting("defaults.farm_region", REGION)
     mock_client = MagicMock()
     mock_client.get_monitor.side_effect = RuntimeError("boom")
     with (
@@ -198,3 +279,44 @@ def test_get_job_monitor_url_swallows_errors(fresh_deadline_config):
             )
             is None
         )
+
+
+def test_get_job_monitor_url_none_when_no_subdomain(fresh_deadline_config):
+    """If GetMonitor returns no subdomain, we omit the URL."""
+    config.set_setting("defaults.farm_region", REGION)
+    mock_client = MagicMock()
+    mock_client.get_monitor.return_value = {"monitorId": "monitor-abc"}  # no subdomain
+    with (
+        patch.object(
+            api._monitor_urls,
+            "get_credentials_source",
+            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
+        ),
+        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
+    ):
+        assert (
+            _get_job_monitor_url(
+                farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
+            )
+            is None
+        )
+
+
+def test_get_job_monitor_url_falls_back_when_monitor_url_malformed(fresh_deadline_config):
+    """A subdomain with a missing/garbled monitor url still yields a URL, using the
+    farm region for the host (monitor_region falls back to the resource region)."""
+    config.set_setting("defaults.farm_region", REGION)
+    mock_client = MagicMock()
+    mock_client.get_monitor.return_value = {"subdomain": SUBDOMAIN, "url": "not-a-url"}
+    with (
+        patch.object(
+            api._monitor_urls,
+            "get_credentials_source",
+            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
+        ),
+        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
+    ):
+        url = _get_job_monitor_url(
+            farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
+        )
+    assert url == f"{HOST}/{REGION}/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}"

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from configparser import ConfigParser
 from typing import Optional
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 from botocore.client import BaseClient  # type: ignore[import]
 
@@ -51,6 +51,7 @@ def get_monitor_url(
     step_id: Optional[str] = None,
     task_id: Optional[str] = None,
     *,
+    monitor_region: Optional[str] = None,
     config: Optional[ConfigParser] = None,
 ) -> str:
     """
@@ -61,6 +62,12 @@ def get_monitor_url(
     ``<subdomain>.<region>.deadlinecloud.amazonaws.com`` and can be read from the
     ``deadline:GetMonitor`` API (its ``subdomain`` field) or the Deadline Cloud
     console.
+
+    Two regions are involved and may differ for a cross-region farm: the
+    *monitor* region appears in the host, while the *farm* (resource) region
+    appears in the path. ``monitor_region`` controls the host; ``region``
+    controls the path. When ``monitor_region`` is omitted it defaults to
+    ``region`` -- the common single-region case, where both are the same.
 
     The resource identifiers form a hierarchy -- ``queue_id`` requires ``farm_id``,
     ``job_id`` requires ``queue_id``, ``step_id`` requires ``job_id``, and
@@ -82,18 +89,28 @@ def get_monitor_url(
             farm_id="farm-1234", queue_id="queue-5678",
             job_id="job-9abc", step_id="step-def0", task_id="task-def0-2",
         )
+
+        # Cross-region: a monitor in us-east-1 linking to a farm in eu-west-1
+        get_monitor_url(
+            "mymonitor", "eu-west-1", farm_id="farm-1234", monitor_region="us-east-1"
+        )
+        # 'https://mymonitor.us-east-1.deadlinecloud.amazonaws.com/eu-west-1/farms/farm-1234'
         ```
 
     Args:
         subdomain (str): The monitor subdomain (required).
-        region (str, optional): The AWS region of the resource. When omitted, it is
-            resolved the same way as elsewhere in the client: an explicit value wins,
-            otherwise the ``defaults.farm_region`` setting is used.
+        region (str, optional): The AWS region of the resource (farm). Used in the
+            URL path. When omitted, it is resolved the same way as elsewhere in the
+            client: an explicit value wins, otherwise the ``defaults.farm_region``
+            setting is used.
         farm_id (str, optional): The farm to link to.
         queue_id (str, optional): The queue to link to. Requires ``farm_id``.
         job_id (str, optional): The job to select. Requires ``queue_id``.
         step_id (str, optional): The step to select. Requires ``job_id``.
         task_id (str, optional): The task to select. Requires ``step_id``.
+        monitor_region (str, optional): The region the monitor itself lives in, used
+            in the host. Defaults to ``region`` (single-region case). Pass this when
+            the farm is in a different region than the monitor.
         config (ConfigParser, optional): The AWS Deadline Cloud configuration object
             to use when resolving the region.
 
@@ -123,8 +140,11 @@ def get_monitor_url(
             "A region is required to build a monitor URL. Pass region= explicitly or "
             "configure defaults.farm_region."
         )
+    # The host uses the monitor's own region, which may differ from the farm's
+    # (cross-region). Default to the farm region for the common single-region case.
+    host_region = monitor_region or resolved_region
 
-    host = f"https://{subdomain}.{resolved_region}.{_MONITOR_DOMAIN}"
+    host = f"https://{subdomain}.{host_region}.{_MONITOR_DOMAIN}"
 
     # No farm -> the "all farms" list, which is not region-scoped in the path.
     if not farm_id:
@@ -145,25 +165,53 @@ def get_monitor_url(
     return host + path
 
 
+def _parse_monitor_host(url: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """
+    Parse ``(subdomain, region)`` out of a monitor URL of the form
+    ``https://<subdomain>.<region>.deadlinecloud.amazonaws.com``.
+
+    Returns ``(None, None)`` if the URL is missing or doesn't match that shape.
+    """
+    if not url:
+        return None, None
+    host = urlsplit(url).netloc or url
+    suffix = "." + _MONITOR_DOMAIN
+    if not host.endswith(suffix):
+        return None, None
+    label = host[: -len(suffix)]
+    # label is "<subdomain>.<region>"
+    subdomain, _, region = label.partition(".")
+    if not subdomain or not region:
+        return None, None
+    return subdomain, region
+
+
 def _get_monitor_subdomain(
     config: Optional[ConfigParser] = None,
     deadline_client: Optional[BaseClient] = None,
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[str]]:
     """
-    Best-effort lookup of the monitor subdomain for the current profile.
+    Best-effort lookup of the monitor ``(subdomain, monitor_region)`` for the
+    current profile.
 
-    Returns the subdomain only when the credentials were written by Deadline Cloud
-    monitor (so a monitor exists to link to) and the ``deadline:GetMonitor`` call
-    succeeds. Returns ``None`` otherwise. Never raises.
+    Returns the subdomain and the monitor's own region only when the credentials
+    were written by Deadline Cloud monitor (so a monitor exists to link to) and the
+    ``deadline:GetMonitor`` call returns a usable ``subdomain``. Returns
+    ``(None, None)`` otherwise. The region is parsed from the monitor's ``url`` and
+    may be ``None`` if that field is absent or malformed. Never raises.
     """
     if get_credentials_source(config=config) != AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN:
-        return None
+        return None, None
     monitor_id = get_monitor_id(config=config)
     if not monitor_id:
-        return None
+        return None, None
     client = deadline_client or get_boto3_client("deadline", config=config)
     monitor = client.get_monitor(monitorId=monitor_id)
-    return monitor.get("subdomain")
+    subdomain = monitor.get("subdomain")
+    if not subdomain:
+        return None, None
+    _, monitor_region = _parse_monitor_host(monitor.get("url"))
+    return subdomain, monitor_region
 
 
 def _get_job_monitor_url(
@@ -178,18 +226,27 @@ def _get_job_monitor_url(
 
     Returns ``None`` (rather than raising) whenever the URL can't be built -- for
     example when the credentials didn't come from Deadline Cloud monitor, the
-    ``deadline:GetMonitor`` call fails, or a region can't be resolved. This keeps
-    URL generation from ever interfering with job submission itself.
+    ``deadline:GetMonitor`` call fails or returns no subdomain, or a region can't be
+    resolved. This keeps URL generation from ever interfering with job submission
+    itself.
     """
     try:
-        subdomain = _get_monitor_subdomain(config=config, deadline_client=deadline_client)
+        subdomain, monitor_region = _get_monitor_subdomain(
+            config=config, deadline_client=deadline_client
+        )
         if not subdomain:
             return None
+        # Resource (path) region: the configured farm region if set, otherwise fall
+        # back to the monitor's own region (correct for the common single-region
+        # case, where farm_region is often not configured at all).
+        resource_region = _resolve_region(config=config) or monitor_region
         return get_monitor_url(
             subdomain,
+            region=resource_region,
             farm_id=farm_id,
             queue_id=queue_id,
             job_id=job_id,
+            monitor_region=monitor_region,
             config=config,
         )
     except Exception:
