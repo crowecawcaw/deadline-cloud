@@ -202,8 +202,12 @@ def seeded_farm_queue(deadline_env, s3_client) -> tuple:
 
 def set_monitor_profile(env: dict, *, monitor_id: str, region: str = REGION) -> str:
     """
-    Write a Deadline Cloud monitor-style AWS profile into the subprocess's
-    isolated ``~/.aws/config`` and point the CLI at it.
+    Write a Deadline Cloud monitor-style AWS profile and point the CLI at it.
+
+    The profile is written to an explicit file wired in via ``AWS_CONFIG_FILE``
+    (mutating ``env``) rather than ``~/.aws/config``: boto3 resolves the default
+    location from ``%USERPROFILE%`` on Windows, which the subprocess env doesn't
+    set, so an explicit path is portable across platforms.
 
     The profile carries a ``monitor_id`` (the marker the client uses to detect a
     Deadline Cloud monitor login). Selecting a named profile disables botocore's
@@ -214,7 +218,8 @@ def set_monitor_profile(env: dict, *, monitor_id: str, region: str = REGION) -> 
     profile_name = "dcm-monitor"
     aws_dir = Path(env["HOME"]) / ".aws"
     aws_dir.mkdir(parents=True, exist_ok=True)
-    (aws_dir / "config").write_text(
+    aws_config = aws_dir / "config"
+    aws_config.write_text(
         f"[profile {profile_name}]\n"
         f"region = {region}\n"
         f"monitor_id = {monitor_id}\n"
@@ -223,6 +228,7 @@ def set_monitor_profile(env: dict, *, monitor_id: str, region: str = REGION) -> 
         "user_id = user-1234\n"
         "identity_store_id = d-abcdef0123\n"
     )
+    env["AWS_CONFIG_FILE"] = str(aws_config)
     r = run_deadline(env, "config", "set", "defaults.aws_profile_name", profile_name)
     assert r.returncode == 0, f"set aws_profile_name failed: {r.stderr}"
     return profile_name
