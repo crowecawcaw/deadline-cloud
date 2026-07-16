@@ -3,7 +3,7 @@
 """
 Helpers for constructing AWS Deadline Cloud monitor (web console) URLs.
 
-The primary entry point, :func:`get_monitor_url`, is a pure URL *formatter*: it
+The primary entry point, :func:`build_monitor_url`, is a pure URL *formatter*: it
 takes the pieces of a resource path and returns the corresponding monitor URL.
 It never makes network calls -- the caller must supply the monitor ``subdomain``
 (available from the ``deadline:GetMonitor`` API's ``subdomain``/``url`` fields,
@@ -35,14 +35,14 @@ from ._session import (
     get_monitor_id,
 )
 
-__all__ = ["get_monitor_url"]
+__all__ = ["build_monitor_url"]
 
 # The parent domain shared by every Deadline Cloud monitor. The full monitor
 # host is "<subdomain>.<region>.<_MONITOR_DOMAIN>".
 _MONITOR_DOMAIN = "deadlinecloud.amazonaws.com"
 
 
-def get_monitor_url(
+def build_monitor_url(
     subdomain: str,
     region: Optional[str] = None,
     farm_id: Optional[str] = None,
@@ -77,21 +77,21 @@ def get_monitor_url(
 
     Example:
         ```python
-        from deadline.client.api import get_monitor_url
+        from deadline.client.api import build_monitor_url
 
         # Queue URL
-        get_monitor_url("mymonitor", "us-east-1", farm_id="farm-1234", queue_id="queue-5678")
+        build_monitor_url("mymonitor", "us-east-1", farm_id="farm-1234", queue_id="queue-5678")
         # 'https://mymonitor.us-east-1.deadlinecloud.amazonaws.com/us-east-1/farms/farm-1234/queues/queue-5678'
 
         # Task URL (job + step + task selected on the queue page)
-        get_monitor_url(
+        build_monitor_url(
             "mymonitor", "us-east-1",
             farm_id="farm-1234", queue_id="queue-5678",
             job_id="job-9abc", step_id="step-def0", task_id="task-def0-2",
         )
 
         # Cross-region: a monitor in us-east-1 linking to a farm in eu-west-1
-        get_monitor_url(
+        build_monitor_url(
             "mymonitor", "eu-west-1", farm_id="farm-1234", monitor_region="us-east-1"
         )
         # 'https://mymonitor.us-east-1.deadlinecloud.amazonaws.com/eu-west-1/farms/farm-1234'
@@ -240,7 +240,7 @@ def _get_job_monitor_url(
         # back to the monitor's own region (correct for the common single-region
         # case, where farm_region is often not configured at all).
         resource_region = _resolve_region(config=config) or monitor_region
-        return get_monitor_url(
+        return build_monitor_url(
             subdomain,
             region=resource_region,
             farm_id=farm_id,
