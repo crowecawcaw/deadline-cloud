@@ -52,6 +52,7 @@ def build_monitor_url(
     task_id: Optional[str] = None,
     *,
     monitor_region: Optional[str] = None,
+    host: Optional[str] = None,
     config: Optional[ConfigParser] = None,
 ) -> str:
     """
@@ -110,7 +111,14 @@ def build_monitor_url(
         task_id (str, optional): The task to select. Requires ``step_id``.
         monitor_region (str, optional): The region the monitor itself lives in, used
             in the host. Defaults to ``region`` (single-region case). Pass this when
-            the farm is in a different region than the monitor.
+            the farm is in a different region than the monitor. Ignored when ``host``
+            is supplied.
+        host (str, optional): The monitor host to use verbatim (scheme + netloc, e.g.
+            ``https://mymonitor.us-east-1.deadlinecloud.amazonaws.com``), such as the
+            ``url`` returned by ``deadline:GetMonitor``. When given, it is used as-is
+            instead of reconstructing the host from ``subdomain`` + region + the
+            commercial domain -- necessary for non-commercial partitions (aws-us-gov,
+            aws-cn) whose hosts differ. A trailing slash is stripped.
         config (ConfigParser, optional): The AWS Deadline Cloud configuration object
             to use when resolving the region.
 
@@ -140,11 +148,18 @@ def build_monitor_url(
             "A region is required to build a monitor URL. Pass region= explicitly or "
             "configure defaults.farm_region."
         )
-    # The host uses the monitor's own region, which may differ from the farm's
-    # (cross-region). Default to the farm region for the common single-region case.
-    host_region = monitor_region or resolved_region
-
-    host = f"https://{subdomain}.{host_region}.{_MONITOR_DOMAIN}"
+    # Prefer an authoritative host when the caller has one (the ``url`` from
+    # ``deadline:GetMonitor``). Reconstructing from the hardcoded commercial domain
+    # would produce a wrong host in other partitions (aws-us-gov, aws-cn), where the
+    # real monitor host does not end in ``deadlinecloud.amazonaws.com``. When no host
+    # is supplied, fall back to building one from the monitor's own region -- which
+    # may differ from the farm's (cross-region) -- defaulting to the farm region for
+    # the common single-region case.
+    if host:
+        host = host.rstrip("/")
+    else:
+        host_region = monitor_region or resolved_region
+        host = f"https://{subdomain}.{host_region}.{_MONITOR_DOMAIN}"
 
     # No farm -> the "all farms" list, which is not region-scoped in the path.
     if not farm_id:
@@ -186,32 +201,48 @@ def _parse_monitor_host(url: Optional[str]) -> tuple[Optional[str], Optional[str
     return subdomain, region
 
 
+def _monitor_host_of(url: Optional[str]) -> Optional[str]:
+    """
+    Extract the ``scheme://netloc`` host from a monitor ``url``, or ``None`` when the
+    url is missing or has no host. Unlike :func:`_parse_monitor_host` this makes no
+    assumptions about the domain, so it works in every partition (aws-us-gov, aws-cn).
+    """
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}"
+
+
 def _get_monitor_subdomain(
     config: Optional[ConfigParser] = None,
     deadline_client: Optional[BaseClient] = None,
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """
-    Best-effort lookup of the monitor ``(subdomain, monitor_region)`` for the
+    Best-effort lookup of the monitor ``(subdomain, monitor_region, host)`` for the
     current profile.
 
-    Returns the subdomain and the monitor's own region only when the credentials
-    were written by Deadline Cloud monitor (so a monitor exists to link to) and the
-    ``deadline:GetMonitor`` call returns a usable ``subdomain``. Returns
-    ``(None, None)`` otherwise. The region is parsed from the monitor's ``url`` and
-    may be ``None`` if that field is absent or malformed. Never raises.
+    Returns these only when the credentials were written by Deadline Cloud monitor (so
+    a monitor exists to link to) and the ``deadline:GetMonitor`` call returns a usable
+    ``subdomain``. Returns ``(None, None, None)`` otherwise. ``host`` is the
+    authoritative ``scheme://netloc`` from the monitor's ``url`` (preferred over a
+    reconstructed host); ``monitor_region`` is parsed from that same url. Either may be
+    ``None`` if the ``url`` field is absent or malformed. Never raises.
     """
     if get_credentials_source(config=config) != AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN:
-        return None, None
+        return None, None, None
     monitor_id = get_monitor_id(config=config)
     if not monitor_id:
-        return None, None
+        return None, None, None
     client = deadline_client or get_boto3_client("deadline", config=config)
     monitor = client.get_monitor(monitorId=monitor_id)
     subdomain = monitor.get("subdomain")
     if not subdomain:
-        return None, None
-    _, monitor_region = _parse_monitor_host(monitor.get("url"))
-    return subdomain, monitor_region
+        return None, None, None
+    url = monitor.get("url")
+    _, monitor_region = _parse_monitor_host(url)
+    return subdomain, monitor_region, _monitor_host_of(url)
 
 
 def _get_job_monitor_url(
@@ -231,7 +262,7 @@ def _get_job_monitor_url(
     itself.
     """
     try:
-        subdomain, monitor_region = _get_monitor_subdomain(
+        subdomain, monitor_region, monitor_host = _get_monitor_subdomain(
             config=config, deadline_client=deadline_client
         )
         if not subdomain:
@@ -240,6 +271,9 @@ def _get_job_monitor_url(
         # back to the monitor's own region (correct for the common single-region
         # case, where farm_region is often not configured at all).
         resource_region = _resolve_region(config=config) or monitor_region
+        # Prefer the authoritative host from GetMonitor so the URL is correct in every
+        # partition (aws-us-gov, aws-cn); build_monitor_url falls back to reconstructing
+        # it from subdomain + region when the monitor url was absent/malformed.
         return build_monitor_url(
             subdomain,
             region=resource_region,
@@ -247,6 +281,7 @@ def _get_job_monitor_url(
             queue_id=queue_id,
             job_id=job_id,
             monitor_region=monitor_region,
+            host=monitor_host,
             config=config,
         )
     except Exception:

@@ -151,6 +151,24 @@ def test_build_monitor_url_monitor_region_defaults_to_region():
     )
 
 
+def test_build_monitor_url_explicit_host_used_verbatim():
+    """An explicit host is used as-is (with any trailing slash stripped), rather than
+    reconstructed from the commercial domain -- required for non-commercial partitions
+    (aws-us-gov, aws-cn) whose monitor hosts differ."""
+    gov_host = f"https://{SUBDOMAIN}.us-gov-west-1.deadlinecloud.amazonaws-us-gov.com"
+    assert build_monitor_url(
+        SUBDOMAIN, "us-gov-west-1", farm_id=FARM_ID, queue_id=QUEUE_ID, host=gov_host + "/"
+    ) == (f"{gov_host}/us-gov-west-1/farms/{FARM_ID}/queues/{QUEUE_ID}")
+
+
+def test_build_monitor_url_explicit_host_overrides_monitor_region():
+    """When host is supplied, monitor_region is ignored for the host."""
+    host = f"https://{SUBDOMAIN}.cn-north-1.deadlinecloud.amazonaws.com.cn"
+    assert build_monitor_url(
+        SUBDOMAIN, "cn-north-1", farm_id=FARM_ID, monitor_region="us-east-1", host=host
+    ) == (f"{host}/cn-north-1/farms/{FARM_ID}")
+
+
 @pytest.mark.parametrize(
     "url, expected",
     [
@@ -183,11 +201,11 @@ def test_get_monitor_subdomain_returns_none_for_host_creds(fresh_deadline_config
         "get_credentials_source",
         return_value=AwsCredentialsSource.HOST_PROVIDED,
     ):
-        assert _get_monitor_subdomain() == (None, None)
+        assert _get_monitor_subdomain() == (None, None, None)
 
 
 def test_get_monitor_subdomain_calls_get_monitor(fresh_deadline_config):
-    """For DCM credentials, the subdomain and monitor region come from GetMonitor."""
+    """For DCM credentials, the subdomain, region, and host come from GetMonitor."""
     mock_client = MagicMock()
     mock_client.get_monitor.return_value = {
         "subdomain": SUBDOMAIN,
@@ -202,7 +220,11 @@ def test_get_monitor_subdomain_calls_get_monitor(fresh_deadline_config):
         ),
         patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
     ):
-        assert _get_monitor_subdomain(deadline_client=mock_client) == (SUBDOMAIN, "us-east-1")
+        assert _get_monitor_subdomain(deadline_client=mock_client) == (
+            SUBDOMAIN,
+            "us-east-1",
+            f"https://{SUBDOMAIN}.us-east-1.deadlinecloud.amazonaws.com",
+        )
     mock_client.get_monitor.assert_called_once_with(monitorId="monitor-abc")
 
 
@@ -302,6 +324,27 @@ def test_get_job_monitor_url_none_when_no_subdomain(fresh_deadline_config):
             )
             is None
         )
+
+
+def test_get_job_monitor_url_uses_authoritative_host_in_other_partitions(fresh_deadline_config):
+    """In aws-us-gov/aws-cn the monitor host does not end in the commercial domain, so
+    the URL must use the authoritative host from GetMonitor rather than reconstruct it."""
+    config.set_setting("defaults.farm_region", "us-gov-west-1")
+    gov_host = f"https://{SUBDOMAIN}.us-gov-west-1.deadlinecloud.amazonaws-us-gov.com"
+    mock_client = MagicMock()
+    mock_client.get_monitor.return_value = {"subdomain": SUBDOMAIN, "url": gov_host}
+    with (
+        patch.object(
+            api._monitor_urls,
+            "get_credentials_source",
+            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
+        ),
+        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
+    ):
+        url = _get_job_monitor_url(
+            farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
+        )
+    assert url == f"{gov_host}/us-gov-west-1/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}"
 
 
 def test_get_job_monitor_url_falls_back_when_monitor_url_malformed(fresh_deadline_config):
