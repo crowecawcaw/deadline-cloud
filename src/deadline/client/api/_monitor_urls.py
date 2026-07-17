@@ -30,9 +30,10 @@ from botocore.client import BaseClient  # type: ignore[import]
 from ._session import (
     AwsCredentialsSource,
     _resolve_region,
-    get_boto3_client,
+    get_boto3_session,
     get_credentials_source,
     get_monitor_id,
+    get_session_client,
 )
 
 __all__ = ["build_monitor_url"]
@@ -215,9 +216,20 @@ def _monitor_host_of(url: Optional[str]) -> Optional[str]:
     return f"{parts.scheme}://{parts.netloc}"
 
 
+def _get_monitor_client(config: Optional[ConfigParser] = None) -> BaseClient:
+    """
+    A deadline client for calling ``deadline:GetMonitor``, scoped to the profile's own
+    region -- where Deadline Cloud monitor wrote the profile, i.e. the monitor's home
+    region. Deliberately not ``get_boto3_client``, whose region resolution prefers
+    ``defaults.farm_region``: a monitor is a regional resource, and in a cross-region
+    setup a farm-region endpoint would report the monitor as not found.
+    """
+    session = get_boto3_session(config=config)
+    return get_session_client(session=session, service_name="deadline")
+
+
 def _get_monitor_subdomain(
     config: Optional[ConfigParser] = None,
-    deadline_client: Optional[BaseClient] = None,
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Best-effort lookup of the monitor ``(subdomain, monitor_region, host)`` for the
@@ -235,8 +247,7 @@ def _get_monitor_subdomain(
     monitor_id = get_monitor_id(config=config)
     if not monitor_id:
         return None, None, None
-    client = deadline_client or get_boto3_client("deadline", config=config)
-    monitor = client.get_monitor(monitorId=monitor_id)
+    monitor = _get_monitor_client(config=config).get_monitor(monitorId=monitor_id)
     subdomain = monitor.get("subdomain")
     if not subdomain:
         return None, None, None
@@ -250,7 +261,6 @@ def _get_job_monitor_url(
     farm_id: Optional[str] = None,
     queue_id: Optional[str] = None,
     job_id: Optional[str] = None,
-    deadline_client: Optional[BaseClient] = None,
 ) -> Optional[str]:
     """
     Best-effort monitor URL for a just-submitted job.
@@ -260,11 +270,13 @@ def _get_job_monitor_url(
     ``deadline:GetMonitor`` call fails or returns no subdomain, or a region can't be
     resolved. This keeps URL generation from ever interfering with job submission
     itself.
+
+    Note there is deliberately no way to supply a deadline client: the ``GetMonitor``
+    lookup must run against the monitor's home region (the profile region), while
+    clients used for submission are scoped to the farm's region, which can differ.
     """
     try:
-        subdomain, monitor_region, monitor_host = _get_monitor_subdomain(
-            config=config, deadline_client=deadline_client
-        )
+        subdomain, monitor_region, monitor_host = _get_monitor_subdomain(config=config)
         if not subdomain:
             return None
         # Resource (path) region: the configured farm region if set, otherwise fall

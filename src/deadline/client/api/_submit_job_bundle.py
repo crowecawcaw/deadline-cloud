@@ -1078,13 +1078,14 @@ def create_job_from_job_bundle(
 
         # When the credentials came from Deadline Cloud monitor, also surface the
         # monitor URL for the job so it can be shared (e.g. in a notification).
-        # This is best-effort and never affects the submission result.
+        # This is best-effort and never affects the submission result. The submission
+        # client is intentionally not reused here: it is scoped to the farm's region,
+        # while the GetMonitor lookup must go to the monitor's own (profile) region.
         job_url = _get_job_monitor_url(
             config=config,
             farm_id=farm_id,
             queue_id=queue_id,
             job_id=job_id,
-            deadline_client=deadline,
         )
         if job_url:
             print_function_callback(f"Job URL: {job_url}")

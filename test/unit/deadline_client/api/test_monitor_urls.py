@@ -7,6 +7,8 @@ Tests for deadline.client.api._monitor_urls (build_monitor_url and helpers).
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.client import BaseClient
+from botocore.exceptions import ClientError
 
 from deadline.client import api, config
 from deadline.client.api import build_monitor_url
@@ -219,13 +221,27 @@ def test_get_monitor_subdomain_calls_get_monitor(fresh_deadline_config):
             return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
         ),
         patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
+        patch.object(api._monitor_urls, "_get_monitor_client", return_value=mock_client),
     ):
-        assert _get_monitor_subdomain(deadline_client=mock_client) == (
+        assert _get_monitor_subdomain() == (
             SUBDOMAIN,
             "us-east-1",
             f"https://{SUBDOMAIN}.us-east-1.deadlinecloud.amazonaws.com",
         )
     mock_client.get_monitor.assert_called_once_with(monitorId="monitor-abc")
+
+
+def _patch_dcm_monitor(mock_client):
+    """Patch the module so credentials look like a Deadline Cloud monitor login whose
+    GetMonitor call is served by ``mock_client``."""
+    return patch.multiple(
+        api._monitor_urls,
+        get_credentials_source=MagicMock(
+            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN
+        ),
+        get_monitor_id=MagicMock(return_value="monitor-abc"),
+        _get_monitor_client=MagicMock(return_value=mock_client),
+    )
 
 
 def test_get_job_monitor_url_happy_path(fresh_deadline_config):
@@ -235,17 +251,8 @@ def test_get_job_monitor_url_happy_path(fresh_deadline_config):
         "subdomain": SUBDOMAIN,
         "url": HOST,
     }
-    with (
-        patch.object(
-            api._monitor_urls,
-            "get_credentials_source",
-            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
-        ),
-        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
-    ):
-        url = _get_job_monitor_url(
-            farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
-        )
+    with _patch_dcm_monitor(mock_client):
+        url = _get_job_monitor_url(farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID)
     assert url == f"{HOST}/{REGION}/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}"
 
 
@@ -257,17 +264,8 @@ def test_get_job_monitor_url_cross_region(fresh_deadline_config):
         "subdomain": SUBDOMAIN,
         "url": f"https://{SUBDOMAIN}.us-east-1.deadlinecloud.amazonaws.com",
     }
-    with (
-        patch.object(
-            api._monitor_urls,
-            "get_credentials_source",
-            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
-        ),
-        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
-    ):
-        url = _get_job_monitor_url(
-            farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
-        )
+    with _patch_dcm_monitor(mock_client):
+        url = _get_job_monitor_url(farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID)
     assert url == (
         f"https://{SUBDOMAIN}.us-east-1.deadlinecloud.amazonaws.com"
         f"/eu-west-1/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}"
@@ -289,20 +287,8 @@ def test_get_job_monitor_url_none_when_get_monitor_fails(fresh_deadline_config):
     config.set_setting("defaults.farm_region", REGION)
     mock_client = MagicMock()
     mock_client.get_monitor.side_effect = RuntimeError("boom")
-    with (
-        patch.object(
-            api._monitor_urls,
-            "get_credentials_source",
-            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
-        ),
-        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
-    ):
-        assert (
-            _get_job_monitor_url(
-                farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
-            )
-            is None
-        )
+    with _patch_dcm_monitor(mock_client):
+        assert _get_job_monitor_url(farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID) is None
 
 
 def test_get_job_monitor_url_none_when_no_subdomain(fresh_deadline_config):
@@ -310,20 +296,8 @@ def test_get_job_monitor_url_none_when_no_subdomain(fresh_deadline_config):
     config.set_setting("defaults.farm_region", REGION)
     mock_client = MagicMock()
     mock_client.get_monitor.return_value = {"monitorId": "monitor-abc"}  # no subdomain
-    with (
-        patch.object(
-            api._monitor_urls,
-            "get_credentials_source",
-            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
-        ),
-        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
-    ):
-        assert (
-            _get_job_monitor_url(
-                farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
-            )
-            is None
-        )
+    with _patch_dcm_monitor(mock_client):
+        assert _get_job_monitor_url(farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID) is None
 
 
 def test_get_job_monitor_url_uses_authoritative_host_in_other_partitions(fresh_deadline_config):
@@ -333,7 +307,47 @@ def test_get_job_monitor_url_uses_authoritative_host_in_other_partitions(fresh_d
     gov_host = f"https://{SUBDOMAIN}.us-gov-west-1.deadlinecloud.amazonaws-us-gov.com"
     mock_client = MagicMock()
     mock_client.get_monitor.return_value = {"subdomain": SUBDOMAIN, "url": gov_host}
+    with _patch_dcm_monitor(mock_client):
+        url = _get_job_monitor_url(farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID)
+    assert url == f"{gov_host}/us-gov-west-1/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}"
+
+
+def _get_monitor_wire_stub(monitor_region: str, monitor: dict):
+    """
+    Patch the boto wire so ``deadline:GetMonitor`` behaves like the real service:
+    it succeeds only when called through a client scoped to the monitor's home
+    region, and raises ``ResourceNotFoundException`` from any other regional
+    endpoint (a monitor is a regional resource).
+    """
+
+    def _make_api_call(self, operation_name, api_params):
+        assert operation_name == "GetMonitor"
+        if self.meta.region_name != monitor_region:
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "ResourceNotFoundException",
+                        "Message": f"Monitor not found in {self.meta.region_name}",
+                    }
+                },
+                operation_name,
+            )
+        return monitor
+
+    return patch.object(BaseClient, "_make_api_call", _make_api_call)
+
+
+def test_get_monitor_subdomain_uses_profile_region_not_farm_region(
+    fresh_deadline_config, aws_config
+):
+    """The GetMonitor call must go to the monitor's home region -- the region of the
+    AWS profile that Deadline Cloud monitor wrote -- not defaults.farm_region. In a
+    cross-region setup a farm-region client hits the wrong endpoint and finds no
+    monitor."""
+    aws_config.write_text("[default]\nregion = us-east-1\n")
+    config.set_setting("defaults.farm_region", "eu-west-1")
     with (
+        _get_monitor_wire_stub("us-east-1", {"subdomain": SUBDOMAIN, "url": HOST}),
         patch.object(
             api._monitor_urls,
             "get_credentials_source",
@@ -341,10 +355,28 @@ def test_get_job_monitor_url_uses_authoritative_host_in_other_partitions(fresh_d
         ),
         patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
     ):
-        url = _get_job_monitor_url(
-            farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
-        )
-    assert url == f"{gov_host}/us-gov-west-1/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}"
+        assert _get_monitor_subdomain() == (SUBDOMAIN, REGION, HOST)
+
+
+def test_get_job_monitor_url_cross_region_without_injected_client(
+    fresh_deadline_config, aws_config
+):
+    """End-to-end cross-region: monitor (and profile) in us-east-1, farm in eu-west-1.
+    The URL must still be produced -- GetMonitor must not be attempted in the farm's
+    region, where it would raise ResourceNotFoundException and silently yield None."""
+    aws_config.write_text("[default]\nregion = us-east-1\n")
+    config.set_setting("defaults.farm_region", "eu-west-1")
+    with (
+        _get_monitor_wire_stub("us-east-1", {"subdomain": SUBDOMAIN, "url": HOST}),
+        patch.object(
+            api._monitor_urls,
+            "get_credentials_source",
+            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
+        ),
+        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
+    ):
+        url = _get_job_monitor_url(farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID)
+    assert url == (f"{HOST}/eu-west-1/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}")
 
 
 def test_get_job_monitor_url_falls_back_when_monitor_url_malformed(fresh_deadline_config):
@@ -353,15 +385,6 @@ def test_get_job_monitor_url_falls_back_when_monitor_url_malformed(fresh_deadlin
     config.set_setting("defaults.farm_region", REGION)
     mock_client = MagicMock()
     mock_client.get_monitor.return_value = {"subdomain": SUBDOMAIN, "url": "not-a-url"}
-    with (
-        patch.object(
-            api._monitor_urls,
-            "get_credentials_source",
-            return_value=AwsCredentialsSource.DEADLINE_CLOUD_MONITOR_LOGIN,
-        ),
-        patch.object(api._monitor_urls, "get_monitor_id", return_value="monitor-abc"),
-    ):
-        url = _get_job_monitor_url(
-            farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID, deadline_client=mock_client
-        )
+    with _patch_dcm_monitor(mock_client):
+        url = _get_job_monitor_url(farm_id=FARM_ID, queue_id=QUEUE_ID, job_id=JOB_ID)
     assert url == f"{HOST}/{REGION}/farms/{FARM_ID}/queues/{QUEUE_ID}?jobId={JOB_ID}"
