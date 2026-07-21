@@ -12,8 +12,9 @@ from click.testing import CliRunner
 
 from deadline.client import api, config
 from deadline.client.cli import main
+from deadline.client.cli._groups import queue_group
 
-from ..shared_constants import MOCK_FARM_ID, MOCK_QUEUES_LIST
+from ..shared_constants import MOCK_FARM_ID, MOCK_QUEUE_ID, MOCK_QUEUES_LIST
 
 
 def test_cli_queue_list(fresh_deadline_config, mock_telemetry):
@@ -145,3 +146,30 @@ description: ''
             farmId=MOCK_FARM_ID, queueId=MOCK_QUEUES_LIST[0]["queueId"]
         )
         assert result.exit_code == 0
+
+
+def test_cli_queue_paramdefs_forwards_config(fresh_deadline_config, mock_telemetry):
+    """
+    Confirm that `queue paramdefs` forwards the resolved config (which carries
+    --profile / --region) to api.get_queue_parameter_definitions. Without this,
+    the parameter definitions would be fetched against the wrong account/region.
+    """
+    with patch.object(
+        queue_group.api, "get_queue_parameter_definitions", return_value=[]
+    ) as mock_get_paramdefs:
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "queue",
+                "paramdefs",
+                "--farm-id",
+                MOCK_FARM_ID,
+                "--queue-id",
+                MOCK_QUEUE_ID,
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        mock_get_paramdefs.assert_called_once()
+        assert mock_get_paramdefs.call_args.kwargs.get("config") is not None
