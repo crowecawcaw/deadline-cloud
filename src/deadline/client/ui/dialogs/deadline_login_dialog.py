@@ -198,4 +198,10 @@ class DeadlineLoginDialog(QMessageBox):
         Runs the modal login dialog, returning True if the login was
         successful, False otherwise.
         """
-        return super().exec_() == QDialog.DialogCode.Accepted
+        # A successful login resolves the dialog one of two ways depending on
+        # close_on_success: with close_on_success=True the success handler calls
+        # self.accept() (QDialog.Accepted); with close_on_success=False it swaps
+        # in an "Ok" button, and clicking a QMessageBox standard button sets the
+        # result to that button's enum (QMessageBox.Ok). Both mean success.
+        result = super().exec_()
+        return result in (QDialog.DialogCode.Accepted, QMessageBox.Ok)

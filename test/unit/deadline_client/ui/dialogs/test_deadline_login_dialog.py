@@ -44,6 +44,29 @@ class TestDeadlineLoginDialogReturnValue:
 
             assert dialog.exec_() is True
 
+    def test_exec_returns_true_on_success_when_not_closing_on_success(self, qtbot):
+        """
+        With close_on_success=False a successful login does not call accept();
+        instead it swaps in an "Ok" button and waits for the user to click it.
+        Clicking a QMessageBox standard button sets the result to QMessageBox.Ok
+        (1024), not QDialog.Accepted (1). exec_() must still return True.
+        """
+        with patch(_API_LOGIN, return_value="my-profile"):
+            dialog = DeadlineLoginDialog(parent=None, close_on_success=False)
+            qtbot.addWidget(dialog)
+
+            def click_ok():
+                ok_button = dialog.button(QMessageBox.Ok)
+                if ok_button is None:
+                    # Success handler hasn't swapped in the Ok button yet; retry.
+                    QTimer.singleShot(10, click_ok)
+                    return
+                ok_button.click()
+
+            QTimer.singleShot(10, click_ok)
+
+            assert dialog.exec_() is True
+
     def test_exec_returns_false_when_user_cancels(self, qtbot):
         """
         A realistic cancel: the login backend blocks until it observes the
