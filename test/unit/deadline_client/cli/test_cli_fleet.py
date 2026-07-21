@@ -75,6 +75,27 @@ def test_cli_fleet_list(fresh_deadline_config, mock_telemetry):
         assert result.exit_code == 0
 
 
+def test_cli_fleet_list_sparse_response(fresh_deadline_config, mock_telemetry):
+    """
+    Confirm that 'deadline fleet list' does not raise a KeyError when a fleet
+    in the response is missing an expected field (e.g. displayName).
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+
+    sparse_fleets = [
+        {"fleetId": MOCK_FLEET_ID},  # missing displayName
+    ]
+
+    with patch.object(api._session, "get_boto3_session") as session_mock:
+        session_mock().client("deadline").list_fleets.return_value = {"fleets": sparse_fleets}
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["fleet", "list"])
+
+        assert result.exit_code == 0
+        assert MOCK_FLEET_ID in result.output
+
+
 def test_cli_fleet_list_region_reaches_client(fresh_deadline_config, mock_telemetry):
     """
     Passing --region persists `defaults.farm_region` and scopes the deadline client

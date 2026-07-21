@@ -61,12 +61,12 @@ def worker_list(page_size, item_offset, fleet_id, **args):
             f"Failed to get Workers from Deadline:\n{exc}{suggestion}"
         ) from exc
 
-    total_results = response["totalResults"]
+    total_results = response.get("totalResults", 0)
 
     # Select which fields to print and in which order
     structured_worker_list = [
-        {field: worker[field] for field in ["workerId", "status", "createdAt"]}
-        for worker in response["workers"]
+        {field: worker.get(field) for field in ["workerId", "status", "createdAt"]}
+        for worker in response.get("workers", [])
     ]
 
     click.echo(

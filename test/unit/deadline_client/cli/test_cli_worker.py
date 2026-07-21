@@ -151,6 +151,35 @@ def test_cli_worker_list_success(fresh_deadline_config, deadline_mock):
     )
 
 
+def test_cli_worker_list_sparse_response(fresh_deadline_config, deadline_mock):
+    """
+    Tests that 'deadline worker list' does not raise a KeyError when the
+    response omits 'totalResults' or a worker omits an expected field.
+    """
+    deadline_mock.search_workers.return_value = {
+        # missing "totalResults"
+        "workers": [
+            {"workerId": "worker-1234567890abcdef1234567890abcdef"},  # missing status/createdAt
+        ],
+    }
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "worker",
+            "list",
+            "--farm-id",
+            MOCK_FARM_ID,
+            "--fleet-id",
+            MOCK_FLEET_ID,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "worker-1234567890abcdef1234567890abcdef" in result.output
+
+
 def test_cli_worker_list_pagination(fresh_deadline_config, deadline_mock):
     """
     Tests that 'deadline worker list' correctly handles custom page-size and item-offset parameters.

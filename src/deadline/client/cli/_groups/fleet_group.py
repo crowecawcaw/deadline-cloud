@@ -56,8 +56,8 @@ def fleet_list(**args):
 
     # Select which fields to print and in which order
     structured_fleet_list = [
-        {field: fleet[field] for field in ["fleetId", "displayName"]}
-        for fleet in response["fleets"]
+        {field: fleet.get(field) for field in ["fleetId", "displayName"]}
+        for fleet in response.get("fleets", [])
     ]
 
     click.echo(_cli_object_repr(structured_fleet_list))
