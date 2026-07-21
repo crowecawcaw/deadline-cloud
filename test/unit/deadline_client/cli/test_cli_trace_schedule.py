@@ -7,9 +7,15 @@ command with ``ZeroDivisionError`` or ``KeyError``.
 
 from __future__ import annotations
 
+import datetime
+
 import pytest
 
-from deadline.client.cli._groups._trace_schedule import _print_summary
+from deadline.client.cli._groups._trace_schedule import (
+    _build_trace_events,
+    _get_all_sessions,
+    _print_summary,
+)
 
 
 def _zero_accumulators(**overrides):
@@ -53,6 +59,64 @@ def test_print_summary_zero_session_actions_does_not_divide_by_zero(capsys):
 
     out = capsys.readouterr().out
     assert "Within-session Overhead Duration Per Action" in out
+
+
+def test_get_all_sessions_handles_missing_started_at():
+    """Sessions that have not started yet (no ``startedAt``) must not raise a
+    KeyError while sorting."""
+
+    class _FakeDeadline:
+        def list_sessions(self, **kwargs):
+            return {
+                "sessions": [
+                    {"sessionId": "session-2", "startedAt": _dt(60)},
+                    {"sessionId": "session-1"},  # in-flight, no startedAt yet
+                ]
+            }
+
+    sessions = _get_all_sessions(_FakeDeadline(), "farm-1", "queue-1", "job-1")
+
+    assert {s["sessionId"] for s in sessions} == {"session-1", "session-2"}
+
+
+def _dt(offset_seconds: int) -> datetime.datetime:
+    return datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc) + datetime.timedelta(
+        seconds=offset_seconds
+    )
+
+
+def test_build_trace_events_handles_session_without_step():
+    """A session whose step could not be fetched (partial BatchGetStep) must
+    not raise a KeyError on ``session['step']``."""
+    started = _dt(0)
+    ended = _dt(60)
+    session = {
+        "sessionId": "session-1",
+        "workerId": "worker-0",
+        "fleetId": "fleet-0",
+        "lifecycleStatus": "ENDED",
+        "startedAt": started,
+        "endedAt": ended,
+        "index": 0,
+        "actions": [
+            {
+                "sessionActionId": "sessionaction-1",
+                "status": "SUCCEEDED",
+                "startedAt": started,
+                "endedAt": ended,
+                "definition": {"taskRun": {"stepId": "step-1", "taskId": "task-1"}},
+            }
+        ],
+        # No "step" key: the step lookup failed / hasn't been attached.
+    }
+    workers = {"worker-0": 0}
+
+    trace_events, accumulators = _build_trace_events([session], workers, started, ended)
+
+    assert accumulators["sessionCount"] == 1
+    assert accumulators["taskRunCount"] == 1
+    # A trace event should still be produced for the session.
+    assert any(event["cat"] == "SESSION" for event in trace_events)
 
 
 if __name__ == "__main__":

@@ -109,7 +109,14 @@ def _get_all_sessions(deadline, farm_id, queue_id, job_id):
             nextToken=response["nextToken"],
         )
         sessions.extend(response.get("sessions", []))
-    return sorted(sessions, key=lambda session: session["startedAt"])
+    # Sessions that haven't started yet may not have a "startedAt"; sort those
+    # last (using datetime.max) instead of raising a KeyError.
+    return sorted(
+        sessions,
+        key=lambda session: session.get(
+            "startedAt", datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
+        ),
+    )
 
 
 def _get_all_session_actions(deadline, farm_id, queue_id, job_id, session_id):
@@ -252,7 +259,10 @@ def _build_trace_events(sessions, workers, started_at, trace_end_utc):
         accumulators["sessionDuration"] += duration_of(session)
 
         pid = workers[session["workerId"]]
-        session_event_name = f"{session['step']['name']} - {session['index']}"
+        # The step may be missing if its details couldn't be fetched (e.g. a
+        # partial BatchGetStep result); fall back to a placeholder name.
+        step_name = session.get("step", {}).get("name", "<Unknown Step>")
+        session_event_name = f"{step_name} - {session['index']}"
         if "endedAt" not in session:
             session_event_name = f"{session_event_name} - In Progress"
         trace_events.append(
@@ -317,7 +327,7 @@ def _build_trace_events(sessions, workers, started_at, trace_end_utc):
                         "args": {
                             "sessionActionId": action["sessionActionId"],
                             "status": action["status"],
-                            "stepName": session["step"]["name"],
+                            "stepName": step_name,
                         },
                     }
                 )
