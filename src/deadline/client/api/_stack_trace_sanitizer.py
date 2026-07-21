@@ -10,6 +10,7 @@ exception's message string and source-line context are dropped entirely
 because we have no control over what third-party libraries put in them.
 """
 
+import functools
 import importlib.util
 import os
 import traceback
@@ -37,18 +38,29 @@ def _normalize(path: str) -> str:
     return os.path.normcase(path.replace("\\", "/").rstrip("/"))
 
 
-def _known_package_install_dirs() -> Dict[str, str]:
-    """Map each known package name to the normalized directory it is installed in.
+@functools.lru_cache(maxsize=None)
+def _known_package_install_dirs() -> Dict[str, List[str]]:
+    """Map each known package name to the normalized directories it is installed in.
 
-    This is the genuine on-disk location of the package root (the directory
-    that *contains* the package, e.g. ``.../site-packages``). It is used to
+    These are the genuine on-disk locations of the package root (the directory
+    that *contains* the package, e.g. ``.../site-packages``). They are used to
     distinguish a real framework frame from a customer directory that merely
     shares a package's name (e.g. a customer project tree rooted at
     ``~/deadline/...``). Only packages that are importable with a real
-    filesystem location contribute an anchor; anything else (namespace
-    packages, frozen modules without a file) is simply omitted.
+    filesystem location contribute an anchor; anything else (frozen modules
+    without a file) is simply omitted.
+
+    ``deadline`` and ``openjd`` are PEP 420 namespace packages, so a single
+    namespace can be contributed by several distributions installed into
+    different ``sys.path`` roots. ``submodule_search_locations`` may therefore
+    hold more than one path; we record all of them so a genuine framework frame
+    under any of those roots is recognized.
+
+    The install locations are fixed for the life of the process, so the result
+    is memoized with ``lru_cache`` (a deep traceback would otherwise recompute
+    it, hitting ``find_spec`` once per known package per frame).
     """
-    dirs: Dict[str, str] = {}
+    dirs: Dict[str, List[str]] = {}
     for name in _KNOWN_PACKAGES:
         try:
             spec = importlib.util.find_spec(name)
@@ -56,20 +68,21 @@ def _known_package_install_dirs() -> Dict[str, str]:
             continue
         if spec is None:
             continue
-        # Prefer the package directory itself. A regular package reports it
-        # via submodule_search_locations (e.g. ".../site-packages/deadline");
-        # a single-file module only has an origin (".../foo.py"), whose parent
-        # directory is the container.
+        # Prefer the package directories themselves. A regular/namespace package
+        # reports them via submodule_search_locations (e.g.
+        # ".../site-packages/deadline"); a single-file module only has an origin
+        # (".../foo.py"), whose parent directory is the container.
         origin = spec.origin
         locations = list(spec.submodule_search_locations or [])
-        pkg_dir = None
+        pkg_dirs: List[str] = []
         if locations:
-            pkg_dir = locations[0]
+            pkg_dirs = list(locations)
         elif origin and origin not in ("built-in", "frozen"):
-            pkg_dir = os.path.dirname(origin)
-        if not pkg_dir:
+            pkg_dirs = [os.path.dirname(origin)]
+        normalized = [_normalize(os.path.abspath(p)) for p in pkg_dirs if p]
+        if not normalized:
             continue
-        dirs[name] = _normalize(os.path.abspath(pkg_dir))
+        dirs[name] = normalized
     return dirs
 
 
@@ -97,8 +110,8 @@ def _sanitize_path(filepath: str) -> str:
     install_dirs = _known_package_install_dirs()
     for i in range(len(parts) - 1, -1, -1):
         stem = parts[i].split(".")[0]
-        anchor = install_dirs.get(stem)
-        if anchor is not None and _normalize("/".join(parts[: i + 1])) == anchor:
+        anchors = install_dirs.get(stem)
+        if anchors is not None and _normalize("/".join(parts[: i + 1])) in anchors:
             return "/".join(parts[i:])
 
     # Unknown third-party library installed into a venv: keep the
