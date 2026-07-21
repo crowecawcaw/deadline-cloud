@@ -411,18 +411,17 @@ def show_job_bundle_submitter(
     )
 
     if job_parameters:
-        # We want to validate the job parameters after the queue parameters are loaded.
-        # Connect a parameter validation function to the queue parameter loading completion
-        def validate_parameters_after_queue_load(refresh_id: int, queue_parameters: list):
+
+        def validate_parameters_after_queue_load(queue_parameters: list):
             """Validate CLI parameters against loaded queue parameters and set parameter values"""
             if not _validate_and_warn_about_parameters(
                 job_parameters, initial_settings.parameters, queue_parameters, submitter_dialog
             ):
-                # User chose to cancel, close the dialog
+                # User cancelled at the validation warning.
                 submitter_dialog.close()
 
-        # Connect to the queue parameters update signal
-        submitter_dialog.shared_job_settings._queue_parameters_update.connect(
+        # Validate CLI params once the controller finishes loading queue params.
+        submitter_dialog.shared_job_settings._controller.queue_parameters_updated.connect(
             validate_parameters_after_queue_load
         )
 
