@@ -77,4 +77,7 @@ def deadline_yaml_dump(data, stream=None, **kwds) -> str:
     Works like pyyaml's safe_dump, but saves multi-line
     strings with the "|" style and defaults to sort_keys=False.
     """
-    return yaml.dump_all([data], stream, Dumper=DeadlineDumper, sort_keys=False, **kwds)
+    # Default to sort_keys=False, but allow callers to override it via kwds
+    # without triggering a "multiple values for keyword argument" TypeError.
+    kwds.setdefault("sort_keys", False)
+    return yaml.dump_all([data], stream, Dumper=DeadlineDumper, **kwds)
