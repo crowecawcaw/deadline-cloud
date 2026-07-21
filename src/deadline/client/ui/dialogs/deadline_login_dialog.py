@@ -21,6 +21,7 @@ from .._utils import tr
 from ..controllers import AsyncTaskRunner
 from qtpy.QtWidgets import (  # pylint: disable=import-error; type: ignore
     QApplication,
+    QDialog,
     QMessageBox,
     QWidget,
 )
@@ -197,4 +198,4 @@ class DeadlineLoginDialog(QMessageBox):
         Runs the modal login dialog, returning True if the login was
         successful, False otherwise.
         """
-        return super().exec_() == QMessageBox.Ok
+        return super().exec_() == QDialog.DialogCode.Accepted
