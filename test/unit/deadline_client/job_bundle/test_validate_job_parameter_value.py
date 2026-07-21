@@ -600,6 +600,68 @@ class TestConstraintValidation:
     @pytest.mark.parametrize(
         "job_parameter,input_value,expected_output",
         [
+            # allowedValues given as numeric strings in the template while the
+            # submitted value is coerced to int/float. Membership must be checked
+            # consistently after coercion.
+            pytest.param(
+                {"name": "int_str_allowed", "type": "INT", "allowedValues": ["1", "2", "3"]},
+                2,
+                2,
+                id="int_allowed_values_as_strings_int_input",
+            ),
+            pytest.param(
+                {"name": "int_str_allowed", "type": "INT", "allowedValues": ["1", "2", "3"]},
+                "3",
+                3,
+                id="int_allowed_values_as_strings_string_input",
+            ),
+            pytest.param(
+                {
+                    "name": "float_str_allowed",
+                    "type": "FLOAT",
+                    "allowedValues": ["1.5", "2.7", "3.14"],
+                },
+                2.7,
+                2.7,
+                id="float_allowed_values_as_strings_float_input",
+            ),
+        ],
+    )
+    def test_allowed_values_numeric_string_valid_values(
+        self,
+        job_parameter: parameters.JobParameter,
+        input_value: Union[str, int, float],
+        expected_output: Union[int, float],
+    ) -> None:
+        """Test that allowedValues stored as numeric strings match the coerced value."""
+        result = parameters.validate_job_parameter_value(job_parameter, input_value)
+        assert result == expected_output
+        assert type(result) is type(expected_output)
+
+    @pytest.mark.parametrize(
+        "job_parameter,input_value,expected_error_pattern",
+        [
+            pytest.param(
+                {"name": "int_str_allowed", "type": "INT", "allowedValues": ["1", "2", "3"]},
+                4,
+                r"Job parameter 'int_str_allowed' value 4 is not an allowed value",
+                id="int_allowed_values_as_strings_violation",
+            ),
+        ],
+    )
+    def test_allowed_values_numeric_string_violation_errors(
+        self,
+        job_parameter: parameters.JobParameter,
+        input_value: Union[str, int, float],
+        expected_error_pattern: str,
+    ) -> None:
+        """Test that non-member coerced values are still rejected."""
+        with pytest.raises(ValueError, match=expected_error_pattern):
+            parameters.validate_job_parameter_value(job_parameter, input_value)
+
+    @pytest.mark.parametrize(
+        "job_parameter,input_value,expected_output",
+        [
             # STRING allowedValues tests - valid cases
             pytest.param(
                 STRING_PARAM_WITH_ALLOWED_VALUES,

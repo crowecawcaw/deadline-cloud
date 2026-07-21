@@ -344,6 +344,16 @@ def validate_job_parameter_value(
 
     allowed_values = job_parameter.get("allowedValues")
     if allowed_values is not None:
+        # allowedValues may be stored as strings in the template even for
+        # INT/FLOAT parameters. Coerce them to the same numeric type as the
+        # (already coerced) value so membership is checked consistently.
+        if param_type in ("INT", "FLOAT"):
+            try:
+                allowed_values = [numeric_coerce(allowed) for allowed in allowed_values]
+            except (ValueError, TypeError):
+                # Leave allowedValues untouched if any entry isn't numeric;
+                # the membership check below will then reject the value.
+                pass
         if value not in allowed_values:  # type: ignore
             raise ValueError(
                 f"Job parameter {name!r} value {value!r} is not an allowed value from {tuple(allowed_values)!r}."
