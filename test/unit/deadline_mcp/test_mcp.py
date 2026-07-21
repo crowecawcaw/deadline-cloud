@@ -5,6 +5,7 @@
 
 """Unit tests for MCP server"""
 
+import inspect
 from unittest.mock import MagicMock
 
 import pytest
@@ -137,6 +138,39 @@ class TestUtilityFunctions:
 
         result = wrapper(param1="test", param2=20)
         assert isinstance(result, dict)
+
+    def test_wrapper_preserves_empty_string_and_literal_null(self):
+        """Empty string and the literal string 'null' are legitimate values and
+        must be forwarded to the wrapped function, not dropped as if None."""
+        received = {}
+
+        def mock_func(a=None, b=None, c=None):
+            received.update({"a": a, "b": b, "c": c})
+            return {"ok": True}
+
+        config = ToolDefinition(func=mock_func, param_names=["a", "b", "c"])
+        wrapper = _create_wrapper(config, _default_serializer, _default_error_handler)
+
+        wrapper(a="", b="null", c=None)
+
+        assert received["a"] == ""
+        assert received["b"] == "null"
+        # c is None and should be dropped so the function default applies
+        assert received["c"] is None
+
+    def test_wrapper_signature_marks_required_params(self):
+        """Params without a default in the wrapped function must be required in
+        the generated signature, not silently defaulted to None."""
+
+        def mock_func(required_arg: str, optional_arg: str = "x"):
+            return {"required_arg": required_arg, "optional_arg": optional_arg}
+
+        config = ToolDefinition(func=mock_func, param_names=["required_arg", "optional_arg"])
+        wrapper = _create_wrapper(config, _default_serializer, _default_error_handler)
+
+        sig = getattr(wrapper, "__signature__")
+        assert sig.parameters["required_arg"].default is inspect.Parameter.empty
+        assert sig.parameters["optional_arg"].default == "x"
 
 
 class TestRegisterAPITools:

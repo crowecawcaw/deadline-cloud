@@ -61,12 +61,23 @@ def _create_wrapper(
     # Check if function accepts 'config' parameter
     has_config_param = "config" in func_sig.parameters
 
+    def _param_default(name: str) -> Any:
+        # Preserve required-ness from the wrapped function: parameters without a
+        # default are required, so exposing them with a None default hides
+        # missing-arg errors behind an opaque TypeError.
+        if name in func_sig.parameters:
+            original = func_sig.parameters[name].default
+            if original is inspect.Parameter.empty:
+                return inspect.Parameter.empty
+            return original
+        return None
+
     signature = inspect.Signature(
         [
             inspect.Parameter(
                 name,
                 inspect.Parameter.KEYWORD_ONLY,
-                default=None,
+                default=_param_default(name),
                 annotation=func_sig.parameters[name].annotation
                 if name in func_sig.parameters
                 else str,
@@ -82,8 +93,10 @@ def _create_wrapper(
         error_type = None
 
         try:
-            # Filter out empty/null values that MCP clients might send
-            filtered_kwargs = {k: v for k, v in kwargs.items() if v not in (None, "", "null")}
+            # Filter out unset (None) values that MCP clients send for omitted
+            # optional args. Empty string "" and the literal string "null" are
+            # legitimate values and must be forwarded to the wrapped function.
+            filtered_kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
             # Type conversion now handled by preserving original function annotations
 

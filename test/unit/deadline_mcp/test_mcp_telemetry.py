@@ -155,7 +155,9 @@ def test_mcp_tool_parameter_filtering():
         wrapper = _create_wrapper(config, mock_serializer, mock_error_handler)
         result = wrapper(param1="value1", param2=None, param3="", param4="null")
 
-        mock_func.assert_called_once_with(param1="value1")
+        # Only None (unset) params are dropped. Empty string and the literal
+        # string "null" are legitimate values and must be forwarded.
+        mock_func.assert_called_once_with(param1="value1", param3="", param4="null")
         assert result == {"result": "success"}
 
 
