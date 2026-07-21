@@ -1105,6 +1105,42 @@ def test_wait_for_create_job_to_complete(responses, final_status):
     assert status_message == MOCK_STATUS_MESSAGE
 
 
+@pytest.mark.parametrize(
+    "final_status, expected_success",
+    [
+        pytest.param("READY", True, id="SucceededNoStatusMessage"),
+        pytest.param("CREATE_FAILED", False, id="FailedNoStatusMessage"),
+    ],
+)
+def test_wait_for_create_job_to_complete_missing_status_message(final_status, expected_success):
+    """
+    A get_job response may omit lifecycleStatusMessage. Reading it without a
+    fallback raises KeyError, which makes a successful submit look like a crash.
+    The waiter must tolerate the missing key and return an empty message.
+    """
+
+    def mock_continue_callback() -> bool:
+        return True
+
+    deadline_client = Mock()
+    # Response intentionally omits "lifecycleStatusMessage".
+    deadline_client.get_job.side_effect = [
+        {"lifecycleStatus": "CREATE_IN_PROGRESS", "lifecycleStatusMessage": MOCK_STATUS_MESSAGE},
+        {"lifecycleStatus": final_status},
+    ]
+
+    with patch.object(time, "sleep"):
+        success, status_message = api.wait_for_create_job_to_complete(
+            farm_id=MOCK_FARM_ID,
+            queue_id=MOCK_QUEUE_ID,
+            job_id=MOCK_JOB_ID,
+            deadline_client=deadline_client,
+            continue_callback=mock_continue_callback,
+        )
+    assert success == expected_success
+    assert status_message == ""
+
+
 def test_wait_for_create_job_to_complete_timeout():
     """
     Test the waiter for calling CreateJob when it times out.

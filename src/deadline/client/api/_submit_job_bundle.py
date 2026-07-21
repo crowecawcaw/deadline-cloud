@@ -1158,9 +1158,9 @@ def wait_for_create_job_to_complete(
             time.sleep(delay)
             delay = min(delay * 2, max_delay)
         elif current_status in failure_statuses:
-            return False, job["lifecycleStatusMessage"]
+            return False, job.get("lifecycleStatusMessage", "")
         else:
-            return True, job["lifecycleStatusMessage"]
+            return True, job.get("lifecycleStatusMessage", "")
 
     raise TimeoutError(
         f"Timed out after {timeout_seconds} seconds while waiting for Job to be created: {job_id}"
