@@ -16,8 +16,10 @@ __all__ = [
     "get_best_profile_for_farm",
     "get_setting",
     "get_setting_default",
+    "read_config",
     "set_setting",
     "str2bool",
+    "write_config",
 ]
 
 from .config_file import (
@@ -25,7 +27,9 @@ from .config_file import (
     get_best_profile_for_farm,
     get_setting,
     get_setting_default,
+    read_config,
     set_setting,
     clear_setting,
     str2bool,
+    write_config,
 )
