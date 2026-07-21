@@ -309,11 +309,13 @@ def _filter_redundant_known_paths(known_asset_paths: Iterable[str]) -> list[str]
 def _save_debug_snapshot(
     debug_snapshot_dir: str,
     create_job_args: dict,
-    asset_manager: S3AssetManager,
+    asset_manager: Optional[S3AssetManager],
     queue: dict,
     storage_profile_id: str,
     storage_profile: Optional[StorageProfile],
 ):
+    # ``asset_manager`` is only dereferenced when the create_job args carry
+    # attachments; a snapshot with no attachments passes None here.
     # Save the full set of arguments for passing to the deadline.create_job API
     with open(
         os.path.join(debug_snapshot_dir, "create_job_args.json"), "w", encoding="utf-8"
@@ -821,6 +823,9 @@ def create_job_from_job_bundle(
 
     # Hash and upload job attachments if there are any
     files_processed = False
+    # Only assigned when there are attachments to process, but referenced
+    # unconditionally by the debug-snapshot path below, so initialize it here.
+    asset_manager: Optional[S3AssetManager] = None
     if asset_references and "jobAttachmentSettings" in queue:
         # Extend input_filenames with all the files in the input_directories
         missing_directories: set[str] = set()

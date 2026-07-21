@@ -1212,3 +1212,41 @@ def test_create_job_from_job_bundle_force_s3_check(
             assert call_kwargs.get("force_s3_check") == force_s3_check_param
         else:
             assert call_kwargs.get("force_s3_check") is None
+
+
+def test_create_job_from_job_bundle_debug_snapshot_no_attachments(
+    fresh_deadline_config, temp_job_bundle_dir, tmp_path
+):
+    """
+    A debug snapshot of a bundle with no job attachments must not crash.
+
+    The ``asset_manager`` local is only assigned inside the attachments block,
+    but it is passed unconditionally to ``_save_debug_snapshot``. When there are
+    no attachments to process, that local is never bound and referencing it
+    raises UnboundLocalError. Snapshotting must succeed and write the snapshot.
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+
+    job_template_type, job_template = MOCK_JOB_TEMPLATE_CASES["MINIMAL_JSON"]
+
+    with patch_calls_for_create_job_from_job_bundle() as mock:
+        # Write a template with no asset_references file, so no attachments are processed.
+        with open(
+            os.path.join(temp_job_bundle_dir, f"template.{job_template_type.lower()}"),
+            "w",
+            encoding="utf8",
+        ) as f:
+            f.write(job_template)
+
+        response = api.create_job_from_job_bundle(
+            job_bundle_dir=temp_job_bundle_dir,
+            queue_parameter_definitions=[],
+            debug_snapshot_dir=str(tmp_path),
+        )
+
+    # No job is submitted when creating a debug snapshot.
+    assert response is None
+    mock.get_boto3_client().create_job.assert_not_called()
+    # The snapshot files were written.
+    assert os.path.isfile(os.path.join(str(tmp_path), "create_job_args.json"))
