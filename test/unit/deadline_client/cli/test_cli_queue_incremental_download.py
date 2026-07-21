@@ -572,6 +572,66 @@ def test_incremental_output_download_storage_profile_path_mapping(
 @pytest.mark.skipif(
     sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
 )
+def test_incremental_output_download_storage_profile_without_file_system_locations(
+    fresh_deadline_config, deadline_mock, checkpoint_dir
+):
+    """
+    Regression test: a storage profile may omit the optional ``fileSystemLocations`` key.
+    sync-output must tolerate its absence rather than raising KeyError while echoing the
+    profile's locations / running the pre-flight writability check.
+    """
+    mock_jobs = create_fake_job_list(1)
+    mock_jobs[0]["name"] = "Mock Job"
+    mock_jobs[0]["jobId"] = MOCK_JOB_ID
+    mock_jobs[0]["taskRunStatus"] = "READY"
+    mock_jobs[0]["taskRunStatusCounts"] = {"SUCCEEDED": 1, "READY": 1}
+    mock_jobs[0]["attachments"] = {
+        "manifests": [
+            {"rootPath": "/", "rootPathFormat": "posix", "outputRelativeDirectories": ["."]}
+        ],
+        "fileSystem": "VIRTUAL",
+    }
+    mock_jobs[0]["storageProfileId"] = MOCK_STORAGE_PROFILE_ID_LOCAL
+    del mock_jobs[0]["endedAt"]
+    deadline_mock.search_jobs = mock_search_jobs_for_set(MOCK_FARM_ID, MOCK_QUEUE_ID, mock_jobs)
+    deadline_mock.get_job = mock_get_job_for_set(MOCK_FARM_ID, MOCK_QUEUE_ID, mock_jobs)
+
+    # The local storage profile has no "fileSystemLocations" key at all.
+    deadline_mock.get_storage_profile_for_queue.return_value = {
+        "storageProfileId": MOCK_STORAGE_PROFILE_ID_LOCAL,
+        "displayName": "Mock-Storage-Profile-For-Local",
+        "osFamily": StorageProfileOperatingSystemFamily.get_host_os_family().value.upper(),
+    }
+
+    runner = CliRunner()
+    with freeze_time(ISO_FREEZE_TIME):
+        result = runner.invoke(
+            main,
+            [
+                "queue",
+                "sync-output",
+                "--storage-profile-id",
+                MOCK_STORAGE_PROFILE_ID_LOCAL,
+                "--farm-id",
+                MOCK_FARM_ID,
+                "--queue-id",
+                MOCK_QUEUE_ID,
+                "--checkpoint-dir",
+                checkpoint_dir,
+            ],
+        )
+
+    # Must not crash with KeyError: 'fileSystemLocations'.
+    assert result.exit_code == 0, result.output
+    assert (
+        f"Local storage profile is Mock-Storage-Profile-For-Local ({MOCK_STORAGE_PROFILE_ID_LOCAL})"
+        in result.output
+    ), result.output
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
+)
 def test_incremental_output_download_bootstrap_retire_job_without_attachments(
     fresh_deadline_config, deadline_mock, checkpoint_dir
 ):

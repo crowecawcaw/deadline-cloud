@@ -434,7 +434,7 @@ def sync_output(
             f"Mapping job output paths to the local storage profile {local_storage_profile['displayName']} ({local_storage_profile_id})"
         )
         logger.echo("  File system locations for the storage profile are:")
-        for location in local_storage_profile["fileSystemLocations"]:
+        for location in local_storage_profile.get("fileSystemLocations", []):
             logger.echo(f"    {location['name']}: {location['path']}")
         logger.echo()
 
@@ -442,7 +442,7 @@ def sync_output(
     # Downloads proceed regardless — jobs only map to the locations their outputs fall under,
     # and the status file writer already tolerates per-location write failures gracefully.
     if local_storage_profile_id and local_storage_profile:
-        for location in local_storage_profile["fileSystemLocations"]:
+        for location in local_storage_profile.get("fileSystemLocations", []):
             location_path = location["path"]
             if not os.path.isdir(location_path):
                 logger.echo(
