@@ -268,7 +268,9 @@ def validate_job_parameter_value(
         The value, converted to the correct type for the parameter definition.
     """
     name = job_parameter["name"]
-    param_type = job_parameter["type"]
+    # "type" is NotRequired on JobParameter. A missing type falls through to the
+    # unsupported-type error below rather than raising a bare KeyError.
+    param_type = job_parameter.get("type")
 
     # First ensure the value has the correct type
     if param_type in ("STRING", "PATH"):
@@ -677,9 +679,13 @@ def apply_job_parameters(
     - Any PATH parameters that have IN, OUT, or INOUT assetReferences metadata are
       added to the appropriate asset_references entries.
     """
-    # Convert the job_parameters to a dict for efficient lookup
+    # Convert the job_parameters to a dict for efficient lookup. "value" is
+    # NotRequired, so skip any entries that don't provide one rather than
+    # raising a KeyError.
     param_dict: dict[str, Any] = {
-        parameter["name"]: parameter["value"] for parameter in job_parameters
+        parameter["name"]: parameter["value"]
+        for parameter in job_parameters
+        if "value" in parameter
     }
 
     for parameter in parameters:

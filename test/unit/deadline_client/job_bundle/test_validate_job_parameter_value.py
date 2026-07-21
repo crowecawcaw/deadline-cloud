@@ -286,6 +286,16 @@ class TestTypeValidationAndConversion:
         with pytest.raises((ValueError, TypeError), match=expected_error_pattern):
             parameters.validate_job_parameter_value(job_parameter, input_value)
 
+    def test_missing_type_error(self) -> None:
+        """Test that a parameter definition missing the optional "type" key raises a
+        clear TypeError rather than a KeyError."""
+        job_parameter: parameters.JobParameter = {"name": "test_param"}
+        with pytest.raises(
+            TypeError,
+            match="The definition for job parameter 'test_param' has unsupported type None",
+        ):
+            parameters.validate_job_parameter_value(job_parameter, "value")
+
     def test_unsupported_type_error(self) -> None:
         """Test that an incorrect type in the type definition raises a TypeError."""
         with pytest.raises(

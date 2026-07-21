@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from deadline.client.job_bundle import parameters
+from deadline.client.job_bundle.submission import AssetReferences
 from deadline.client import exceptions
 
 
@@ -91,6 +92,30 @@ def test_apply_job_parameters_parameter_without_value(
     assert "TestParameterName" in str(excinfo)
     assert "no default value" in str(excinfo).lower()
     assert "no parameter value" in str(excinfo).lower()
+
+
+def test_apply_job_parameters_job_parameter_missing_value() -> None:
+    """
+    A supplied job parameter without a "value" key ("value" is NotRequired) must not
+    crash with a KeyError while building the lookup dict.
+    """
+    parameter_definitions: list = [
+        {
+            "name": "MyParam",
+            "type": "STRING",
+            "default": "the-default",
+        }
+    ]
+    asset_references = AssetReferences()
+
+    # Should not raise KeyError("value"); the value-less job parameter is simply
+    # skipped and the definition's default is relied upon.
+    parameters.apply_job_parameters(
+        [{"name": "MyParam"}],
+        ".",
+        parameter_definitions,
+        asset_references,
+    )
 
 
 class TestMergeQueueJobParameters:
