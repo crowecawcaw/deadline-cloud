@@ -109,9 +109,10 @@ def _get_boto3_session_for_profile(profile_name: str, region: Optional[str] = No
         ):
             credentials._advisory_refresh_timeout = 5 * 60  # 5 minutes
             credentials._mandatory_refresh_timeout = 2.5 * 60  # 2.5 minutes
-    except:  # noqa: E722
+    except Exception:
         # Attempt to patch the timeouts but ignore any errors. These patched proeprties are internal and could change
-        # without notice. Creds are functional without patching timeouts.
+        # without notice. Creds are functional without patching timeouts. Narrowed to
+        # Exception so BaseException subclasses (KeyboardInterrupt, SystemExit) still propagate.
         pass
 
     return session

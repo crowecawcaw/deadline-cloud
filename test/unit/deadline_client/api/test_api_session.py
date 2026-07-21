@@ -732,6 +732,24 @@ def test_get_queue_user_boto3_session_falls_back_to_base_region(fresh_deadline_c
         )
 
 
+def test_get_boto3_session_for_profile_propagates_keyboard_interrupt(fresh_deadline_config):
+    """
+    The timeout-patching try/except around session.get_credentials() must not swallow
+    BaseException subclasses like KeyboardInterrupt / SystemExit -- only ordinary errors
+    from the internal refresh-timeout patching should be ignored.
+    """
+    from deadline.client.api._session import _get_boto3_session_for_profile
+
+    _get_boto3_session_for_profile.cache_clear()
+
+    session_mock = MagicMock()
+    session_mock.get_credentials.side_effect = KeyboardInterrupt()
+
+    with patch("boto3.Session", return_value=session_mock):
+        with pytest.raises(KeyboardInterrupt):
+            _get_boto3_session_for_profile(None)
+
+
 def test_get_queue_user_boto3_session_uses_supplied_config_for_defaults(fresh_deadline_config):
     """
     When farm_id/queue_id are not passed explicitly, get_queue_user_boto3_session must
