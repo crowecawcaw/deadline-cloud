@@ -95,6 +95,8 @@ def submit_job(
     if not queue_id:
         raise ValueError("queue_id is required")
 
+    if not config.has_section("defaults"):
+        config.add_section("defaults")
     config.set("defaults", "farm_id", farm_id)
     config.set("defaults", "queue_id", queue_id)
     if storage_profile_id:

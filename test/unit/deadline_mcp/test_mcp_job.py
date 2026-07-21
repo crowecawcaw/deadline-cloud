@@ -56,3 +56,21 @@ def test_submit_job_job_url_none_when_not_monitor(fresh_deadline_config, tmp_pat
     assert result["status"] == "success"
     assert result["job_id"] == JOB_ID
     assert result["job_url"] is None
+
+
+def test_submit_job_fresh_config_without_defaults_section(fresh_deadline_config, tmp_path):
+    """On a fresh install the config has no ``[defaults]`` section; submitting a job
+    must not raise NoSectionError when writing the resolved farm/queue back."""
+    bundle_dir = str(tmp_path)
+    with (
+        patch.object(job_tool, "create_job_from_job_bundle", return_value=JOB_ID),
+        patch.object(job_tool, "_get_job_monitor_url", return_value=None),
+    ):
+        result = job_tool.submit_job(
+            job_bundle_dir=bundle_dir,
+            farm_id=FARM_ID,
+            queue_id=QUEUE_ID,
+        )
+
+    assert result["status"] == "success"
+    assert result["job_id"] == JOB_ID
