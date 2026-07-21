@@ -77,7 +77,7 @@ def _login_deadline_cloud_monitor(
             if on_cancellation_check():
                 p.kill()
                 raise Exception()
-        if p.poll():
+        if p.poll() is not None:
             # Deadline Cloud monitor has stopped, we assume it returned us an error on one line on stderr
             # but let's be specific about Deadline Cloud monitor failing incase the error is non-obvious
             # and let's tack on stdout incase it helps

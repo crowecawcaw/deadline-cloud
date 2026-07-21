@@ -10,9 +10,11 @@ import sys
 
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from deadline.client import api, config
+from deadline.client.exceptions import DeadlineOperationError
 
 from deadline.client.cli import main
 
@@ -110,6 +112,43 @@ def test_cli_deadline_cloud_monitor_login_and_logout(fresh_deadline_config):
         assert "Successfully logged out" in result.output
         mock_profile_session_cache_clear.assert_called()
         mock_queue_session_cache_clear.assert_called()
+
+
+def test_login_detects_clean_exit_without_auth(fresh_deadline_config):
+    """
+    If Deadline Cloud monitor exits cleanly (exit code 0) without the profile
+    becoming authenticated, login must recognize the process has stopped and
+    raise, rather than looping forever. Regression test for treating a clean
+    exit (poll() == 0) as "still running".
+    """
+    profile_name = "sandbox-us-west-2"
+    config.set_setting("deadline-cloud-monitor.path", "/bin/DeadlineCloudMonitor")
+    config.set_setting("defaults.aws_profile_name", profile_name)
+
+    # A sentinel to guarantee the test cannot hang if the loop keeps spinning.
+    class _LoopSpun(Exception):
+        pass
+
+    with (
+        patch.object(api._session, "get_boto3_session"),
+        patch.object(
+            api._loginout,
+            "check_authentication_status",
+            return_value=api.AwsAuthenticationStatus.NEEDS_LOGIN,
+        ),
+        patch.object(subprocess, "Popen") as popen_mock,
+        patch.object(api._loginout.time, "sleep", side_effect=_LoopSpun()),
+    ):
+        proc = popen_mock.return_value
+        # Process has exited cleanly with return code 0.
+        proc.poll.return_value = 0
+        proc.stdout.read.return_value = b"login window closed"
+
+        with pytest.raises(DeadlineOperationError):
+            api._loginout._login_deadline_cloud_monitor(
+                on_pending_authorization=None,
+                on_cancellation_check=None,
+            )
 
 
 def test_cli_auth_status(fresh_deadline_config):
