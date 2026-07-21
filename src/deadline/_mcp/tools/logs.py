@@ -43,6 +43,9 @@ def get_session_and_worker_logs(
     )
     worker_id = session_details.get("workerId")
     fleet_id = session_details.get("fleetId")
+    # Time window of the session, used to scope worker logs to the same period.
+    session_started_at = session_details.get("startedAt")
+    session_ended_at = session_details.get("endedAt")
 
     result: Dict[str, Any] = {
         "session_id": session_id,
@@ -69,7 +72,12 @@ def get_session_and_worker_logs(
     if worker_id and fleet_id:
         try:
             worker_log_result = get_worker_logs(
-                farm_id=farm_id, fleet_id=fleet_id, worker_id=worker_id, limit=limit
+                farm_id=farm_id,
+                fleet_id=fleet_id,
+                worker_id=worker_id,
+                limit=limit,
+                start_time=session_started_at,
+                end_time=session_ended_at,
             )
             result["worker_logs"] = {
                 "log_group": worker_log_result.log_group,

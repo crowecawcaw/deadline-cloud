@@ -68,7 +68,47 @@ def test_get_session_and_worker_logs_basic(mock_get_session, mock_session_logs, 
         farmId=MOCK_FARM_ID, queueId=MOCK_QUEUE_ID, jobId=MOCK_JOB_ID, sessionId=MOCK_SESSION_ID
     )
     mock_worker_logs.assert_called_once_with(
-        farm_id=MOCK_FARM_ID, fleet_id=MOCK_FLEET_ID, worker_id=MOCK_WORKER_ID, limit=100
+        farm_id=MOCK_FARM_ID,
+        fleet_id=MOCK_FLEET_ID,
+        worker_id=MOCK_WORKER_ID,
+        limit=100,
+        start_time=None,
+        end_time=None,
+    )
+
+
+@patch("deadline._mcp.tools.logs.get_worker_logs")
+@patch("deadline._mcp.tools.logs.get_session_logs")
+@patch("deadline._mcp.tools.logs.get_session")
+def test_worker_logs_use_session_time_window(mock_get_session, mock_session_logs, mock_worker_logs):
+    """Worker logs must be fetched over the same time period as the session
+    (from the session's startedAt/endedAt) so unrelated logs are not returned."""
+    started_at = datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    ended_at = datetime.datetime(2023, 1, 1, 12, 30, 0, tzinfo=datetime.timezone.utc)
+    mock_get_session.return_value = {
+        "workerId": MOCK_WORKER_ID,
+        "fleetId": MOCK_FLEET_ID,
+        "lifecycleStatus": "ENDED",
+        "startedAt": started_at,
+        "endedAt": ended_at,
+    }
+    mock_session_logs.return_value = _make_log_result(1)
+    mock_worker_logs.return_value = _make_log_result(1)
+
+    get_session_and_worker_logs(
+        farm_id=MOCK_FARM_ID,
+        queue_id=MOCK_QUEUE_ID,
+        job_id=MOCK_JOB_ID,
+        session_id=MOCK_SESSION_ID,
+    )
+
+    mock_worker_logs.assert_called_once_with(
+        farm_id=MOCK_FARM_ID,
+        fleet_id=MOCK_FLEET_ID,
+        worker_id=MOCK_WORKER_ID,
+        limit=100,
+        start_time=started_at,
+        end_time=ended_at,
     )
 
 
