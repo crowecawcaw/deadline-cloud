@@ -331,9 +331,13 @@ def bundle_submit(
         )
 
         if snapshot_tmpdir:
-            # Put the snapshot in a zip file
+            # Put the snapshot in a zip file. shutil.make_archive appends its own
+            # ".zip" extension, so strip the one on save_debug_snapshot to avoid
+            # producing a doubly-extensioned "<name>.zip.zip" file while the
+            # message below reports "<name>.zip".
             os.makedirs(os.path.dirname(save_debug_snapshot), exist_ok=True)
-            shutil.make_archive(save_debug_snapshot, "zip", snapshot_tmpdir.name)
+            archive_base = save_debug_snapshot[: -len(".zip")]
+            shutil.make_archive(archive_base, "zip", snapshot_tmpdir.name)
 
         if save_debug_snapshot:
             click.echo("Saved job debug snapshot:")

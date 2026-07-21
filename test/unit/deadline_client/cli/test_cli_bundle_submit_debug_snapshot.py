@@ -190,3 +190,48 @@ def test_cli_bundle_submit_debug_snapshot(fresh_deadline_config, deadline_mock, 
 
     normalize_snapshot(tmp_path)
     assert_directories_equal(tmp_path, expected_snapshot_dir)
+
+
+def test_cli_bundle_submit_debug_snapshot_zip(fresh_deadline_config, deadline_mock, tmp_path):
+    """
+    Confirm that a --save-debug-snapshot path ending in .zip creates a file at
+    exactly that path (not a double-extensioned '.zip.zip') and that the printed
+    path matches the file that was actually written.
+    """
+    tmp_path = tmp_path.resolve()
+
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+
+    job_bundle_dir = Path(__file__).parent / "test_data" / "job_bundle_with_data"
+    job_bundle_dir = job_bundle_dir.resolve()
+
+    normalize_job_bundle_timestamps(job_bundle_dir)
+
+    zip_path = tmp_path / "snapshot.zip"
+
+    with patch.object(
+        deadline.job_attachments.models,
+        "_generate_random_guid",
+        return_value="00000000000000000000000000000000",
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "bundle",
+                "submit",
+                str(job_bundle_dir),
+                "--yes",
+                "--save-debug-snapshot",
+                str(zip_path),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    # The file that was actually created must be exactly <name>.zip
+    assert zip_path.exists(), f"Expected {zip_path} to exist. Dir: {os.listdir(tmp_path)}"
+    # The double-extension file must NOT exist
+    assert not (tmp_path / "snapshot.zip.zip").exists(), os.listdir(tmp_path)
+    # The printed path must match the file that was created
+    assert str(zip_path) in result.output, result.output
