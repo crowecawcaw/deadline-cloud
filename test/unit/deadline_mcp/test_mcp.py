@@ -73,6 +73,28 @@ class TestUtilityFunctions:
 
         assert _default_serializer(TestObj()) == {"attr": "value"}
 
+    def test_default_serializer_enum_returns_value(self):
+        """Enums should serialize to their value, not their __dict__ internals."""
+        from enum import Enum
+
+        class Color(Enum):
+            RED = 1
+            GREEN = 2
+
+        assert _default_serializer(Color.RED) == 1
+
+    def test_default_serializer_prefers_to_dict(self):
+        """Objects exposing to_dict() should serialize via to_dict()."""
+
+        class WithToDict:
+            def __init__(self):
+                self.internal = "should-not-be-used"
+
+            def to_dict(self):
+                return {"clean": "value"}
+
+        assert _default_serializer(WithToDict()) == {"clean": "value"}
+
     def test_default_error_handler(self):
         """Test error handler formats errors correctly."""
         error = Exception("test error")
@@ -80,6 +102,22 @@ class TestUtilityFunctions:
 
         assert result["error"] == "test error"
         assert result["type"] == "Exception"
+
+    def test_default_error_handler_botocore_client_error(self):
+        """ClientError.response is a dict; status_code and code must be read from it."""
+        from botocore.exceptions import ClientError
+
+        error = ClientError(
+            {
+                "Error": {"Code": "AccessDeniedException", "Message": "nope"},
+                "ResponseMetadata": {"HTTPStatusCode": 403},
+            },
+            "GetJob",
+        )
+        result = _default_error_handler(error)
+
+        assert result["status_code"] == 403
+        assert result["code"] == "AccessDeniedException"
 
     def test_create_wrapper(self):
         """Test wrapper creation and execution."""

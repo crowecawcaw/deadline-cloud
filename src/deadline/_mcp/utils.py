@@ -6,6 +6,7 @@ import inspect
 import json
 import logging
 import time
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -18,18 +19,28 @@ logger = logging.getLogger(__name__)
 
 def _default_serializer(obj: Any) -> Any:
     """Default serializer for API responses."""
-    if hasattr(obj, "__dict__"):
-        return obj.__dict__
-    elif hasattr(obj, "to_dict"):
+    if isinstance(obj, Enum):
+        return obj.value
+    elif hasattr(obj, "to_dict") and callable(obj.to_dict):
         return obj.to_dict()
+    elif hasattr(obj, "__dict__"):
+        return obj.__dict__
     return str(obj)
 
 
 def _default_error_handler(e: Exception) -> Dict:
     """Default error handler for API calls."""
     error_info = {"error": str(e), "type": type(e).__name__}
-    if hasattr(e, "response") and hasattr(e.response, "status_code"):
-        error_info["status_code"] = e.response.status_code
+    # botocore ClientError (and similar) expose ``.response`` as a dict, not an
+    # object with a ``.status_code`` attribute. Read status/code from the dict.
+    response = getattr(e, "response", None)
+    if isinstance(response, dict):
+        status_code = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if status_code is not None:
+            error_info["status_code"] = status_code
+        code = response.get("Error", {}).get("Code")
+        if code is not None:
+            error_info["code"] = code
     logger.error(f"API tool error: {error_info}", exc_info=True)
     return error_info
 
