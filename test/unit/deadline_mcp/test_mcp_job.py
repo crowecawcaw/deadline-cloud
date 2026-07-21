@@ -5,6 +5,8 @@ Tests for deadline._mcp.tools.job.submit_job, focused on the monitor URL in the
 response.
 """
 
+import io
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from deadline.client import config
@@ -56,6 +58,41 @@ def test_submit_job_job_url_none_when_not_monitor(fresh_deadline_config, tmp_pat
     assert result["status"] == "success"
     assert result["job_id"] == JOB_ID
     assert result["job_url"] is None
+
+
+def test_submit_job_does_not_print_progress_to_stdout(fresh_deadline_config, tmp_path):
+    """Submission progress must not be written to stdout, which is the MCP
+    JSON-RPC transport. The print callback passed to create_job_from_job_bundle
+    must not be the builtin ``print`` (or otherwise target stdout)."""
+    config.set_setting("defaults.aws_profile_name", "(default)")
+    bundle_dir = str(tmp_path)
+
+    captured = io.StringIO()
+
+    def fake_create_job(*args, **kwargs):
+        # Emulate the real submission emitting progress via the provided callback.
+        kwargs["print_function_callback"]("Hashing files... 50%")
+        return JOB_ID
+
+    with (
+        patch.object(
+            job_tool, "create_job_from_job_bundle", side_effect=fake_create_job
+        ) as mock_create,
+        patch.object(job_tool, "_get_job_monitor_url", return_value=None),
+    ):
+        with redirect_stdout(captured):
+            result = job_tool.submit_job(
+                job_bundle_dir=bundle_dir,
+                farm_id=FARM_ID,
+                queue_id=QUEUE_ID,
+            )
+
+    assert result["status"] == "success"
+    # The progress callback must be supplied and must not be the builtin print.
+    _, kwargs = mock_create.call_args
+    assert kwargs.get("print_function_callback") is not print
+    # Nothing from the submission should have leaked onto stdout.
+    assert captured.getvalue() == ""
 
 
 def test_submit_job_fresh_config_without_defaults_section(fresh_deadline_config, tmp_path):

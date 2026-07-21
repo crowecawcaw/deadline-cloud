@@ -6,6 +6,7 @@ Deadline Cloud Job tools.
 
 import io
 import json
+import logging
 import os
 import time
 from contextlib import redirect_stdout
@@ -15,6 +16,8 @@ from ...client.api import create_job_from_job_bundle
 from ...client.api._monitor_urls import _get_job_monitor_url
 from ...client.cli._groups.job_group import _download_job_output
 from ...client.config import config_file
+
+logger = logging.getLogger(__name__)
 
 # TODO: Make submit_job tool async once progress reporting feature is supported in clients
 
@@ -116,6 +119,9 @@ def submit_job(
         require_paths_exist=require_paths_exist,
         submitter_name=submitter_name or "MCP",
         known_asset_paths=parsed_known_asset_paths,
+        # Route submission progress to logging instead of the default print(). stdout is
+        # the MCP JSON-RPC transport and any stray output there corrupts the protocol.
+        print_function_callback=logger.info,
     )
 
     total_time = time.time() - start_time
