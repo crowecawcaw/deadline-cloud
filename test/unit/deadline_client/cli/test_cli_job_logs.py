@@ -2486,6 +2486,156 @@ def test_time_range_intersection_error_message_includes_both_ranges(
     assert user_end in result.output
 
 
+# ===== Tests for naive (no-timezone) --start-time / --end-time handling =====
+
+
+def test_cli_job_logs_naive_start_time_treated_as_utc(fresh_deadline_config):
+    """
+    A --start-time without a timezone offset must be treated as UTC so that it
+    is passed to the API as a timezone-aware datetime (not a naive one that
+    .timestamp() would silently interpret as local time).
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+    config.set_setting("defaults.job_id", MOCK_JOB_ID)
+
+    session_start_time = datetime.datetime(2023, 1, 1, 11, 0, 0, tzinfo=datetime.timezone.utc)
+
+    with (
+        patch("deadline.client.api.get_session_logs") as mock_get_logs,
+        patch("deadline.client.api.get_boto3_client") as boto3_client_mock,
+    ):
+        mock_get_logs.return_value = SAMPLE_LOG_RESULT
+        boto3_client_mock().get_job.return_value = {"name": "Test Job Name"}
+        boto3_client_mock().get_session.return_value = {
+            "sessionId": "test-session",
+            "startedAt": session_start_time,
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "job",
+                "logs",
+                "--session-id",
+                "test-session",
+                "--start-time",
+                "2023-01-01T12:00:00",  # naive, no offset / Z
+                "--end-time",
+                "2023-01-01T13:00:00",  # naive, no offset / Z
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+
+        mock_get_logs.assert_called_once()
+        _, kwargs = mock_get_logs.call_args
+        # Both should be parsed as timezone-aware UTC datetimes.
+        assert kwargs["start_time"] == datetime.datetime(
+            2023, 1, 1, 12, 0, tzinfo=datetime.timezone.utc
+        )
+        assert kwargs["start_time"].tzinfo is not None
+        assert kwargs["end_time"] == datetime.datetime(
+            2023, 1, 1, 13, 0, tzinfo=datetime.timezone.utc
+        )
+        assert kwargs["end_time"].tzinfo is not None
+
+
+def test_cli_job_logs_session_action_naive_start_time_does_not_crash(
+    fresh_deadline_config, deadline_mock
+):
+    """
+    A naive --start-time on the session-action path must not raise a TypeError
+    when compared (via max/min) against the tz-aware session action timestamps.
+    It should be treated as UTC.
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+    config.set_setting("defaults.job_id", MOCK_JOB_ID)
+
+    session_action_id = "sessionaction-abcdef0123456789abcdef0123456789-42"
+    session_id = "session-abcdef0123456789abcdef0123456789"
+
+    action_start = datetime.datetime(2023, 5, 15, 10, 0, 0, tzinfo=datetime.timezone.utc)
+    action_end = datetime.datetime(2023, 5, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+    deadline_mock.get_job.return_value = {"name": "Test Job Name"}
+    deadline_mock.get_session_action.return_value = {
+        "sessionActionId": session_action_id,
+        "status": "SUCCEEDED",
+        "startedAt": action_start,
+        "endedAt": action_end,
+        "sessionId": session_id,
+        "definition": {"taskRun": {"taskId": "task-1"}},
+    }
+
+    with patch("deadline.client.api.get_session_logs") as mock_get_logs:
+        mock_get_logs.return_value = SAMPLE_LOG_RESULT
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "job",
+                "logs",
+                "--session-action-id",
+                session_action_id,
+                "--start-time",
+                "2023-05-15T11:00:00",  # naive, within action range
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        mock_get_logs.assert_called_once()
+        _, kwargs = mock_get_logs.call_args
+        # max(user_start_as_utc, action_start) == user_start (11:00 UTC)
+        assert kwargs["start_time"] == datetime.datetime(
+            2023, 5, 15, 11, 0, 0, tzinfo=datetime.timezone.utc
+        )
+        assert kwargs["end_time"] == action_end
+
+
+# ===== Tests for --session-id without a configured default job_id =====
+
+
+def test_cli_job_logs_session_id_without_configured_job_id(fresh_deadline_config):
+    """
+    When --session-id is provided but no default job_id is configured, the
+    command must not call get_job with an empty job id (which raises a
+    ParamValidationError against the real API). get_job should be skipped
+    entirely when there is no job id.
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+    # Intentionally do NOT set defaults.job_id
+
+    with (
+        patch("deadline.client.api.get_session_logs") as mock_get_logs,
+        patch("deadline.client.api.get_boto3_client") as boto3_client_mock,
+    ):
+        mock_get_logs.return_value = SAMPLE_LOG_RESULT
+        # If get_job is called with an empty jobId, simulate the real API rejecting it.
+        from botocore.exceptions import ParamValidationError
+
+        def _get_job(**kwargs):
+            if not kwargs.get("jobId"):
+                raise ParamValidationError(report="Invalid length for parameter jobId")
+            return {"name": "Test Job Name"}
+
+        boto3_client_mock().get_job.side_effect = _get_job
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["job", "logs", "--session-id", "session-1", "--limit", "100"])
+
+        assert result.exit_code == 0, result.output
+        # get_job must not have been called with an empty jobId
+        boto3_client_mock().get_job.assert_not_called()
+        mock_get_logs.assert_called_once()
+        _, kwargs = mock_get_logs.call_args
+        assert kwargs["session_id"] == "session-1"
+
+
 # ===== Tests for --timestamp-format CLI Option =====
 
 

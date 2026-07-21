@@ -126,6 +126,24 @@ def _parse_session_action_id(session_action_id: str) -> str:
     return session_id
 
 
+def _parse_iso_timestamp(value: str) -> datetime.datetime:
+    """
+    Parse a user-supplied ISO-8601 timestamp into a timezone-aware datetime.
+
+    A trailing ``Z`` is accepted as UTC. If the parsed timestamp has no
+    timezone offset (a "naive" datetime), it is interpreted as UTC so that it
+    can be safely compared against, and combined with, the timezone-aware
+    timestamps returned by the Deadline Cloud API. Without this, a naive
+    ``--start-time``/``--end-time`` would either raise a TypeError when compared
+    to a tz-aware datetime, or be silently reinterpreted as local time by
+    ``datetime.timestamp()``.
+    """
+    parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
+
+
 # Set up the signal handler for handling Ctrl + C interruptions.
 sigint_handler = SigIntHandler()
 
@@ -1730,10 +1748,16 @@ def job_logs(
             # If only session_action_id is provided, set session_id from parsed value
             session_id = derived_session_id
 
-    # Get job name if job_id is available
+    # Get job name if job_id is available. When only a --session-id (or
+    # --session-action-id) is provided without a configured default job_id,
+    # calling get_job with an empty jobId raises a ParamValidationError, so we
+    # skip it entirely.
     deadline = api.get_boto3_client("deadline", config=config)
-    job = deadline.get_job(farmId=farm_id, queueId=queue_id, jobId=job_id)
-    job_name = job["name"]
+    if job_id:
+        job = deadline.get_job(farmId=farm_id, queueId=queue_id, jobId=job_id)
+        job_name = job["name"]
+    else:
+        job_name = None
 
     # If session_id is not provided but job_id is, try to find the session
     if not session_id and job_id:
@@ -1802,8 +1826,9 @@ def job_logs(
             f"Retrieving logs for {log_entity} from log group /aws/deadline/{farm_id}/{queue_id}..."
         )
         # Display job information if available
-        click.echo(f"Job ID: {job_id}")
-        click.echo(f"Job Name: {job_name}")
+        if job_id:
+            click.echo(f"Job ID: {job_id}")
+            click.echo(f"Job Name: {job_name}")
 
     # If session_action_id is provided, retrieve session action details to get timestamp range
     if session_action_id:
@@ -1853,16 +1878,16 @@ def job_logs(
         # Get the effective time range to process, which is the intersection of
         # the session action time range and the user-provided time range
         if start_time:
-            # Parse user's start_time
-            user_start = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            # Parse user's start_time (naive input is treated as UTC)
+            user_start = _parse_iso_timestamp(start_time)
             # Use the later of the two start times
             effective_start = max(user_start, action_start)
         else:
             effective_start = action_start
 
         if end_time:
-            # Parse user's end_time
-            user_end = datetime.datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            # Parse user's end_time (naive input is treated as UTC)
+            user_end = _parse_iso_timestamp(end_time)
             # Use the earlier of the two end times
             effective_end = min(user_end, action_end)
         else:
@@ -1881,27 +1906,34 @@ def job_logs(
         start_time = effective_start
         end_time = effective_end
     else:
-        # Get session start time for the timestamp formatter
-        try:
-            session_details = deadline.get_session(
-                farmId=farm_id, queueId=queue_id, jobId=job_id, sessionId=session_id
-            )
+        # Get session start time for the timestamp formatter. This requires a
+        # job_id; when none is configured (only --session-id was given), fall
+        # back to the current time as the reference so the formatter still works
+        # for utc/local output.
+        if job_id:
             try:
-                reference_start_time = session_details["startedAt"]
-            except KeyError:
+                session_details = deadline.get_session(
+                    farmId=farm_id, queueId=queue_id, jobId=job_id, sessionId=session_id
+                )
+                try:
+                    reference_start_time = session_details["startedAt"]
+                except KeyError:
+                    raise DeadlineOperationError(
+                        f"Session '{session_id}' has not started yet."
+                    ) from None
+            except ClientError as exc:
                 raise DeadlineOperationError(
-                    f"Session '{session_id}' has not started yet."
-                ) from None
-        except ClientError as exc:
-            raise DeadlineOperationError(
-                f"Failed to retrieve session details for session ID '{session_id}':\n{exc}"
-            ) from exc
+                    f"Failed to retrieve session details for session ID '{session_id}':\n{exc}"
+                ) from exc
+        else:
+            reference_start_time = datetime.datetime.now(datetime.timezone.utc)
 
         # Parse user-supplied ISO timestamps the same way the session-action path does.
+        # Naive (offset-less) inputs are treated as UTC.
         if isinstance(start_time, str):
-            start_time = datetime.datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            start_time = _parse_iso_timestamp(start_time)
         if isinstance(end_time, str):
-            end_time = datetime.datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            end_time = _parse_iso_timestamp(end_time)
 
     # Create timestamp formatter now that we have all necessary information
     timestamp_formatter = TimestampFormatter(timestamp_format_enum, reference_start_time)
