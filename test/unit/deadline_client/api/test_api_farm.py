@@ -60,6 +60,25 @@ def test_list_farms_paginated(fresh_deadline_config, monkeypatch):
         assert all(f["region"] == "us-west-2" for f in farms["farms"])
 
 
+def test_list_farms_empty_region_uses_fanout(fresh_deadline_config, monkeypatch):
+    """An empty-string region must not be forwarded to boto3 as a single-region query.
+
+    ``region=""`` should be treated as "no region given" and fall through to the
+    multi-region fan-out (which tags farms with the resolved region), rather than
+    taking the single-region path and mislabeling every farm with ``region=""``.
+    """
+    monkeypatch.setenv("DEADLINE_CLOUD_REGIONS", "us-west-2")
+    with patch.object(api._session, "get_boto3_session") as session_mock:
+        session_mock().client("deadline").list_farms.side_effect = [
+            {"farms": [dict(f) for f in FARMS_LIST]},
+        ]
+
+        farms = api.list_farms(region="")
+
+        # Fan-out tags each farm with the resolved region, never the empty string.
+        assert all(f["region"] == "us-west-2" for f in farms["farms"])
+
+
 @pytest.mark.parametrize("pass_principal_id_filter", [True, False])
 @pytest.mark.parametrize("user_identities", [True, False])
 def test_list_farms_principal_id(

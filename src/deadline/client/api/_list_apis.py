@@ -258,7 +258,7 @@ def list_farms(config=None, region=None, **kwargs):
 
     [deadline:ListFarms]: https://docs.aws.amazon.com/deadline-cloud/latest/APIReference/API_ListFarms.html
     """
-    if region is not None:
+    if region:
         return {"farms": _list_farms_for_region(region, config=config, **kwargs)}
 
     all_farms: List[dict] = []
