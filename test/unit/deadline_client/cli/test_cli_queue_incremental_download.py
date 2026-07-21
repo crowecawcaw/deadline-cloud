@@ -48,6 +48,24 @@ MOCK_SESSION_ACTION_ID_1 = "sessionaction-0123456789abcdefabcdefabcdefabcd-0"
 MOCK_SESSION_ACTION_ID_2 = "sessionaction-0123456789abcdefabcdefabcdefabcd-1"
 
 
+def test_sync_output_json_flag_does_not_shadow_json_module():
+    """
+    The --json flag must not bind to a Python parameter named ``json``, which would
+    shadow the module-level ``import json`` inside the sync_output command body and
+    make any ``json.*`` use raise AttributeError on the bool. The CLI flag itself is
+    preserved.
+    """
+    from deadline.client.cli._groups import queue_group
+
+    json_params = [p for p in queue_group.sync_output.params if "--json" in getattr(p, "opts", [])]
+    # The --json CLI flag is still offered.
+    assert len(json_params) == 1, "the --json flag must remain available"
+    # ...but its Python destination must not be the name ``json`` (which shadows the module).
+    assert json_params[0].name != "json", (
+        "the --json flag's parameter destination shadows the json module"
+    )
+
+
 # Fixtures for shared resources
 @pytest.fixture
 def checkpoint_dir(tmp_path_factory):

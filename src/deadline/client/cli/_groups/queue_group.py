@@ -267,7 +267,13 @@ def queue_get(**args):
     "--storage-profile-id",
     help="The storage profile to use for mapping paths to local. Cannot be used together with --ignore-storage-profiles",
 )
-@click.option("--json", default=None, is_flag=True, help="Output is printed as JSON for scripting.")
+@click.option(
+    "--json",
+    "output_json",
+    default=None,
+    is_flag=True,
+    help="Output is printed as JSON for scripting.",
+)
 @click.option(
     "--bootstrap-lookback-minutes",
     default=0,
@@ -320,7 +326,7 @@ def queue_get(**args):
 @_handle_error
 @api.record_success_fail_telemetry_event(metric_name="queue_sync_output")
 def sync_output(
-    json: bool,
+    output_json: bool,
     bootstrap_lookback_minutes: float,
     checkpoint_dir: str,
     force_bootstrap: bool,
@@ -351,7 +357,7 @@ def sync_output(
             "Options '--storage-profile-id' and '--ignore-storage-profiles' cannot be provided together"
         )
 
-    logger: ClickLogger = ClickLogger(is_json=json)
+    logger: ClickLogger = ClickLogger(is_json=output_json)
 
     # Expand '~' to home directory and create the checkpoint directory if necessary
     checkpoint_dir = os.path.abspath(os.path.expanduser(checkpoint_dir))
