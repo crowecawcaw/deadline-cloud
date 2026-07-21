@@ -954,6 +954,7 @@ def create_job_from_job_bundle(
                     asset_manifests,
                     print_function_callback,
                     upload_progress_callback,
+                    config=config,
                     from_gui=from_gui,
                     force_s3_check=force_s3_check,
                 )
@@ -964,6 +965,7 @@ def create_job_from_job_bundle(
                     asset_manifests,
                     print_function_callback,
                     upload_progress_callback,
+                    config=config,
                     from_gui=from_gui,
                 )
 

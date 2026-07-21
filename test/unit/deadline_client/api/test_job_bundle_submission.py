@@ -598,6 +598,56 @@ def test_create_job_from_job_bundle_job_attachments(
         ]
 
 
+def test_create_job_from_job_bundle_forwards_config_to_upload_attachments(
+    fresh_deadline_config, temp_job_bundle_dir, temp_assets_dir
+):
+    """
+    When a caller passes an explicit config object, it must be forwarded to
+    _upload_attachments so upload telemetry uses that config (rather than the
+    default config loaded from disk).
+    """
+    custom_config = config.config_file.read_config()
+
+    with (
+        patch_calls_for_create_job_from_job_bundle() as mock,
+        patch.object(
+            api._submit_job_bundle,
+            "_upload_attachments",
+            wraps=api._submit_job_bundle._upload_attachments,
+        ) as mock_upload_attachments,
+    ):
+        config.set_setting("defaults.farm_id", MOCK_FARM_ID, config=custom_config)
+        config.set_setting("defaults.queue_id", MOCK_QUEUE_ID, config=custom_config)
+
+        # Write a JSON template
+        with open(os.path.join(temp_job_bundle_dir, "template.json"), "w", encoding="utf8") as f:
+            f.write(MOCK_JOB_TEMPLATE_CASES["MINIMAL_JSON"][1])
+
+        # Create asset files and reference them so the upload path runs.
+        asset_contents = {"asset-1.txt": "This is asset 1"}
+        write_test_asset_files(temp_assets_dir, asset_contents)
+        asset_references = {
+            "inputs": {"filenames": [os.path.join(temp_assets_dir, "asset-1.txt")]},
+        }
+        with open(
+            os.path.join(temp_job_bundle_dir, "asset_references.json"), "w", encoding="utf8"
+        ) as f:
+            json.dump({"assetReferences": asset_references}, f)
+
+        api.create_job_from_job_bundle(
+            temp_job_bundle_dir,
+            config=custom_config,
+            queue_parameter_definitions=[],
+            known_asset_paths=[temp_assets_dir],
+        )
+
+    mock_upload_attachments.assert_called_once()
+    _, call_kwargs = mock_upload_attachments.call_args
+    assert call_kwargs.get("config") is custom_config
+    # Sanity check the flow actually reached upload.
+    mock.upload_assets.assert_called_once()
+
+
 def test_create_job_from_job_bundle_empty_job_attachments(
     fresh_deadline_config, temp_job_bundle_dir, temp_assets_dir
 ):
