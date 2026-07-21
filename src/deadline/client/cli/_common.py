@@ -23,6 +23,7 @@ __all__ = [
 import sys
 from configparser import ConfigParser
 from typing import Any, Callable, Optional, Set
+import functools
 import logging
 import traceback
 import json
@@ -115,18 +116,21 @@ def _handle_error(func: Callable) -> Callable:
     and handles their default printout.
     """
 
+    @functools.wraps(func)
     @click.pass_context
     def wraps(ctx: click.Context, *args, **kwargs):
         try:
-            func(*args, **kwargs)
+            return func(*args, **kwargs)
         except DeadlineOperationError as e:
             # The message from DeadlineOperationError is printed
             # out verbatim.
             click.echo(str(e))
             _prompt_at_completion(ctx)
             sys.exit(1)
-        except click.ClickException:
-            # Let click exceptions fall through
+        except (click.ClickException, click.exceptions.Abort):
+            # Let click exceptions (and Ctrl-C aborts) fall through so click can
+            # render them cleanly (e.g. print "Aborted!") instead of dumping a
+            # traceback via the generic handler below.
             raise
         except Exception:
             # Log and print out unfamiliar exceptions with additional
@@ -136,7 +140,6 @@ def _handle_error(func: Callable) -> Callable:
             _prompt_at_completion(ctx)
             sys.exit(1)
 
-    wraps.__doc__ = func.__doc__
     return wraps
 
 

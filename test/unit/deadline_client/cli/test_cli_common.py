@@ -6,12 +6,14 @@ from unittest.mock import patch
 import pytest
 
 import click
+from click.testing import CliRunner
 import yaml
 
 from deadline.client.cli._common import (
     _apply_cli_options_to_config,
     _auto_select_farm,
     _auto_select_queue,
+    _handle_error,
     _parse_file_parameter,
     _parse_multi_format_parameters,
 )
@@ -358,6 +360,47 @@ class TestParseMultiFormatParameters:
         params = ['{\n  "key1": "value1",\n  "key2": "value2"\n}']
         result = _parse_multi_format_parameters(params)
         assert result == {"key1": "value1", "key2": "value2"}
+
+
+class TestHandleError:
+    """Tests for the _handle_error decorator."""
+
+    def test_click_abort_propagates_as_clean_abort(self):
+        """
+        A click.Abort raised inside the wrapped command (e.g. Ctrl-C at a confirm
+        prompt) must propagate so click prints 'Aborted!' rather than being caught
+        by the generic handler which dumps a full traceback.
+        """
+
+        @click.command()
+        @_handle_error
+        def cmd():
+            raise click.Abort()
+
+        runner = CliRunner()
+        result = runner.invoke(cmd, [])
+
+        assert result.exit_code == 1
+        assert "Aborted!" in result.output
+        assert "encountered the following exception" not in result.output
+
+    def test_wraps_preserves_name_and_returns_value(self):
+        """
+        _handle_error must use functools.wraps so click can auto-derive the command
+        name from the function, and must return the wrapped call's value.
+        """
+
+        @_handle_error
+        def my_command():
+            """My command docstring."""
+            return "the-return-value"
+
+        assert my_command.__name__ == "my_command"
+        assert my_command.__doc__ == "My command docstring."
+
+        # The wrapped function's return value must be propagated, not discarded.
+        with click.Context(click.Command("my_command")):
+            assert my_command() == "the-return-value"
 
 
 class TestProgressBarCallbackManager:
