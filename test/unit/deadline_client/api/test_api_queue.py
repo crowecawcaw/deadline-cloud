@@ -54,6 +54,23 @@ def test_list_queues_paginated(fresh_deadline_config):
         assert queues["queues"] == QUEUES_LIST
 
 
+def test_list_queues_stops_on_empty_next_token(fresh_deadline_config):
+    """An empty-string nextToken must terminate pagination, not loop forever."""
+    with patch.object(api._session, "get_boto3_session") as session_mock:
+        # The final page carries an empty-string nextToken. A correct loop treats an
+        # empty token as "no more pages" and stops; a buggy `"nextToken" in response`
+        # loop keeps querying and exhausts the side_effect list (StopIteration).
+        session_mock().client("deadline").list_queues.side_effect = [
+            {"queues": QUEUES_LIST[:2], "nextToken": "abc"},
+            {"queues": QUEUES_LIST[2:], "nextToken": ""},
+        ]
+
+        queues = api.list_queues()
+
+        assert queues["queues"] == QUEUES_LIST
+        assert session_mock().client("deadline").list_queues.call_count == 2
+
+
 @pytest.mark.parametrize("pass_principal_id_filter", [True, False])
 @pytest.mark.parametrize("user_identities", [True, False])
 def test_list_queues_principal_id(fresh_deadline_config, pass_principal_id_filter, user_identities):

@@ -225,6 +225,28 @@ class TestListSessions:
             assert result["sessions"][0]["sessionId"] == "session-001"
             assert result["sessions"][1]["sessionId"] == "session-002"
 
+    def test_list_sessions_stops_on_empty_next_token(self):
+        """An empty-string nextToken must terminate pagination, not loop forever."""
+        with patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client:
+            deadline_mock = MagicMock()
+
+            # The final page carries an empty-string nextToken. A correct loop treats
+            # an empty token as "no more pages"; a buggy `"nextToken" in response` loop
+            # keeps querying and exhausts the side_effect list (StopIteration).
+            page1 = {"sessions": [{"sessionId": "session-001"}], "nextToken": "token-1"}
+            page2 = {"sessions": [{"sessionId": "session-002"}], "nextToken": ""}
+            deadline_mock.list_sessions.side_effect = [page1, page2]
+            mock_get_client.return_value = deadline_mock
+
+            result = list_sessions(
+                farmId=MOCK_FARM_ID,
+                queueId=MOCK_QUEUE_ID,
+                jobId=MOCK_JOB_ID,
+            )
+
+            assert len(result["sessions"]) == 2
+            assert deadline_mock.list_sessions.call_count == 2
+
     def test_list_sessions_with_max_results(self):
         """Test list_sessions passes max_results to API."""
         with patch("deadline.client.api._mcp.get_boto3_client") as mock_get_client:

@@ -69,11 +69,13 @@ def _call_paginated_deadline_list_api(
         **kwargs: Additional arguments passed to the API (including maxResults if provided).
     """
     response = list_api(**kwargs)
-    result = {list_property_name: response[list_property_name]}
+    result = {list_property_name: list(response.get(list_property_name, []))}
 
-    while "nextToken" in response:
-        response = list_api(nextToken=response["nextToken"], **kwargs)
-        result[list_property_name].extend(response[list_property_name])
+    next_token = response.get("nextToken")
+    while next_token:
+        response = list_api(nextToken=next_token, **kwargs)
+        result[list_property_name].extend(response.get(list_property_name, []))
+        next_token = response.get("nextToken")
 
     return result
 
