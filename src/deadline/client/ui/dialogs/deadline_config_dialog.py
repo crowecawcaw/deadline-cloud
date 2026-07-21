@@ -506,7 +506,9 @@ class DeadlineWorkstationConfigWidget(QWidget):
                     state = str2bool(config_file.get_setting(setting_name, config=self.config))
                 except ValueError as e:
                     logger.warning(f"{e} for '{setting_name}'")
-                    state = False
+                    # Fall back to the setting's declared default rather than
+                    # blindly coercing a corrupt value to False.
+                    state = str2bool(get_setting_default(setting_name, config=self.config))
                 checkbox.setChecked(state)
 
         self._refresh_callbacks.append(refresh_checkbox)

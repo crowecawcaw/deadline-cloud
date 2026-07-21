@@ -354,6 +354,31 @@ class TestKnownAssetPathEditing:
         assert os.path.normpath("/path/a") not in paths
 
 
+class TestCorruptBooleanSetting:
+    """Regression test for corrupt boolean coercion in checkbox refresh."""
+
+    def test_corrupt_boolean_falls_back_to_setting_default(self, config_widget):
+        """A garbage stored boolean must fall back to the setting's declared
+        default, not blindly to False.
+
+        ``settings.submitter_update_notification`` defaults to 'true', so a
+        corrupt stored value must leave the checkbox CHECKED.
+        """
+        import deadline.client.ui.dialogs.deadline_config_dialog as dcd
+
+        dcd.config_file.get_setting.side_effect = lambda name, config=None: (
+            "notabool"
+            if name == "settings.submitter_update_notification"
+            else "(default)"
+            if name == "defaults.aws_profile_name"
+            else ""
+        )
+
+        config_widget.refresh()
+
+        assert config_widget.submitter_update_notification.isChecked() is True
+
+
 def test_profile_switch_preserves_each_profiles_farm_queue(fresh_deadline_config):
     """End-to-end regression for the profile-switch clobber bug.
 
