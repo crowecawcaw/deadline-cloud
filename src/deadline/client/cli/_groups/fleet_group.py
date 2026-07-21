@@ -87,7 +87,8 @@ def fleet_get(fleet_id, queue_id, **args):
 
     farm_id = config_file.get_setting("defaults.farm_id", config=config)
     if not fleet_id:
-        queue_id = config_file.get_setting("defaults.queue_id", config=config)
+        if not queue_id:
+            queue_id = config_file.get_setting("defaults.queue_id", config=config)
         if not queue_id:
             raise click.UsageError(
                 "Missing '--fleet-id', '--queue-id', or default Queue ID configuration"

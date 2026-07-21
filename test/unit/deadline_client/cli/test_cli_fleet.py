@@ -242,6 +242,32 @@ queueFleetAssociationStatus: ACTIVE
         assert result.exit_code == 0
 
 
+def test_cli_fleet_get_explicit_queue_id_wins_over_default(fresh_deadline_config):
+    """
+    Confirm that an explicit --queue-id is used even when a different
+    defaults.queue_id is configured (the explicit value must not be clobbered).
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+
+    explicit_queue_id = MOCK_QUEUES_LIST[0]["queueId"]
+
+    with patch.object(api._session, "get_boto3_session") as session_mock:
+        session_mock().client("deadline").get_queue.return_value = MOCK_QUEUES_LIST[0]
+        session_mock().client("deadline").get_fleet.side_effect = deepcopy(MOCK_FLEETS_LIST)
+        session_mock().client("deadline").list_queue_fleet_associations.return_value = {
+            "queueFleetAssociations": []
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["fleet", "get", "--queue-id", explicit_queue_id])
+
+        assert result.exit_code == 0
+        session_mock().client("deadline").get_queue.assert_called_once_with(
+            farmId=MOCK_FARM_ID, queueId=explicit_queue_id
+        )
+
+
 def test_cli_fleet_get_override_profile(fresh_deadline_config):
     """
     Confirms that the --profile option overrides the option to boto3.Session.
