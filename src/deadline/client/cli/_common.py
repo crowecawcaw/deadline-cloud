@@ -376,7 +376,8 @@ def _parse_multi_format_parameters(params: list[str]) -> dict:
             result_dict.update(data)
 
         # Case 2: Inline JSON string
-        elif re.match(r"^{.*}$", param):
+        # re.DOTALL lets "." match newlines so multi-line JSON objects are recognized.
+        elif re.match(r"^{.*}$", param, re.DOTALL):
             try:
                 data = json.loads(param)
             except (json.JSONDecodeError, TypeError) as e:

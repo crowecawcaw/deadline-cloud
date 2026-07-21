@@ -353,6 +353,12 @@ class TestParseMultiFormatParameters:
         with pytest.raises(click.BadParameter, match="not formatted correctly"):
             _parse_multi_format_parameters(params)
 
+    def test_multiline_inline_json(self):
+        """Inline JSON spanning multiple lines must be recognized and parsed."""
+        params = ['{\n  "key1": "value1",\n  "key2": "value2"\n}']
+        result = _parse_multi_format_parameters(params)
+        assert result == {"key1": "value1", "key2": "value2"}
+
 
 class TestProgressBarCallbackManager:
     """Tests for _ProgressBarCallbackManager"""
