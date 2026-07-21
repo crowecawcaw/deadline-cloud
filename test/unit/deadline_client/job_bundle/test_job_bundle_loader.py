@@ -9,6 +9,7 @@ relative default paths into absolute paths rooted in the job bundle.
 import json
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -239,6 +240,24 @@ def test_validate_directory_symlink_containment_fail(tmpdir):
     os.symlink(target_file, test_root.join("symlink_file.txt"))
     with pytest.raises(DeadlineOperationError):
         validate_directory_symlink_containment(str(test_root))
+
+
+def test_validate_directory_symlink_containment_cross_drive(tmp_path):
+    """
+    On Windows, os.path.commonpath raises ValueError when paths are on
+    different drives. A cross-drive path is definitionally outside the
+    bundle, so the containment check must treat the ValueError as "not
+    contained" and raise DeadlineOperationError rather than letting the
+    unhandled ValueError propagate.
+    """
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    (bundle_dir / "somefile.txt").write_text("data")
+
+    with patch("deadline.client.job_bundle.loader.os.path.commonpath") as mock_commonpath:
+        mock_commonpath.side_effect = ValueError("Paths don't have the same drive")
+        with pytest.raises(DeadlineOperationError):
+            validate_directory_symlink_containment(str(bundle_dir))
 
 
 class TestHiddenParameterValidation:
