@@ -907,10 +907,13 @@ class DeadlineWorkstationConfigWidget(QWidget):
                         if i != current_row:  # Skip the path being edited
                             current_paths.append(self.known_paths_list.item(i).text())
 
-                    # Only add if not already in list
+                    # Only apply the edit if the new path isn't already in the
+                    # list. Otherwise the rebuilt list excludes the row being
+                    # edited and re-inserting is skipped, so writing it would
+                    # silently drop the original row (config data loss).
                     if path not in current_paths:
                         self.known_paths_list.item(current_row).setText(path)
                         current_paths.insert(current_row, path)
 
-                    self.changes["settings.known_asset_paths"] = os.pathsep.join(current_paths)
-                    self.refresh()
+                        self.changes["settings.known_asset_paths"] = os.pathsep.join(current_paths)
+                        self.refresh()
