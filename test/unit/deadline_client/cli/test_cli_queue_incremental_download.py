@@ -5,7 +5,6 @@ Tests for the CLI queue incremental output download command.
 """
 
 import os
-import sys
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta, timezone
@@ -30,9 +29,18 @@ from ..mock_deadline_job_apis import (
 )
 from deadline.job_attachments._incremental_downloads.incremental_download_state import (
     EVENTUAL_CONSISTENCY_MAX_SECONDS,
+    IncrementalDownloadState,
+    IncrementalDownloadJob,
 )
 from deadline.job_attachments.models import StorageProfileOperatingSystemFamily
 import deadline.client.api
+import deadline.client.cli._incremental_download as mod
+from deadline.client.cli._incremental_download import (
+    CategorizedJobIds,
+    _update_checkpoint_jobs_list,
+    _filter_session_actions_without_manifests_from_job_sessions,
+    _get_job_sessions,
+)
 
 ISO_FREEZE_TIME_MINUS_5MIN = "2025-05-26 11:55:00+00:00"
 ISO_FREEZE_TIME_MINUS_1MIN = "2025-05-26 11:59:00+00:00"
@@ -63,9 +71,6 @@ def deadline_telemetry_client_mock():
         yield m
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_requires_queue_with_job_attachments(
     fresh_deadline_config, deadline_mock, checkpoint_dir
 ):
@@ -101,9 +106,6 @@ def test_incremental_output_download_requires_queue_with_job_attachments(
     )
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_pid_lock_already_held_error(
     fresh_deadline_config,
     deadline_mock,
@@ -148,9 +150,6 @@ def test_incremental_output_download_pid_lock_already_held_error(
     assert os.path.exists(pid_lock_file)
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_storage_profile_options_mutually_exclusive(
     fresh_deadline_config,
     deadline_mock,
@@ -187,9 +186,6 @@ def test_incremental_output_download_storage_profile_options_mutually_exclusive(
     ), result.output
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 @pytest.mark.parametrize("storage_profile_id", [None, MOCK_STORAGE_PROFILE_ID])
 def test_incremental_output_download_bootstrap_and_completion(
     fresh_deadline_config,
@@ -407,9 +403,6 @@ def test_incremental_output_download_bootstrap_and_completion(
     assert "inactive: 0" in result.output, result.output
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_storage_profile_path_mapping(
     fresh_deadline_config,
     tmp_path,
@@ -569,9 +562,6 @@ def test_incremental_output_download_storage_profile_path_mapping(
     ), result.output
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_bootstrap_retire_job_without_attachments(
     fresh_deadline_config, deadline_mock, checkpoint_dir
 ):
@@ -705,9 +695,6 @@ def test_incremental_output_download_bootstrap_retire_job_without_attachments(
     assert "inactive: 1" in result.output, result.output
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_job_unchanged(
     fresh_deadline_config, deadline_mock, checkpoint_dir
 ):
@@ -803,9 +790,6 @@ def test_incremental_output_download_job_unchanged(
     assert "unchanged: 1" in result.output, result.output
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_job_canceled(
     fresh_deadline_config, deadline_mock, checkpoint_dir
 ):
@@ -910,9 +894,6 @@ def test_incremental_output_download_job_canceled(
     assert "inactive: 1" in result.output, result.output
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_job_completed_then_requeued(
     fresh_deadline_config, deadline_mock, checkpoint_dir
 ):
@@ -1053,9 +1034,6 @@ def test_incremental_output_download_job_completed_then_requeued(
     assert "added: 1" in result.output, result.output
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_dry_run(fresh_deadline_config, deadline_mock, checkpoint_dir):
     """Test a new job through bootstrap, completion, and retirement."""
     mock_jobs = create_fake_job_list(1)
@@ -1119,9 +1097,6 @@ def test_incremental_output_download_dry_run(fresh_deadline_config, deadline_moc
     assert "This is a DRY RUN so the checkpoint was not saved" in result.output, result.output
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_stats_telemetry(
     fresh_deadline_config,
     deadline_mock,
@@ -1308,8 +1283,6 @@ def _make_categorized_job_ids(**kwargs):
     CategorizedJobIds defines its sets as class attributes, so instances share
     them unless reassigned. Reset every category to avoid cross-test contamination.
     """
-    from deadline.client.cli._incremental_download import CategorizedJobIds
-
     cats = CategorizedJobIds()
     for name in (
         "added",
@@ -1324,9 +1297,6 @@ def _make_categorized_job_ids(**kwargs):
     return cats
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_update_checkpoint_jobs_list_does_not_corrupt_session_ended_timestamp():
     """Each job's session_ended_timestamp must reflect its own sessions.
 
@@ -1334,11 +1304,6 @@ def test_update_checkpoint_jobs_list_does_not_corrupt_session_ended_timestamp():
     from the last job of the first loop was written to every job in a second loop,
     corrupting the checkpoint timestamps.
     """
-    from deadline.client.cli._incremental_download import _update_checkpoint_jobs_list
-    from deadline.job_attachments._incremental_downloads.incremental_download_state import (
-        IncrementalDownloadState,
-    )
-
     t0 = datetime(2025, 1, 1, tzinfo=timezone.utc)
     t_a = datetime(2025, 1, 2, tzinfo=timezone.utc)
     t_b = datetime(2025, 1, 3, tzinfo=timezone.utc)
@@ -1367,19 +1332,10 @@ def test_update_checkpoint_jobs_list_does_not_corrupt_session_ended_timestamp():
     assert result["job-b"] == t_b, result
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_update_checkpoint_running_only_job_keeps_saved_timestamp():
     """A job whose current sessions are all still running (no endedAt) must keep
     the session_ended_timestamp saved in the previous checkpoint rather than have
     it overwritten with None."""
-    from deadline.client.cli._incremental_download import _update_checkpoint_jobs_list
-    from deadline.job_attachments._incremental_downloads.incremental_download_state import (
-        IncrementalDownloadState,
-        IncrementalDownloadJob,
-    )
-
     t0 = datetime(2025, 1, 1, tzinfo=timezone.utc)
     t_saved = datetime(2025, 1, 2, tzinfo=timezone.utc)
 
@@ -1398,15 +1354,8 @@ def test_update_checkpoint_running_only_job_keeps_saved_timestamp():
     assert result["job-a"] == t_saved, result
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_filter_session_actions_tolerates_missing_manifests_key():
     """A session action without a 'manifests' key must not raise KeyError."""
-    from deadline.client.cli._incremental_download import (
-        _filter_session_actions_without_manifests_from_job_sessions,
-    )
-
     job_sessions = {
         "job-a": [
             {
@@ -1425,20 +1374,10 @@ def test_filter_session_actions_tolerates_missing_manifests_key():
     assert job_sessions["job-a"][0].get("sessionActions", []) == []
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_get_job_sessions_requeued_job_uses_eventual_consistency_window():
     """A requeued job reappears categorized as 'added' but carries a saved
     session_ended_timestamp. It must get the eventual-consistency window applied,
     like updated/completed jobs, so sessions near the requeue boundary aren't missed."""
-    import deadline.client.cli._incremental_download as mod
-    from deadline.client.cli._incremental_download import _get_job_sessions
-    from deadline.job_attachments._incremental_downloads.incremental_download_state import (
-        IncrementalDownloadState,
-        IncrementalDownloadJob,
-    )
-
     t0 = datetime(2025, 1, 1, tzinfo=timezone.utc)
     t_saved = datetime(2025, 1, 5, tzinfo=timezone.utc)
 
@@ -1475,9 +1414,6 @@ def test_get_job_sessions_requeued_job_uses_eventual_consistency_window():
     assert captured_thresholds["job-a"] == expected, captured_thresholds
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 9), reason="Incremental output download requires Python >= 3.9"
-)
 def test_incremental_output_download_json_mode_emits_no_debug_lines(
     fresh_deadline_config, deadline_mock, checkpoint_dir
 ):
