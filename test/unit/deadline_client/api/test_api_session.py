@@ -701,6 +701,46 @@ def test_get_queue_user_boto3_session_falls_back_to_base_region(fresh_deadline_c
         )
 
 
+def test_get_queue_user_boto3_session_uses_supplied_config_for_defaults(fresh_deadline_config):
+    """
+    When farm_id/queue_id are not passed explicitly, get_queue_user_boto3_session must
+    read defaults.farm_id / defaults.queue_id from the *supplied* config, not the on-disk
+    default config. Otherwise it assumes the queue role for the wrong (on-disk) queue.
+    """
+    # On-disk default config points at one farm/queue...
+    config.set_setting("defaults.farm_id", "farm-ondisk")
+    config.set_setting("defaults.queue_id", "queue-ondisk")
+
+    # ...but the caller supplies an independent config pointing at a different
+    # farm/queue. Build it as a separate ConfigParser (read_config() returns a
+    # shared module-cached object, so copy it into a fresh parser first).
+    from configparser import ConfigParser
+
+    supplied_config = ConfigParser()
+    supplied_config.read_dict(config.config_file.read_config())
+    config.set_setting("defaults.farm_id", "farm-supplied", config=supplied_config)
+    config.set_setting("defaults.queue_id", "queue-supplied", config=supplied_config)
+
+    session_mock = MagicMock()
+    session_mock.profile_name = "default"
+    session_mock.region_name = "us-west-2"
+    deadline_mock = MagicMock()
+
+    api._session._get_queue_user_boto3_session.cache_clear()
+
+    with (
+        patch.object(api._session, "get_boto3_session", return_value=session_mock),
+        patch.object(api._session, "_get_queue_user_boto3_session") as inner_mock,
+    ):
+        api.get_queue_user_boto3_session(deadline_mock, config=supplied_config)
+
+    # The inner session builder must receive the supplied config's farm/queue.
+    # Signature: _get_queue_user_boto3_session(deadline, base_session, farm_id, queue_id, ...)
+    called_args = inner_mock.call_args.args
+    assert called_args[2] == "farm-supplied"
+    assert called_args[3] == "queue-supplied"
+
+
 def test_get_session_logs_logs_client_uses_farm_region_non_dcm(fresh_deadline_config):
     """
     for a non-DCM profile, get_session_logs builds its CloudWatch ``logs`` client

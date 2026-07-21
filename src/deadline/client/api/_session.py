@@ -464,9 +464,9 @@ def get_queue_user_boto3_session(
     base_session = get_boto3_session(config=config, force_refresh=force_refresh)
 
     if farm_id is None:
-        farm_id = get_setting("defaults.farm_id")
+        farm_id = get_setting("defaults.farm_id", config=config)
     if queue_id is None:
-        queue_id = get_setting("defaults.queue_id")
+        queue_id = get_setting("defaults.queue_id", config=config)
 
     # Resolve the region to scope the queue-user session to, for this specific farm.
     # When nothing is configured, _resolve_region returns None and we fall back to the
