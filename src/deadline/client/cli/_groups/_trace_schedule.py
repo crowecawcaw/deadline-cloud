@@ -336,6 +336,17 @@ def _build_trace_events(sessions, workers, started_at, trace_end_utc):
     return trace_events, accumulators
 
 
+def _percent_of(numerator, denominator) -> str:
+    """Format ``numerator`` as a percentage of ``denominator``.
+
+    Returns ``"N/A"`` when the denominator is zero (e.g. an in-flight job with
+    no completed durations yet) to avoid a ZeroDivisionError.
+    """
+    if not denominator:
+        return "N/A"
+    return f"{100 * numerator / denominator:.1f}%"
+
+
 def _print_summary(accumulators):
     click.echo("")
     click.echo(" ==== SUMMARY ====")
@@ -352,7 +363,7 @@ def _print_summary(accumulators):
     task_run_total_duration = accumulators["taskRunDuration"]
     click.echo(
         f"Task Run Total Duration: {datetime.timedelta(microseconds=task_run_total_duration)} "
-        f"({100 * task_run_total_duration / session_total_duration:.1f}%)"
+        f"({_percent_of(task_run_total_duration, session_total_duration)})"
     )
     click.echo(
         f"Non-Task Run Count: {accumulators['sessionActionCount'] - accumulators['taskRunCount']}"
@@ -363,21 +374,21 @@ def _print_summary(accumulators):
     click.echo(
         f"Non-Task Run Total Duration: "
         f"{datetime.timedelta(microseconds=non_task_run_total_duration)} "
-        f"({100 * non_task_run_total_duration / session_total_duration:.1f}%)"
+        f"({_percent_of(non_task_run_total_duration, session_total_duration)})"
     )
     click.echo(f"Sync Job Attachments Count: {accumulators['syncJobAttachmentsCount']}")
     sync_job_attachments_total_duration = accumulators["syncJobAttachmentsDuration"]
     click.echo(
         f"Sync Job Attachments Total Duration: "
         f"{datetime.timedelta(microseconds=sync_job_attachments_total_duration)} "
-        f"({100 * sync_job_attachments_total_duration / session_total_duration:.1f}%)"
+        f"({_percent_of(sync_job_attachments_total_duration, session_total_duration)})"
     )
     click.echo(f"Env Action Count: {accumulators['envActionCount']}")
     env_action_total_duration = accumulators["envActionDuration"]
     click.echo(
         f"Env Action Total Duration: "
         f"{datetime.timedelta(microseconds=env_action_total_duration)} "
-        f"({100 * env_action_total_duration / session_total_duration:.1f}%)"
+        f"({_percent_of(env_action_total_duration, session_total_duration)})"
     )
     click.echo("")
     within_session_overhead_duration = (
@@ -386,11 +397,15 @@ def _print_summary(accumulators):
     click.echo(
         f"Within-session Overhead Duration: "
         f"{datetime.timedelta(microseconds=within_session_overhead_duration)} "
-        f"({100 * within_session_overhead_duration / session_total_duration:.1f}%)"
+        f"({_percent_of(within_session_overhead_duration, session_total_duration)})"
+    )
+    session_action_count = accumulators["sessionActionCount"]
+    overhead_per_action = (
+        within_session_overhead_duration / session_action_count if session_action_count else 0
     )
     click.echo(
         f"Within-session Overhead Duration Per Action: "
-        f"{datetime.timedelta(microseconds=within_session_overhead_duration / accumulators['sessionActionCount'])}"
+        f"{datetime.timedelta(microseconds=overhead_per_action)}"
     )
 
 
