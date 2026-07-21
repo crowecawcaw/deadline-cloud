@@ -187,7 +187,7 @@ For details and a fix using the registry, see: https://learn.microsoft.com/en-us
 
 
 @cli_manifest.command(name="diff")
-@click.option("--root", help="The root directory to compare changes to.")
+@click.option("--root", required=True, help="The root directory to compare changes to.")
 @click.option(
     "--manifest",
     required=True,

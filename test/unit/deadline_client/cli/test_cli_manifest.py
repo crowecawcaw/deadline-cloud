@@ -308,3 +308,23 @@ class TestManifestSnapshotIncludeExcludeConfig:
 
         assert result.exit_code == 0, result.output
         assert "not tuple" not in result.output
+
+
+class TestManifestDiffRootRequired:
+    def test_diff_missing_root_reports_friendly_error(self, tmp_path):
+        """
+        Tests that `manifest diff` without --root produces a friendly "missing
+        option" error instead of a TypeError from os.path.isdir(None).
+        """
+        manifest_file = tmp_path / "manifest.json"
+        manifest_file.write_text("{}")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["manifest", "diff", "--manifest", str(manifest_file)],
+        )
+
+        assert result.exit_code != 0
+        assert "--root" in result.output
+        assert "Missing option" in result.output
