@@ -134,7 +134,15 @@ def fleet_get(fleet_id, queue_id, **args):
             f"Showing all fleets ({len(qfa_list)} total) associated with queue: {queue_name}"
         )
         for qfa in qfa_list:
-            response = deadline.get_fleet(farmId=farm_id, fleetId=qfa["fleetId"])
+            try:
+                response = deadline.get_fleet(farmId=farm_id, fleetId=qfa["fleetId"])
+            except ClientError as exc:
+                # Don't abandon the remaining fleets if a single get_fleet call
+                # fails (e.g. throttling). Warn about the skipped fleet and
+                # continue listing the rest.
+                click.echo("")
+                click.echo(f"Failed to get Fleet {qfa['fleetId']} from Deadline:\n{exc}")
+                continue
             response.pop("ResponseMetadata", None)
             response["queueFleetAssociationStatus"] = qfa["status"]
 

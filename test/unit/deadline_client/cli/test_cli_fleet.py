@@ -289,6 +289,51 @@ def test_cli_fleet_get_explicit_queue_id_wins_over_default(fresh_deadline_config
         )
 
 
+def test_cli_fleet_get_with_queue_id_one_fleet_throttled(fresh_deadline_config):
+    """
+    Confirm that when one per-fleet get_fleet call in the QFA loop raises a
+    ClientError (e.g. throttling), the remaining fleets are still shown and the
+    command does not abort.
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+
+    with patch.object(api._session, "get_boto3_session") as session_mock:
+        session_mock().client("deadline").get_queue.return_value = MOCK_QUEUES_LIST[0]
+        # First fleet throttles, second returns normally.
+        session_mock().client("deadline").get_fleet.side_effect = [
+            ClientError(
+                {"Error": {"Code": "ThrottlingException", "Message": "Rate exceeded"}},
+                "GetFleet",
+            ),
+            deepcopy(MOCK_FLEETS_LIST[1]),
+        ]
+        session_mock().client("deadline").list_queue_fleet_associations.return_value = {
+            "queueFleetAssociations": [
+                {
+                    "queueId": MOCK_QUEUES_LIST[0]["queueId"],
+                    "fleetId": MOCK_FLEETS_LIST[0]["fleetId"],
+                    "status": "ACTIVE",
+                },
+                {
+                    "queueId": MOCK_QUEUES_LIST[0]["queueId"],
+                    "fleetId": MOCK_FLEETS_LIST[1]["fleetId"],
+                    "status": "ACTIVE",
+                },
+            ]
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["fleet", "get"])
+
+        # The command completes and shows the fleet that could be fetched.
+        assert result.exit_code == 0
+        assert "MadderFleet" in result.output
+        # The throttled fleet is surfaced as a warning rather than aborting.
+        assert MOCK_FLEETS_LIST[0]["fleetId"] in result.output
+        assert "Rate exceeded" in result.output
+
+
 def test_cli_fleet_get_override_profile(fresh_deadline_config):
     """
     Confirms that the --profile option overrides the option to boto3.Session.
