@@ -126,13 +126,13 @@ def _get_download_candidate_jobs(
             region=region,
         )
     }
-    print(f"DEBUG: Got {len(download_candidate_jobs)} active jobs")
+    print_function_callback(f"DEBUG: Got {len(download_candidate_jobs)} active jobs")
     download_candidate_jobs = {
         job_id: _datetimes_to_str(job)
         for job_id, job in download_candidate_jobs.items()
         if job["taskRunStatusCounts"]["SUCCEEDED"] > 0
     }
-    print(
+    print_function_callback(
         f"DEBUG: Filtered down to {len(download_candidate_jobs)} active jobs based on SUCCEEDED task filter"
     )
 
@@ -157,14 +157,16 @@ def _get_download_candidate_jobs(
         },
         region=region,
     )
-    print(
+    print_function_callback(
         f"DEBUG: Got {len(recently_ended_jobs)} jobs with job[endedAt] >= {starting_timestamp.astimezone().isoformat()}"
     )
     # Filter to jobs where the count of SUCCEEDED tasks is positive.
     recently_ended_jobs = [
         job for job in recently_ended_jobs if job["taskRunStatusCounts"]["SUCCEEDED"] > 0
     ]
-    print(f"DEBUG: Filtered down to {len(recently_ended_jobs)} jobs based on SUCCEEDED task filter")
+    print_function_callback(
+        f"DEBUG: Filtered down to {len(recently_ended_jobs)} jobs based on SUCCEEDED task filter"
+    )
     download_candidate_jobs.update(
         {job["jobId"]: _datetimes_to_str(job) for job in recently_ended_jobs}
     )
