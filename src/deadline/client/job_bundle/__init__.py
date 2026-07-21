@@ -53,23 +53,23 @@ def create_job_history_bundle_dir(submitter_name: str, job_name: str) -> str:
     date_tag = timestamp.strftime("%Y-%m-%d")
 
     month_dir = os.path.join(job_history_dir, month_tag)
-    if not os.path.isdir(month_dir):
-        os.makedirs(month_dir)
+    os.makedirs(month_dir, exist_ok=True)
 
-    # Index the files so they sort in order of submission
+    # Index the files so they sort in order of submission. The month_dir portion is
+    # user-supplied (via settings.job_history_dir), so escape it before globbing to
+    # avoid interpreting characters like '[', ']', and '*' as glob patterns.
     number = 1
-    existing_dirs = glob.glob(os.path.join(month_dir, f"{date_tag}-*"))
-    if existing_dirs:
-        for dir_path in existing_dirs:
-            try:
-                dir_number = int(os.path.basename(dir_path)[len(date_tag) + 1 :].split("-", 1)[0])
-                number = max(number, dir_number + 1)
-            except ValueError:
-                # Skip if this dir has no number
-                pass
+    existing_dirs = glob.glob(os.path.join(glob.escape(month_dir), f"{date_tag}-*"))
+    for dir_path in existing_dirs:
+        try:
+            dir_number = int(os.path.basename(dir_path)[len(date_tag) + 1 :].split("-", 1)[0])
+            number = max(number, dir_number + 1)
+        except ValueError:
+            # Skip if this dir has no number
+            pass
 
     result = os.path.join(
         month_dir, f"{date_tag}-{number:02}-{submitter_name_cleaned}-{job_name_cleaned}"
     )
-    os.makedirs(result)
+    os.makedirs(result, exist_ok=True)
     return result

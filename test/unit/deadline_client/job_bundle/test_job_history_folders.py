@@ -97,6 +97,28 @@ def test_create_job_bundle_dir_sanitization(
         assert os.path.isdir(os.path.join(tmpdir, expected_output_path))
 
 
+def test_create_job_bundle_dir_glob_chars_in_history_path(fresh_deadline_config, tmp_path):
+    """
+    Tests that a job_history_dir containing glob special characters (e.g. '[', ']', '*')
+    does not break the "next sequential bundle dir" numbering. The user-supplied path
+    portion must be glob-escaped before globbing for existing bundle dirs.
+    """
+    # Create a job history dir whose name contains glob metacharacters
+    history_dir = tmp_path / "history[test]"
+    history_dir.mkdir()
+    config.set_setting("settings.job_history_dir", str(history_dir))
+
+    with freeze_time("2025-10-13T03:05"):
+        first = job_bundle.create_job_history_bundle_dir("cli_job", "Test CLI Job Name")
+        # The second call must find the first dir and increment to -02, not collide
+        second = job_bundle.create_job_history_bundle_dir("cli_job", "Test CLI Job Name")
+
+    assert os.path.basename(first) == "2025-10-13-01-cli_job-Test CLI Job Name"
+    assert os.path.basename(second) == "2025-10-13-02-cli_job-Test CLI Job Name"
+    assert os.path.isdir(first)
+    assert os.path.isdir(second)
+
+
 def test_create_job_bundle_dir_many_jobs(fresh_deadline_config, tmp_path):
     """Tests that it can create 150 jobs within the same dir"""
     config.set_setting("settings.job_history_dir", str(tmp_path))
