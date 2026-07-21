@@ -100,7 +100,6 @@ def cli_manifest():
     "--include-exclude-config",
     default=None,
     help="Include and exclude config of files and directories to include and exclude. Can be a json file or json string.",
-    multiple=True,
 )
 @click.option(
     "--force-rehash",

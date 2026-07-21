@@ -280,3 +280,31 @@ class TestSnapshot:
         actual_inputs = set(mock_prepare_paths_for_upload.call_args[1]["input_paths"])
         assert actual_inputs == expected_inputs
         mock_hash_attachments.assert_called_once()
+
+
+class TestManifestSnapshotIncludeExcludeConfig:
+    def test_snapshot_include_exclude_config_accepts_json_string(self, tmp_path):
+        """
+        Tests that `manifest snapshot -ie` passes the config through as a single
+        string (matching how `_manifest_snapshot`/`_process_glob_inputs` consume
+        it) rather than as a tuple, which raised a TypeError.
+        """
+        root_dir = str(tmp_path)
+        (tmp_path / "keep.txt").touch()
+        (tmp_path / "skip.log").touch()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "manifest",
+                "snapshot",
+                "--root",
+                root_dir,
+                "-ie",
+                '{"include": ["*.txt"], "exclude": []}',
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "not tuple" not in result.output
