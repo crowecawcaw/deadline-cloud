@@ -196,6 +196,61 @@ def test_config_file_env_var(fresh_deadline_config):
             del os.environ["DEADLINE_CONFIG_FILE_PATH"]
 
 
+def test_read_write_config_importable_from_package():
+    """
+    read_config and write_config are documented entry points (the docstrings on
+    get_setting/set_setting tell callers to build configs with read_config() and
+    persist them with write_config), so they must be importable directly from the
+    deadline.client.config package.
+    """
+    from deadline.client.config import read_config, write_config
+
+    assert read_config is config_file.read_config
+    assert write_config is config_file.write_config
+
+
+def test_write_config_uses_relative_path(tmp_path, monkeypatch):
+    """
+    write_config must handle a relative config path. The atomic-write temp file
+    should be created in the target's directory rather than the system temp dir
+    keyed off the full path used as a prefix (which breaks for relative/nested paths).
+    """
+    from configparser import ConfigParser
+
+    monkeypatch.chdir(tmp_path)
+    relative_target = Path("subdir") / "config"
+
+    parser = ConfigParser()
+    parser["defaults"] = {"aws_profile_name": "RelativePathProfile"}
+
+    with patch.object(config_file, "get_config_file_path", return_value=relative_target):
+        config_file.write_config(parser)
+
+    written = (tmp_path / "subdir" / "config").read_text(encoding="utf8")
+    assert "aws_profile_name = RelativePathProfile" in written
+
+
+def test_write_config_cleans_up_tempfile_on_replace_failure(tmp_path):
+    """
+    If os.replace fails while finalizing the atomic write, write_config must not
+    leave the temporary file behind.
+    """
+    from configparser import ConfigParser
+
+    target = tmp_path / "config"
+
+    parser = ConfigParser()
+    parser["defaults"] = {"aws_profile_name": "x"}
+
+    with patch.object(config_file, "get_config_file_path", return_value=target):
+        with patch("os.replace", side_effect=OSError("simulated replace failure")):
+            with pytest.raises(OSError):
+                config_file.write_config(parser)
+
+    # The target was never created and no temp file was left behind.
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_get_best_profile_for_farm(fresh_deadline_config):
     """
     Test that it returns the exact farm + queue id match

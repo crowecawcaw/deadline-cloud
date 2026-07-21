@@ -449,15 +449,27 @@ def write_config(config: ConfigParser) -> None:
         if platform.system() == "Windows":
             _reset_directory_permissions_windows(config_file_path.parent)
 
-    # Using the config file path as the prefix ensures that the tmpfile and real file are
-    # on the same filesystem. This is a requirement for os.replace to be atomic.
-    file_descriptor, tmp_file_name = tempfile.mkstemp(prefix=str(config_file_path), text=True)
+    # Create the temp file in the SAME directory as the target so that it lives on the same
+    # filesystem, which is a requirement for os.replace to be atomic. Using the target's
+    # directory (rather than the full path as a prefix in the system temp dir) also keeps
+    # atomicity working for relative config paths.
+    file_descriptor, tmp_file_name = tempfile.mkstemp(
+        dir=os.path.dirname(config_file_path) or None, prefix=".config-", text=True
+    )
 
-    # Note: The file descriptor is closed when exiting the context manager.
-    with os.fdopen(file_descriptor, "w", encoding="utf8") as configfile:
-        config.write(configfile)
+    try:
+        # Note: The file descriptor is closed when exiting the context manager.
+        with os.fdopen(file_descriptor, "w", encoding="utf8") as configfile:
+            config.write(configfile)
 
-    os.replace(tmp_file_name, config_file_path)
+        os.replace(tmp_file_name, config_file_path)
+    except BaseException:
+        # If writing or replacing failed, don't leave the temp file behind.
+        try:
+            os.remove(tmp_file_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _get_setting_config(setting_name: str) -> dict:
