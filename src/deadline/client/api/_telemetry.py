@@ -158,7 +158,9 @@ class TelemetryClient:
         """
         env_var_value = os.environ.get("DEADLINE_CLOUD_TELEMETRY_OPT_OUT")
         if env_var_value:
-            self.telemetry_opted_out = env_var_value in config_file._TRUE_VALUES
+            # Normalize (strip + lowercase) so values like " TRUE " or "Yes"
+            # are recognized, matching the config-file str2bool behavior.
+            self.telemetry_opted_out = env_var_value.strip().lower() in config_file._TRUE_VALUES
         else:
             self.telemetry_opted_out = config_file.str2bool(
                 config_file.get_setting("telemetry.opt_out", config=config)

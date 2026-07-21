@@ -108,6 +108,33 @@ def test_opt_out_env_var(fresh_deadline_config, monkeypatch, env_var_value):
     client.record_error_with_trace(RuntimeError("opt-out test"), "test")
 
 
+@pytest.mark.parametrize(
+    "env_var_value",
+    [
+        pytest.param(" true ", id="whitespace-padded"),
+        pytest.param("TRUE", id="uppercase"),
+        pytest.param("Yes", id="mixed-case"),
+        pytest.param(" ON ", id="uppercase-padded"),
+        pytest.param(" 1 ", id="padded-numeric"),
+    ],
+)
+def test_opt_out_env_var_normalized(fresh_deadline_config, monkeypatch, env_var_value):
+    """Opt-out env var values are normalized (stripped + lowercased) before matching,
+    so uppercase / whitespace-padded truthy values still opt the user out."""
+    # GIVEN
+    config.set_setting("defaults.aws_profile_name", "SomeRandomProfileName")
+    monkeypatch.setenv("DEADLINE_CLOUD_TELEMETRY_OPT_OUT", env_var_value)
+    config.set_setting("telemetry.opt_out", "false")
+    # WHEN
+    client = TelemetryClient(
+        "deadline-cloud-library", "test-version", config=config.config_file.read_config()
+    )
+    # THEN
+    assert client.telemetry_opted_out is True
+    assert not client.is_initialized
+    assert not hasattr(client, "endpoint")
+
+
 def test_initialize_failure_then_success(fresh_deadline_config):
     """
     Tests that a failure in initializing set keeps the property as false, but trying again
