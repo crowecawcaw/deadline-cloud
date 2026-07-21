@@ -511,6 +511,55 @@ def test_record_decorator_fails(fresh_deadline_config):
         queue_mock.put_nowait.assert_called_once_with(expected_event)
 
 
+def test_record_decorator_does_not_leak_state_between_calls(fresh_deadline_config):
+    """The success/fail decorator must build a fresh event_details dict per call so
+    that state (e.g. exception_type) from one invocation does not leak into the next."""
+    with patch.object(
+        api._telemetry, "get_deadline_endpoint_url", side_effect=["https://fake-endpoint-url"]
+    ):
+        # GIVEN
+        queue_mock = MagicMock()
+        telemetry_client = get_deadline_cloud_library_telemetry_client()
+        telemetry_client.event_queue = queue_mock
+
+        @record_success_fail_telemetry_event(event_details={"command": "x"})
+        def sometimes_fails(should_fail: bool):
+            if should_fail:
+                raise RuntimeError("boom")
+
+        # WHEN - first call fails (records exception_type), second call succeeds
+        with pytest.raises(RuntimeError):
+            sometimes_fails(True)  # type:ignore
+        sometimes_fails(False)  # type:ignore
+
+        # THEN - the successful call's event must NOT carry the stale exception_type
+        second_event: TelemetryEvent = queue_mock.put_nowait.call_args_list[1][0][0]
+        assert second_event.event_details["is_success"] is True
+        assert "exception_type" not in second_event.event_details
+
+
+def test_record_decorator_does_not_mutate_caller_event_details(fresh_deadline_config):
+    """The decorator must not mutate the caller-supplied event_details dict in place."""
+    with patch.object(
+        api._telemetry, "get_deadline_endpoint_url", side_effect=["https://fake-endpoint-url"]
+    ):
+        # GIVEN
+        queue_mock = MagicMock()
+        telemetry_client = get_deadline_cloud_library_telemetry_client()
+        telemetry_client.event_queue = queue_mock
+        shared_details: Dict[str, Any] = {"command": "bundle submit"}
+
+        @record_success_fail_telemetry_event(event_details=shared_details)
+        def succeeds():
+            return
+
+        # WHEN
+        succeeds()  # type:ignore
+
+        # THEN - the caller's dict must be untouched (no injected is_success/usage_mode)
+        assert shared_details == {"command": "bundle submit"}
+
+
 def test_latency_decorator(fresh_deadline_config):
     """Tests that the latency recording decorator works"""
     with (

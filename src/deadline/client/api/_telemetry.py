@@ -541,7 +541,10 @@ def record_success_fail_telemetry_event(**decorator_kwargs: Any) -> Callable[[F]
             finally:
                 event_name = decorator_kwargs.get("metric_name", function.__name__)
 
-                event_details: dict = decorator_kwargs.get("event_details", {})
+                # Build a fresh dict per call so we neither mutate the
+                # caller-supplied event_details nor leak state (e.g.
+                # exception_type) across invocations of the decorated function.
+                event_details: dict = dict(decorator_kwargs.get("event_details", {}))
                 event_details["is_success"] = success
                 raised_exception = sys.exc_info()[1]
                 if raised_exception is not None:
