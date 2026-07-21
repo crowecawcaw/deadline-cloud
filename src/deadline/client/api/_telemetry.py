@@ -104,6 +104,10 @@ class TelemetryClient:
     MAX_BACKOFF_SECONDS = 10  # The maximum amount of time to wait between retries
     MAX_RETRY_ATTEMPTS = 4
 
+    # Bound network + shutdown waits so a blackholing proxy can't hang the CLI.
+    REQUEST_TIMEOUT_SECONDS = 5  # Per-request urlopen timeout
+    EXIT_JOIN_TIMEOUT_SECONDS = 10  # Max time atexit will wait for the processing thread
+
     ENDPOINT_PREFIX = "management."
 
     def __init__(
@@ -315,14 +319,21 @@ class TelemetryClient:
             # since it is daemon and the Python runtime will shut it down on exit.
             # Ignore the error, since this is a best-effort cleanup.
             pass
-        self.processing_thread.join()
+        # Bound the join so a request stuck behind a blackholing proxy can't
+        # hang the CLI on exit. The processing thread is a daemon, so the Python
+        # runtime will terminate it if it outlives this timeout.
+        self.processing_thread.join(timeout=TelemetryClient.EXIT_JOIN_TIMEOUT_SECONDS)
 
     def _send_request(self, req: request.Request) -> None:
         attempts = 0
         success = False
         while not success:
             try:
-                with request.urlopen(req, context=self._urllib3_context):
+                with request.urlopen(
+                    req,
+                    context=self._urllib3_context,
+                    timeout=TelemetryClient.REQUEST_TIMEOUT_SECONDS,
+                ):
                     logger.debug("Successfully sent telemetry.")
                     success = True
             except error.HTTPError as httpe:

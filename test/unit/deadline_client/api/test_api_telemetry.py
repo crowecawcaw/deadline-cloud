@@ -209,6 +209,48 @@ def test_process_event_queue_thread(fresh_deadline_config, mock_telemetry_client
     assert queue_mock.get.call_count == 2
 
 
+@pytest.mark.timeout(5)  # Timeout in case we don't exit the while loop
+def test_process_event_queue_thread_urlopen_uses_timeout(
+    fresh_deadline_config, mock_telemetry_client
+):
+    """urlopen must be called with a timeout so a blackholing proxy can't hang the CLI."""
+    # GIVEN
+    queue_mock = MagicMock()
+    queue_mock.get.side_effect = [TelemetryEvent(), None]
+    mock_telemetry_client.event_queue = queue_mock
+    # WHEN
+    with (
+        patch.object(request, "urlopen") as urlopen_mock,
+        patch.object(TelemetryClient, "get_account_id", return_value=None),
+        patch.object(api._telemetry, "get_boto3_session"),
+    ):
+        mock_telemetry_client._process_event_queue_thread()
+    # THEN
+    urlopen_mock.assert_called_once()
+    assert urlopen_mock.call_args.kwargs.get("timeout") is not None
+    assert urlopen_mock.call_args.kwargs["timeout"] > 0
+
+
+def test_exit_cleanly_bounds_join_with_timeout(fresh_deadline_config, mock_telemetry_client):
+    """The atexit cleanup must bound the processing-thread join with a timeout so the CLI
+    can't hang on exit when a request is stuck behind a blackholing proxy."""
+    # GIVEN
+    mock_telemetry_client.event_queue = MagicMock()
+    thread_mock = MagicMock()
+    mock_telemetry_client.processing_thread = thread_mock
+    # WHEN
+    mock_telemetry_client._exit_cleanly()
+    # THEN
+    thread_mock.join.assert_called_once()
+    # join() must be given a positive timeout (positional or keyword).
+    timeout = (
+        thread_mock.join.call_args.kwargs.get("timeout")
+        if thread_mock.join.call_args.kwargs
+        else (thread_mock.join.call_args.args[0] if thread_mock.join.call_args.args else None)
+    )
+    assert timeout is not None and timeout > 0
+
+
 @pytest.mark.parametrize(
     "http_code,attempt_count",
     [
