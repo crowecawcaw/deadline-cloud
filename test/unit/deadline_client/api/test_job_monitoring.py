@@ -464,7 +464,7 @@ def test_get_session_logs_basic():
             logGroupName=f"/aws/deadline/{MOCK_FARM_ID}/{MOCK_QUEUE_ID}",
             logStreamName="session-test-session",
             limit=100,
-            startFromHead=False,
+            startFromHead=True,
         )
 
 
@@ -509,7 +509,7 @@ def test_get_session_logs_with_datetime_params():
             logGroupName=f"/aws/deadline/{MOCK_FARM_ID}/{MOCK_QUEUE_ID}",
             logStreamName="session-test-session",
             limit=100,
-            startFromHead=False,
+            startFromHead=True,
             startTime=int(start_time.timestamp() * 1000),
             endTime=int(end_time.timestamp() * 1000),
         )
@@ -570,7 +570,7 @@ def test_get_session_logs_with_monitor_credentials():
             logGroupName=f"/aws/deadline/{MOCK_FARM_ID}/{MOCK_QUEUE_ID}",
             logStreamName="session-test-session",
             limit=100,
-            startFromHead=False,
+            startFromHead=True,
         )
 
 
@@ -672,9 +672,79 @@ def test_get_session_logs_with_next_token():
             logGroupName=f"/aws/deadline/{MOCK_FARM_ID}/{MOCK_QUEUE_ID}",
             logStreamName="session-test-session",
             limit=100,
-            startFromHead=False,
+            startFromHead=True,
             nextToken="previous-token",
         )
+
+
+def test_get_session_logs_forward_pagination_terminates():
+    """
+    Forward pagination must be consistent: startFromHead=True paired with
+    nextForwardToken. When the returned nextForwardToken equals the token that
+    was passed in, that is CloudWatch's documented "end of stream" signal and
+    get_session_logs must surface next_token=None so callers stop paging.
+
+    This guards against the previous bug where startFromHead=False was mixed
+    with nextForwardToken, so the token never advanced and a paging loop would
+    spin forever (or truncate) instead of terminating.
+    """
+    page1 = {
+        "events": MOCK_LOG_EVENTS,
+        "nextForwardToken": "token-2",
+        "nextBackwardToken": "back-1",
+    }
+    # Terminal page: same forward token echoed back, no further events.
+    terminal_page = {
+        "events": [],
+        "nextForwardToken": "token-2",
+        "nextBackwardToken": "back-2",
+    }
+
+    responses = [page1]
+
+    def fake_get_log_events(**kwargs):
+        if responses:
+            return responses.pop(0)
+        return terminal_page
+
+    with (
+        patch("deadline.client.api._job_monitoring.get_boto3_client") as mock_get_client,
+        patch(
+            "deadline.client.api._job_monitoring.get_user_and_identity_store_id"
+        ) as mock_get_user,
+    ):
+        mock_get_user.return_value = (None, None)
+
+        logs_client_mock = MagicMock()
+        logs_client_mock.get_log_events.side_effect = fake_get_log_events
+        mock_get_client.return_value = logs_client_mock
+
+        # Simulate a forward-pagination loop over the public API, feeding the
+        # returned token back in until it signals termination.
+        collected = []
+        next_token = None
+        calls = 0
+        while True:
+            calls += 1
+            assert calls <= 10, "forward pagination did not terminate"
+            result = get_session_logs(
+                farm_id=MOCK_FARM_ID,
+                queue_id=MOCK_QUEUE_ID,
+                session_id="session-test-session",
+                limit=100,
+                next_token=next_token,
+            )
+            collected.extend(result.events)
+            if not result.next_token:
+                break
+            next_token = result.next_token
+
+        # All events collected exactly once; loop terminated.
+        assert len(collected) == 2
+
+        # Forward pagination must read from the head of the stream.
+        first_call_kwargs = logs_client_mock.get_log_events.call_args_list[0].kwargs
+        assert first_call_kwargs["startFromHead"] is True
 
 
 def test_get_session_logs_resource_not_found():
@@ -796,7 +866,7 @@ def test_get_worker_logs_basic():
             logGroupName=f"/aws/deadline/{MOCK_FARM_ID}/{MOCK_FLEET_ID}",
             logStreamName=MOCK_WORKER_ID,
             limit=100,
-            startFromHead=False,
+            startFromHead=True,
         )
 
 
@@ -833,7 +903,7 @@ def test_get_worker_logs_with_time_params():
             logGroupName=f"/aws/deadline/{MOCK_FARM_ID}/{MOCK_FLEET_ID}",
             logStreamName=MOCK_WORKER_ID,
             limit=50,
-            startFromHead=False,
+            startFromHead=True,
             startTime=int(start_time.timestamp() * 1000),
             endTime=int(end_time.timestamp() * 1000),
         )

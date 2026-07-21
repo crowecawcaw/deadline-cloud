@@ -324,7 +324,10 @@ def get_session_logs(
         "logGroupName": log_group_name,
         "logStreamName": session_id,
         "limit": limit,
-        "startFromHead": False,  # Get the most recent logs first
+        # Forward pagination requires startFromHead=True paired with nextForwardToken.
+        # Mixing startFromHead=False with nextForwardToken truncates results and never
+        # advances the token, so a paging loop cannot terminate.
+        "startFromHead": True,
     }
 
     # Add next_token if provided
@@ -371,9 +374,16 @@ def get_session_logs(
                 )
             )
 
+        # CloudWatch signals the end of the stream by returning a nextForwardToken
+        # equal to the token that was passed in. Surface None in that case so callers
+        # stop paging instead of looping forever on an unchanging token.
+        forward_token = response.get("nextForwardToken")
+        if forward_token == next_token:
+            forward_token = None
+
         return SessionLogResult(
             events=events,
-            next_token=response.get("nextForwardToken"),
+            next_token=forward_token,
             log_group=log_group_name,
             log_stream=session_id,
             count=len(events),
@@ -469,7 +479,10 @@ def get_worker_logs(
         "logGroupName": log_group_name,
         "logStreamName": worker_id,
         "limit": limit,
-        "startFromHead": False,
+        # Forward pagination requires startFromHead=True paired with nextForwardToken.
+        # Mixing startFromHead=False with nextForwardToken truncates results and never
+        # advances the token, so a paging loop cannot terminate.
+        "startFromHead": True,
     }
 
     if next_token:
@@ -508,9 +521,16 @@ def get_worker_logs(
             for event in response.get("events", [])
         ]
 
+        # CloudWatch signals the end of the stream by returning a nextForwardToken
+        # equal to the token that was passed in. Surface None in that case so callers
+        # stop paging instead of looping forever on an unchanging token.
+        forward_token = response.get("nextForwardToken")
+        if forward_token == next_token:
+            forward_token = None
+
         return WorkerLogResult(
             events=events,
-            next_token=response.get("nextForwardToken"),
+            next_token=forward_token,
             log_group=log_group_name,
             log_stream=worker_id,
             worker_id=worker_id,
