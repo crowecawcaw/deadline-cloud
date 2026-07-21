@@ -10,8 +10,10 @@ exception's message string and source-line context are dropped entirely
 because we have no control over what third-party libraries put in them.
 """
 
+import importlib.util
+import os
 import traceback
-from typing import FrozenSet, List
+from typing import Dict, FrozenSet, List
 
 # Packages we author or vendor — emitting paths relative to these is safe
 # because the path itself only reveals which of our own modules raised.
@@ -23,6 +25,52 @@ _KNOWN_PACKAGES: FrozenSet[str] = frozenset(
         "botocore",
     }
 )
+
+
+def _normalize(path: str) -> str:
+    """Normalize a path for equality comparison across OSes.
+
+    Collapses Windows separators to forward slashes, strips any trailing
+    separator, and applies case folding on case-insensitive filesystems so
+    two spellings of the same location compare equal.
+    """
+    return os.path.normcase(path.replace("\\", "/").rstrip("/"))
+
+
+def _known_package_install_dirs() -> Dict[str, str]:
+    """Map each known package name to the normalized directory it is installed in.
+
+    This is the genuine on-disk location of the package root (the directory
+    that *contains* the package, e.g. ``.../site-packages``). It is used to
+    distinguish a real framework frame from a customer directory that merely
+    shares a package's name (e.g. a customer project tree rooted at
+    ``~/deadline/...``). Only packages that are importable with a real
+    filesystem location contribute an anchor; anything else (namespace
+    packages, frozen modules without a file) is simply omitted.
+    """
+    dirs: Dict[str, str] = {}
+    for name in _KNOWN_PACKAGES:
+        try:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, ValueError, AttributeError, ModuleNotFoundError):
+            continue
+        if spec is None:
+            continue
+        # Prefer the package directory itself. A regular package reports it
+        # via submodule_search_locations (e.g. ".../site-packages/deadline");
+        # a single-file module only has an origin (".../foo.py"), whose parent
+        # directory is the container.
+        origin = spec.origin
+        locations = list(spec.submodule_search_locations or [])
+        pkg_dir = None
+        if locations:
+            pkg_dir = locations[0]
+        elif origin and origin not in ("built-in", "frozen"):
+            pkg_dir = os.path.dirname(origin)
+        if not pkg_dir:
+            continue
+        dirs[name] = _normalize(os.path.abspath(pkg_dir))
+    return dirs
 
 
 def _sanitize_path(filepath: str) -> str:
@@ -37,17 +85,20 @@ def _sanitize_path(filepath: str) -> str:
     # with forward slashes.
     parts = filepath.replace("\\", "/").split("/")
 
-    # If any path segment names one of our known packages, return everything
-    # from that segment onward. Scan right-to-left and match the *rightmost*
-    # occurrence: the actually-installed package is always at the tail of
-    # the path, so a customer directory that happens to share a name with
-    # one of our packages (e.g. ~/deadline/...) earlier in the path can't
-    # cause us to keep the customer-named segments between them. `stem`
-    # strips a trailing extension so paths like ".../deadline.egg-info/..."
-    # still match "deadline".
+    # Keep a package-relative path only when the reconstructed absolute prefix
+    # equals the package's real install directory on this machine. A bare name
+    # match is insufficient because a customer directory can share a package
+    # name (e.g. ~/deadline/...) and keeping its segments would leak customer
+    # content (violating the no-customer-content tenet). Scan right-to-left so
+    # the deepest genuine match wins. (Ordinary pip installs under
+    # site-packages are also covered by the generic site-packages branch
+    # below; this branch additionally handles embedded / custom-sys.path
+    # layouts where the package isn't under a site-packages directory.)
+    install_dirs = _known_package_install_dirs()
     for i in range(len(parts) - 1, -1, -1):
         stem = parts[i].split(".")[0]
-        if stem in _KNOWN_PACKAGES:
+        anchor = install_dirs.get(stem)
+        if anchor is not None and _normalize("/".join(parts[: i + 1])) == anchor:
             return "/".join(parts[i:])
 
     # Unknown third-party library installed into a venv: keep the
