@@ -581,6 +581,37 @@ class TestGetSessionClientCrossRegion:
             endpoint_url="https://custom.deadline.us-east-1.example.com",
         )
 
+    def test_cross_region_regionalizes_label_not_earlier_substring(self):
+        """
+        When the session region also appears earlier in the endpoint as part of a
+        non-region-label substring (e.g. a host prefix), only the region *label*
+        should be regionalized. A raw first-occurrence substring replace would
+        corrupt the prefix and leave the real region label untouched.
+        """
+        get_session_client.cache_clear()
+        # "us-west-2" appears twice: once inside the host prefix "us-west-2-proxy"
+        # and once as the actual region label ".us-west-2.".
+        session = self._make_session(
+            "us-west-2", "https://us-west-2-proxy.deadline.us-west-2.example.com"
+        )
+
+        cross_region_client = MagicMock()
+        session.client.side_effect = [
+            session.client.return_value,
+            cross_region_client,
+        ]
+
+        result = get_session_client(session, "deadline", "us-east-1")
+        assert result is cross_region_client
+        second_call = session.client.call_args_list[1]
+        assert second_call == call(
+            "deadline",
+            config=ANY,
+            region_name="us-east-1",
+            # The region label is regionalized; the "us-west-2-proxy" prefix is preserved.
+            endpoint_url="https://us-west-2-proxy.deadline.us-east-1.example.com",
+        )
+
     def test_cross_region_no_override_needed(self):
         """
         When the resolved endpoint already contains the target region, no

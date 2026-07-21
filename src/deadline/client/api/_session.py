@@ -293,13 +293,18 @@ def get_session_client(session: boto3.Session, service_name: str, region: Option
     client = session.client(service_name, config=get_default_client_config(), region_name=region)
     resolved = client.meta.endpoint_url
     session_region = session.region_name
-    # An override leaked the session's region into a cross-region endpoint.
-    if region not in resolved and session_region and session_region in resolved:
+    # An override leaked the session's region into a cross-region endpoint. The region
+    # appears in the endpoint as a dotted hostname label (e.g. ".us-west-2."), so target
+    # that label specifically rather than doing a raw substring replace -- the region
+    # string can also appear elsewhere in the endpoint (e.g. a "us-west-2-proxy" host
+    # prefix), and a naive replace would corrupt that and miss the real region label.
+    session_region_label = f".{session_region}." if session_region else None
+    if region not in resolved and session_region_label and session_region_label in resolved:
         return session.client(
             service_name,
             config=get_default_client_config(),
             region_name=region,
-            endpoint_url=resolved.replace(session_region, region, 1),
+            endpoint_url=resolved.replace(session_region_label, f".{region}.", 1),
         )
     return client
 
