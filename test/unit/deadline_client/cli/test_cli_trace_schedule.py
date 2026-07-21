@@ -119,5 +119,45 @@ def test_build_trace_events_handles_session_without_step():
     assert any(event["cat"] == "SESSION" for event in trace_events)
 
 
+def test_build_trace_events_skips_session_without_started_at():
+    """A not-yet-started session (no ``startedAt``) must be skipped rather than
+    raising a KeyError when building its trace events / timeline timestamp."""
+    started = _dt(0)
+    ended = _dt(60)
+    started_session = {
+        "sessionId": "session-1",
+        "workerId": "worker-0",
+        "fleetId": "fleet-0",
+        "lifecycleStatus": "ENDED",
+        "startedAt": started,
+        "endedAt": ended,
+        "index": 0,
+        "actions": [],
+    }
+    not_started_session = {
+        "sessionId": "session-2",
+        "workerId": "worker-0",
+        "fleetId": "fleet-0",
+        "lifecycleStatus": "STARTING",
+        "index": 1,
+        "actions": [],
+        # No "startedAt": this session has not begun executing yet.
+    }
+    workers = {"worker-0": 0}
+
+    trace_events, accumulators = _build_trace_events(
+        [started_session, not_started_session], workers, started, ended
+    )
+
+    # Only the started session is counted / emitted.
+    assert accumulators["sessionCount"] == 1
+    session_ids = {
+        event["args"]["sessionId"]
+        for event in trace_events
+        if event["cat"] == "SESSION" and "sessionId" in event.get("args", {})
+    }
+    assert session_ids == {"session-1"}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

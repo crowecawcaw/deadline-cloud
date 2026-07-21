@@ -255,6 +255,13 @@ def _build_trace_events(sessions, workers, started_at, trace_end_utc):
     }
 
     for session in sessions:
+        # A session that hasn't started yet has no "startedAt" and therefore no
+        # point on the timeline. The B event below (and the per-action events)
+        # need "startedAt", so skip such sessions entirely rather than emitting a
+        # trace event with a missing timestamp (KeyError) or a malformed B/E pair.
+        if "startedAt" not in session:
+            continue
+
         accumulators["sessionCount"] += 1
         accumulators["sessionDuration"] += duration_of(session)
 
