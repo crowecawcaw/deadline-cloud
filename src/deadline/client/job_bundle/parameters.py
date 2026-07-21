@@ -321,8 +321,14 @@ def validate_job_parameter_value(
                 f"Job parameter {name!r} value {value!r} is longer than maxLength {max_length}."
             )
 
+    # minValue/maxValue may be provided as numeric strings in the template
+    # (OpenJD allows <intstr>/<floatstring>). Coerce them to the same numeric
+    # type as the (already coerced) value before comparing.
+    numeric_coerce = int if param_type == "INT" else float
+
     min_value = job_parameter.get("minValue")
     if min_value is not None:
+        min_value = numeric_coerce(min_value)
         if value < min_value:  # type: ignore
             raise ValueError(
                 f"Job parameter {name!r} value {value!r} is less than minValue {min_value}."
@@ -330,6 +336,7 @@ def validate_job_parameter_value(
 
     max_value = job_parameter.get("maxValue")
     if max_value is not None:
+        max_value = numeric_coerce(max_value)
         if value > max_value:  # type: ignore
             raise ValueError(
                 f"Job parameter {name!r} value {value!r} is greater than maxValue {max_value}."

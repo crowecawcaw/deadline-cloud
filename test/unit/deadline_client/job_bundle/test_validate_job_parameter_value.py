@@ -518,6 +518,88 @@ class TestConstraintValidation:
     @pytest.mark.parametrize(
         "job_parameter,input_value,expected_output",
         [
+            # minValue/maxValue given as numeric strings in the template (allowed by OpenJD,
+            # which permits <intstr>/<floatstring> for these fields). The value must still be
+            # comparable against them after coercion.
+            pytest.param(
+                {"name": "int_str_min", "type": "INT", "minValue": "5"},
+                10,
+                10,
+                id="int_string_minvalue_valid",
+            ),
+            pytest.param(
+                {"name": "int_str_min", "type": "INT", "minValue": "5"},
+                5,
+                5,
+                id="int_string_minvalue_boundary",
+            ),
+            pytest.param(
+                {"name": "int_str_max", "type": "INT", "maxValue": "100"},
+                50,
+                50,
+                id="int_string_maxvalue_valid",
+            ),
+            pytest.param(
+                {"name": "float_str_min", "type": "FLOAT", "minValue": "1.5"},
+                2.0,
+                2.0,
+                id="float_string_minvalue_valid",
+            ),
+            pytest.param(
+                {"name": "float_str_max", "type": "FLOAT", "maxValue": "99.9"},
+                "50.5",
+                50.5,
+                id="float_string_maxvalue_with_string_input",
+            ),
+        ],
+    )
+    def test_numeric_string_bounds_valid_values(
+        self,
+        job_parameter: parameters.JobParameter,
+        input_value: Union[str, int, float],
+        expected_output: Union[int, float],
+    ) -> None:
+        """Test that string minValue/maxValue in the template are coerced before comparison."""
+        result = parameters.validate_job_parameter_value(job_parameter, input_value)
+        assert result == expected_output
+        assert type(result) is type(expected_output)
+
+    @pytest.mark.parametrize(
+        "job_parameter,input_value,expected_error_pattern",
+        [
+            pytest.param(
+                {"name": "int_str_min", "type": "INT", "minValue": "5"},
+                4,
+                r"Job parameter 'int_str_min' value 4 is less than minValue 5\.",
+                id="int_string_minvalue_violation",
+            ),
+            pytest.param(
+                {"name": "int_str_max", "type": "INT", "maxValue": "100"},
+                101,
+                r"Job parameter 'int_str_max' value 101 is greater than maxValue 100\.",
+                id="int_string_maxvalue_violation",
+            ),
+            pytest.param(
+                {"name": "float_str_min", "type": "FLOAT", "minValue": "1.5"},
+                1.4,
+                r"Job parameter 'float_str_min' value 1\.4 is less than minValue 1\.5\.",
+                id="float_string_minvalue_violation",
+            ),
+        ],
+    )
+    def test_numeric_string_bounds_violation_errors(
+        self,
+        job_parameter: parameters.JobParameter,
+        input_value: Union[str, int, float],
+        expected_error_pattern: str,
+    ) -> None:
+        """Test that string minValue/maxValue still enforce the constraint after coercion."""
+        with pytest.raises(ValueError, match=expected_error_pattern):
+            parameters.validate_job_parameter_value(job_parameter, input_value)
+
+    @pytest.mark.parametrize(
+        "job_parameter,input_value,expected_output",
+        [
             # STRING allowedValues tests - valid cases
             pytest.param(
                 STRING_PARAM_WITH_ALLOWED_VALUES,
