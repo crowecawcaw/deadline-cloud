@@ -7,6 +7,7 @@ Tests for the known asset paths functionality in the bundle_submit CLI command.
 import os
 import json
 import tempfile
+from pathlib import Path
 from unittest.mock import patch, ANY, call
 
 import click
@@ -15,7 +16,12 @@ import pytest
 
 from deadline.client import config
 from deadline.client.cli import main
-from deadline.client.api._submit_job_bundle import _filter_redundant_known_paths
+from deadline.client.api._submit_job_bundle import (
+    _filter_redundant_known_paths,
+    _generate_message_for_asset_paths,
+    _is_known_path,
+)
+from deadline.job_attachments.models import AssetRootGroup, AssetUploadGroup
 
 from ..api.test_job_bundle_submission import (
     MOCK_FARM_ID,
@@ -46,6 +52,101 @@ def test_filter_redundant_known_paths(input, expected):
         assert sorted(
             _filter_redundant_known_paths("C:" + path.replace("/", "\\") for path in input)
         ) == ["C:" + path.replace("/", "\\") for path in expected]
+
+
+@pytest.mark.parametrize(
+    "path, roots, expected",
+    [
+        # The root itself is contained.
+        (
+            os.path.join(os.sep, "trusted", "project"),
+            [os.path.join(os.sep, "trusted", "project")],
+            True,
+        ),
+        # A genuine descendant is contained.
+        (
+            os.path.join(os.sep, "trusted", "project", "sub", "file"),
+            [os.path.join(os.sep, "trusted", "project")],
+            True,
+        ),
+        # Core regression: a sibling sharing a string prefix is NOT contained.
+        (
+            os.path.join(os.sep, "trusted", "project-secret", "f"),
+            [os.path.join(os.sep, "trusted", "project")],
+            False,
+        ),
+        # An unrelated path is not contained.
+        (
+            os.path.join(os.sep, "somewhere", "else"),
+            [os.path.join(os.sep, "trusted", "project")],
+            False,
+        ),
+        # Contained by one of several roots.
+        (
+            os.path.join(os.sep, "b", "file"),
+            [os.path.join(os.sep, "a"), os.path.join(os.sep, "b")],
+            True,
+        ),
+        # Mixed absolute/relative (commonpath raises ValueError) -> not contained.
+        (
+            os.path.join("relative", "file"),
+            [os.path.join(os.sep, "trusted", "project")],
+            False,
+        ),
+        # No roots -> nothing is contained.
+        (os.path.join(os.sep, "trusted", "project"), [], False),
+    ],
+)
+def test_is_known_path(path, roots, expected):
+    assert _is_known_path(path, roots) is expected
+
+
+def test_generate_message_for_asset_paths_sibling_prefix_is_unknown():
+    """
+    Security regression test: a known root must NOT "contain" a sibling path that
+    merely shares a string prefix. e.g. known root '/trusted/project' must not
+    suppress the warning for '/trusted/project-secret/file', which lives outside
+    the trusted root. An unanchored prefix match would wrongly treat it as inside.
+    """
+    known_root = os.path.join(os.sep, "trusted", "project")
+    sibling_file = os.path.join(os.sep, "trusted", "project-secret", "file")
+
+    upload_group = AssetUploadGroup(
+        asset_groups=[AssetRootGroup(root_path=known_root, inputs={Path(sibling_file)})],
+        total_input_files=1,
+        total_input_bytes=12,
+    )
+
+    message, no_warnings = _generate_message_for_asset_paths(
+        upload_group, storage_profile=None, known_asset_paths=[known_root]
+    )
+
+    # The sibling file is outside the trusted root, so the warning must fire.
+    assert no_warnings is False, message
+    assert "WARNING: Files were specified outside of known asset paths." in message, message
+    assert sibling_file in message, message
+
+
+def test_generate_message_for_asset_paths_descendant_is_known():
+    """
+    A file that is a genuine descendant of a known root must be treated as inside
+    (no warning), confirming the anchored containment check does not over-reject.
+    """
+    known_root = os.path.join(os.sep, "trusted", "project")
+    inside_file = os.path.join(known_root, "sub", "file")
+
+    upload_group = AssetUploadGroup(
+        asset_groups=[AssetRootGroup(root_path=known_root, inputs={Path(inside_file)})],
+        total_input_files=1,
+        total_input_bytes=12,
+    )
+
+    message, no_warnings = _generate_message_for_asset_paths(
+        upload_group, storage_profile=None, known_asset_paths=[known_root]
+    )
+
+    assert no_warnings is True, message
+    assert "WARNING: Files were specified outside of known asset paths." not in message, message
 
 
 def test_cli_bundle_known_paths_combine(fresh_deadline_config, temp_job_bundle_dir):
