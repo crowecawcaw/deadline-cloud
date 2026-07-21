@@ -1795,6 +1795,104 @@ def test_cli_job_list_with_estimates(fresh_deadline_config, deadline_mock):
     assert "estimatedTimeRemaining:" in result.output
 
 
+def test_cli_job_list_missing_total_results(fresh_deadline_config):
+    """
+    Confirm that job list does not crash with a KeyError when the search_jobs
+    response omits 'totalResults'.
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+
+    with patch.object(api._session, "get_boto3_session") as session_mock:
+        session_mock().client("deadline").search_jobs.return_value = {
+            "jobs": MOCK_JOBS_LIST,
+            # No "totalResults" key
+            "itemOffset": len(MOCK_JOBS_LIST),
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["job", "list"])
+
+        assert result.exit_code == 0, result.output
+        # Falls back to the number of returned jobs when totalResults is absent.
+        assert "Displaying 2 of 2 Jobs starting at 0" in result.output
+
+
+@pytest.mark.parametrize(
+    "option,value",
+    [
+        ("--page-size", "0"),
+        ("--page-size", "-1"),
+        ("--item-offset", "-1"),
+    ],
+)
+def test_cli_job_list_rejects_invalid_pagination(fresh_deadline_config, option, value):
+    """
+    Confirm that job list rejects non-positive --page-size and negative
+    --item-offset before calling the API.
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+
+    with patch.object(api._session, "get_boto3_session") as session_mock:
+        search_jobs_mock = session_mock().client("deadline").search_jobs
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["job", "list", option, value])
+
+        assert result.exit_code != 0, result.output
+        # The API must not be called with an invalid value.
+        search_jobs_mock.assert_not_called()
+
+
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_cli_job_logs_rejects_invalid_limit(fresh_deadline_config, value):
+    """
+    Confirm that job logs rejects a non-positive --limit before calling the API.
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+    config.set_setting("defaults.job_id", MOCK_JOB_ID)
+
+    with (
+        patch.object(api, "get_session_logs") as mock_get_logs,
+        patch.object(api, "get_boto3_client") as boto3_client_mock,
+    ):
+        boto3_client_mock().get_job.return_value = {"name": "Test Job Name"}
+        boto3_client_mock().get_session.return_value = {
+            "sessionId": "session-1",
+            "startedAt": datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=tzutc()),
+        }
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["job", "logs", "--session-id", "session-1", "--limit", value])
+
+        assert result.exit_code != 0, result.output
+        mock_get_logs.assert_not_called()
+
+
+def test_cli_job_wait_rejects_negative_timeout(fresh_deadline_config):
+    """
+    Confirm that job wait rejects a negative --timeout before calling the API
+    (0 is allowed and means 'no timeout').
+    """
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
+    config.set_setting("defaults.job_id", MOCK_JOB_ID)
+
+    with (
+        patch.object(api, "wait_for_job_completion") as mock_wait,
+        patch.object(api, "get_boto3_client") as boto3_client_mock,
+    ):
+        boto3_client_mock().get_job.return_value = {"name": "Test Job Name"}
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["job", "wait", "--timeout", "-1"])
+
+        assert result.exit_code != 0, result.output
+        mock_wait.assert_not_called()
+
+
 # ─── download-input tests ──────────────────────────────────────────────────────
 
 

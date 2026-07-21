@@ -168,8 +168,18 @@ def cli_job():
 @click.option("--farm-id", help="The farm to use.")
 @click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
-@click.option("--page-size", default=5, help="The number of jobs to load at a time.")
-@click.option("--item-offset", default=0, help="The index of the job to start listing from.")
+@click.option(
+    "--page-size",
+    default=5,
+    type=click.IntRange(min=1),
+    help="The number of jobs to load at a time.",
+)
+@click.option(
+    "--item-offset",
+    default=0,
+    type=click.IntRange(min=0),
+    help="The index of the job to start listing from.",
+)
 @_handle_error
 def job_list(page_size, item_offset, **args):
     """
@@ -201,7 +211,7 @@ def job_list(page_size, item_offset, **args):
             f"Failed to get Jobs from Deadline:\n{exc}{suggestion}"
         ) from exc
 
-    total_results = response["totalResults"]
+    total_results = response.get("totalResults", len(response["jobs"]))
 
     # Select which fields to print and in which order
     name_field = "displayName"
@@ -1444,8 +1454,18 @@ def job_download_input(include, match_paths_by, output, ignore_storage_profiles,
 @click.option("--region", help="The AWS region of the farm.")
 @click.option("--queue-id", help="The queue to use.")
 @click.option("--job-id", help="The job to wait for.")
-@click.option("--max-poll-interval", default=120, help="Maximum polling interval in seconds.")
-@click.option("--timeout", default=0, help="Timeout in seconds (0 for no timeout).")
+@click.option(
+    "--max-poll-interval",
+    default=120,
+    type=click.IntRange(min=1),
+    help="Maximum polling interval in seconds.",
+)
+@click.option(
+    "--timeout",
+    default=0,
+    type=click.IntRange(min=0),
+    help="Timeout in seconds (0 for no timeout).",
+)
 @click.option(
     "--output",
     type=click.Choice(["verbose", "json"], case_sensitive=False),
@@ -1634,7 +1654,12 @@ def job_wait_for_completion(max_poll_interval, timeout, output, **args):
     "--session-action-id",
     help="The session action ID to get logs for. The session ID will be derived from this.",
 )
-@click.option("--limit", default=100, help="Maximum number of log lines to return.")
+@click.option(
+    "--limit",
+    default=100,
+    type=click.IntRange(min=1),
+    help="Maximum number of log lines to return.",
+)
 @click.option(
     "--start-time",
     help="Start time for logs in ISO format (e.g., 2023-01-01T12:00:00Z).",
