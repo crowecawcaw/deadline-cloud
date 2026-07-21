@@ -499,3 +499,19 @@ class TestApplyCliOptionsAutoSelect:
 
         mock_farms.assert_not_called()
         assert config_file.get_setting(SETTING_FARM_ID) == "farm-explicit"
+
+    def test_required_options_set_not_mutated(self, fresh_deadline_config):
+        """
+        The caller's required_options set must not be mutated in place. A set reused
+        across calls would otherwise be emptied on the first call, silently skipping
+        farm/queue validation on subsequent calls.
+        """
+        with patch("deadline.client.cli._common._api.list_farms") as mock_farms:
+            mock_farms.return_value = {"farms": [{"farmId": "farm-1"}]}
+            required = {"farm_id"}
+            _apply_cli_options_to_config(required_options=required)
+            # The caller's set is unchanged, so a second call still validates.
+            assert required == {"farm_id"}
+
+            _apply_cli_options_to_config(required_options=required)
+            assert required == {"farm_id"}

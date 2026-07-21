@@ -166,7 +166,7 @@ def _auto_select_queue(config: Optional[ConfigParser] = None) -> Optional[str]:
 
 
 def _apply_cli_options_to_config(
-    *, config: Optional[ConfigParser] = None, required_options: Set[str] = set(), **args
+    *, config: Optional[ConfigParser] = None, required_options: Optional[Set[str]] = None, **args
 ) -> Optional[ConfigParser]:
     """
     Modifies an AWS Deadline Cloud config object to apply standard option names to it, such as
@@ -176,6 +176,10 @@ def _apply_cli_options_to_config(
         config (ConfigParser, optional): an AWS Deadline Cloud config, read by config_file.read_config().
                 If not provided, loads the config from disk.
     """
+    # Use a fresh, local copy so the caller's set is never mutated (this function
+    # removes entries from required_options as it validates them). A shared mutable
+    # default would otherwise be emptied and silently skip validation on later calls.
+    required_options = set(required_options) if required_options else set()
     # Only work with a custom config if there are standard options provided
     if any(value is not None for value in args.values()):
         if config is None:
