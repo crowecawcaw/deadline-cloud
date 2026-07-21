@@ -58,6 +58,27 @@ class TestToolRegistry:
             assert "maxResults" not in params, f"{tool_name} should not expose maxResults"
             assert "max_results" not in params, f"{tool_name} should not expose max_results"
 
+    def test_auto_paginating_tools_do_not_expose_nextToken(self):
+        """Auto-paginating list tools page through ALL results internally, passing
+        nextToken to the underlying API themselves. Exposing nextToken on the tool
+        signature causes it to be supplied both by the caller and internally, raising
+        ``TypeError: ... got multiple values for 'nextToken'``, so it must not be
+        exposed."""
+        auto_paginating_tools = [
+            "list_farms",
+            "list_queues",
+            "list_jobs",
+            "list_fleets",
+            "list_storage_profiles_for_queue",
+            "list_sessions",
+            "list_steps",
+            "list_tasks",
+        ]
+        for tool_name in auto_paginating_tools:
+            params = TOOL_REGISTRY[tool_name]["param_names"]
+            assert "nextToken" not in params, f"{tool_name} should not expose nextToken"
+            assert "next_token" not in params, f"{tool_name} should not expose next_token"
+
 
 class TestUtilityFunctions:
     """Test utility functions."""

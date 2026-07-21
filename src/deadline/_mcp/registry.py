@@ -28,17 +28,21 @@ def get_all_tool_names() -> List[str]:
 
 
 TOOL_REGISTRY: Dict[str, ToolDefinition] = {
+    # These list tools paginate through ALL results internally (they pass
+    # nextToken to the underlying API themselves), so nextToken is intentionally
+    # NOT exposed. Exposing it would let a caller pass nextToken both as a kwarg
+    # and internally, raising "got multiple values for 'nextToken'".
     "list_farms": {
         "func": api.list_farms,
-        "param_names": ["nextToken", "principalId"],
+        "param_names": ["principalId"],
     },
     "list_queues": {
         "func": api.list_queues,
-        "param_names": ["farmId", "principalId", "status", "nextToken"],
+        "param_names": ["farmId", "principalId", "status"],
     },
     "list_jobs": {
         "func": api.list_jobs,
-        "param_names": ["farmId", "queueId", "principalId", "nextToken"],
+        "param_names": ["farmId", "queueId", "principalId"],
     },
     "list_fleets": {
         "func": api.list_fleets,
@@ -47,12 +51,11 @@ TOOL_REGISTRY: Dict[str, ToolDefinition] = {
             "principalId",
             "displayName",
             "status",
-            "nextToken",
         ],
     },
     "list_storage_profiles_for_queue": {
         "func": api.list_storage_profiles_for_queue,
-        "param_names": ["farmId", "queueId", "nextToken"],
+        "param_names": ["farmId", "queueId"],
     },
     "check_authentication_status": {
         "func": api.check_authentication_status,
