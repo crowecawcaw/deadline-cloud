@@ -20,15 +20,17 @@ from deadline.job_attachments.exceptions import MisconfiguredInputsError
 from deadline.job_attachments.models import (
     AssetRootGroup,
     AssetUploadGroup,
+    Attachments,
     FileSystemLocation,
     FileSystemLocationType,
     JobAttachmentsFileSystem,
+    ManifestProperties,
     PathFormat,
     StorageProfile,
     StorageProfileOperatingSystemFamily,
 )
 from deadline.job_attachments.upload import S3AssetManager
-from deadline.job_attachments.progress_tracker import ProgressReportMetadata
+from deadline.job_attachments.progress_tracker import ProgressReportMetadata, SummaryStatistics
 
 from ..testing_utilities import patch_calls_for_create_job_from_job_bundle, write_test_asset_files
 from ..shared_constants import (
@@ -1336,3 +1338,94 @@ def test_create_job_from_job_bundle_debug_snapshot_no_attachments(
     mock.get_boto3_client().create_job.assert_not_called()
     # The snapshot files were written.
     assert os.path.isfile(os.path.join(str(tmp_path), "create_job_args.json"))
+    # No attachments means no "aws s3 cp" upload commands in the generated script.
+    with open(os.path.join(str(tmp_path), "submit_job.sh"), encoding="utf-8") as f:
+        submit_script = f.read()
+    assert "aws s3 cp" not in submit_script
+    assert "aws deadline create-job" in submit_script
+
+
+def test_create_job_from_job_bundle_debug_snapshot_with_attachments(
+    fresh_deadline_config, temp_job_bundle_dir, temp_assets_dir, tmp_path
+):
+    """
+    A debug snapshot of a bundle WITH job attachments must snapshot the assets
+    (via _snapshot_attachments, forwarding the caller's config for telemetry),
+    pass the bound asset_manager to _save_debug_snapshot, and include the
+    "aws s3 cp" upload commands in the generated submit scripts.
+
+    This is the other side of making ``asset_manager`` Optional: the attachments
+    branch must keep working with a real (non-None) asset manager.
+    """
+    custom_config = config.config_file.read_config()
+    config.set_setting("defaults.farm_id", MOCK_FARM_ID, config=custom_config)
+    config.set_setting("defaults.queue_id", MOCK_QUEUE_ID, config=custom_config)
+
+    snapshot_assets_return = (
+        SummaryStatistics(),
+        Attachments(
+            [
+                ManifestProperties(
+                    rootPath="/mnt/root/path1",
+                    rootPathFormat=PathFormat.POSIX,
+                    inputManifestPath="mock-manifest",
+                    inputManifestHash="mock-manifest-hash",
+                    outputRelativeDirectories=["."],
+                ),
+            ],
+        ),
+    )
+
+    with (
+        patch_calls_for_create_job_from_job_bundle() as mock,
+        patch.object(
+            api._submit_job_bundle,
+            "_snapshot_attachments",
+            wraps=api._submit_job_bundle._snapshot_attachments,
+        ) as mock_snapshot_attachments,
+        patch.object(
+            S3AssetManager, "snapshot_assets", return_value=snapshot_assets_return
+        ) as mock_snapshot_assets,
+    ):
+        # Write a JSON template
+        with open(os.path.join(temp_job_bundle_dir, "template.json"), "w", encoding="utf8") as f:
+            f.write(MOCK_JOB_TEMPLATE_CASES["MINIMAL_JSON"][1])
+
+        # Create asset files and reference them so the attachments path runs.
+        asset_contents = {"asset-1.txt": "This is asset 1"}
+        write_test_asset_files(temp_assets_dir, asset_contents)
+        asset_references = {
+            "inputs": {"filenames": [os.path.join(temp_assets_dir, "asset-1.txt")]},
+        }
+        with open(
+            os.path.join(temp_job_bundle_dir, "asset_references.json"), "w", encoding="utf8"
+        ) as f:
+            json.dump({"assetReferences": asset_references}, f)
+
+        response = api.create_job_from_job_bundle(
+            temp_job_bundle_dir,
+            config=custom_config,
+            queue_parameter_definitions=[],
+            known_asset_paths=[temp_assets_dir],
+            debug_snapshot_dir=str(tmp_path),
+        )
+
+    # No job is submitted and no upload happens when creating a debug snapshot.
+    assert response is None
+    mock.get_boto3_client().create_job.assert_not_called()
+    mock.upload_assets.assert_not_called()
+    mock_snapshot_assets.assert_called_once()
+
+    # The snapshot path was used and received the caller's config.
+    mock_snapshot_attachments.assert_called_once()
+    _, call_kwargs = mock_snapshot_attachments.call_args
+    assert call_kwargs.get("config") is custom_config
+
+    # The snapshot includes the attachments and the s3 upload commands.
+    with open(os.path.join(str(tmp_path), "create_job_args.json"), encoding="utf-8") as f:
+        create_job_args = json.load(f)
+    assert "attachments" in create_job_args
+    with open(os.path.join(str(tmp_path), "submit_job.sh"), encoding="utf-8") as f:
+        submit_script = f.read()
+    assert "aws s3 cp" in submit_script
+    assert "aws deadline create-job" in submit_script
