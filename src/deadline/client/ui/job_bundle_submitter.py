@@ -411,9 +411,26 @@ def show_job_bundle_submitter(
     )
 
     if job_parameters:
+        # The controller is a global singleton that outlives this dialog, and its
+        # queue_parameters_updated signal also fires with [] to clear stale state
+        # (farm/queue switch, fetch error, nothing selected). Validate single-shot
+        # against the first real (non-empty) load, then disconnect so the closure
+        # over submitter_dialog can't fire against a closed dialog later.
+        controller = submitter_dialog.shared_job_settings._controller
+
+        def disconnect_validation_callback():
+            try:
+                controller.queue_parameters_updated.disconnect(validate_parameters_after_queue_load)
+            except (TypeError, RuntimeError):
+                # Already disconnected (validation ran before the dialog was destroyed).
+                pass
 
         def validate_parameters_after_queue_load(queue_parameters: list):
             """Validate CLI parameters against loaded queue parameters and set parameter values"""
+            if not queue_parameters:
+                # A clearing emission, not a completed load. Keep waiting.
+                return
+            disconnect_validation_callback()
             if not _validate_and_warn_about_parameters(
                 job_parameters, initial_settings.parameters, queue_parameters, submitter_dialog
             ):
@@ -421,9 +438,9 @@ def show_job_bundle_submitter(
                 submitter_dialog.close()
 
         # Validate CLI params once the controller finishes loading queue params.
-        submitter_dialog.shared_job_settings._controller.queue_parameters_updated.connect(
-            validate_parameters_after_queue_load
-        )
+        controller.queue_parameters_updated.connect(validate_parameters_after_queue_load)
+        # If the dialog goes away before any load completes, tear the connection down.
+        submitter_dialog.destroyed.connect(disconnect_validation_callback)
 
     submitter_dialog.show()
     return submitter_dialog

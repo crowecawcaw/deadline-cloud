@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from qtpy.QtCore import QObject  # type: ignore
+
 from deadline.client.ui.controllers._deadline_controller import DeadlineUIController
 from deadline.client.ui.controllers._thread_pool import DeadlineThreadPool
 from deadline.client.ui.dataclasses import JobBundleSettings
@@ -51,8 +53,9 @@ class TestGuiSubmitCliParameterValidationWiring:
         so the widget does not kick off a background load.
 
         If ``emit_after`` is provided, the controller's queue_parameters_updated signal is
-        emitted with it *inside* the patched context so the connected validation callback runs
-        against the mocked ``_validate_and_warn_about_parameters``. Returns
+        emitted *inside* the patched context so the connected validation callback runs
+        against the mocked ``_validate_and_warn_about_parameters``. It may be a single
+        queue-parameter list, or a list of such lists to emit in sequence. Returns
         (dialog, widget, validate_mock)."""
         bundle_dir = _make_bundle(tmp_path)
 
@@ -62,8 +65,11 @@ class TestGuiSubmitCliParameterValidationWiring:
         )
         qtbot.addWidget(real_widget)
 
-        class FakeDialog:
+        class FakeDialog(QObject):
+            # QObject supplies the real ``destroyed`` signal the production code
+            # connects its cleanup to.
             def __init__(self, **kwargs):
+                super().__init__()
                 self.shared_job_settings = real_widget
                 self.closed = False
 
@@ -98,7 +104,11 @@ class TestGuiSubmitCliParameterValidationWiring:
             # Emitting inside the patched block keeps _validate_and_warn_about_parameters mocked
             # when the connected callback fires.
             if emit_after is not None:
-                real_widget._controller.queue_parameters_updated.emit(emit_after)
+                emissions = (
+                    emit_after if emit_after and isinstance(emit_after[0], list) else [emit_after]
+                )
+                for emission in emissions:
+                    real_widget._controller.queue_parameters_updated.emit(emission)
         return dialog, real_widget, validate_mock
 
     def test_parameter_path_does_not_raise_attribute_error(
@@ -142,3 +152,54 @@ class TestGuiSubmitCliParameterValidationWiring:
         )
 
         assert dialog.closed is True
+
+    def test_empty_emission_does_not_invoke_validator(self, qtbot, fresh_deadline_config, tmp_path):
+        """A clearing emission ([]) — e.g. farm/queue switch or fetch error — must not run
+        validation (which would spuriously flag queue params as unrecognized)."""
+        _dialog, _widget, validate_mock = self._run(
+            qtbot,
+            tmp_path,
+            job_parameters=[{"name": "Foo", "value": "bar"}],
+            validate_side_effect=lambda *a, **k: True,
+            emit_after=[],
+        )
+
+        validate_mock.assert_not_called()
+
+    def test_validator_runs_single_shot_on_first_nonempty_load(
+        self, qtbot, fresh_deadline_config, tmp_path
+    ):
+        """Validation waits through clearing emissions, runs once on the first non-empty load,
+        and disconnects so later reloads don't re-validate."""
+        queue_parameters = [{"name": "CondaChannels", "type": "STRING"}]
+        _dialog, _widget, validate_mock = self._run(
+            qtbot,
+            tmp_path,
+            job_parameters=[{"name": "Foo", "value": "bar"}],
+            validate_side_effect=lambda *a, **k: True,
+            emit_after=[[], queue_parameters, [{"name": "Other"}]],
+        )
+
+        validate_mock.assert_called_once()
+        assert validate_mock.call_args.args[2] == queue_parameters
+
+    def test_dialog_destroyed_disconnects_validator(self, qtbot, fresh_deadline_config, tmp_path):
+        """Destroying the dialog before queue params load tears down the connection, so the
+        stale closure never fires against the singleton controller."""
+        dialog, widget, validate_mock = self._run(
+            qtbot,
+            tmp_path,
+            job_parameters=[{"name": "Foo", "value": "bar"}],
+            validate_side_effect=lambda *a, **k: True,
+        )
+
+        # Simulate the dialog being destroyed before any load completes.
+        dialog.destroyed.emit()
+
+        with patch(
+            "deadline.client.ui.job_bundle_submitter._validate_and_warn_about_parameters",
+            validate_mock,
+        ):
+            widget._controller.queue_parameters_updated.emit([{"name": "CondaChannels"}])
+
+        validate_mock.assert_not_called()
