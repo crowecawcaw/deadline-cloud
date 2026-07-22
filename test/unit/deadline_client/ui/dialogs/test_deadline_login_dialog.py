@@ -56,7 +56,7 @@ class TestDeadlineLoginDialogReturnValue:
             qtbot.addWidget(dialog)
 
             def click_ok():
-                ok_button = dialog.button(QMessageBox.Ok)
+                ok_button = dialog.button(QMessageBox.StandardButton.Ok)
                 if ok_button is None:
                     # Success handler hasn't swapped in the Ok button yet; retry.
                     QTimer.singleShot(10, click_ok)
@@ -92,7 +92,7 @@ class TestDeadlineLoginDialogReturnValue:
                 if not login_started.is_set():
                     QTimer.singleShot(10, click_cancel)
                     return
-                dialog.button(QMessageBox.Cancel).click()
+                dialog.button(QMessageBox.StandardButton.Cancel).click()
 
             QTimer.singleShot(10, click_cancel)
 
@@ -109,7 +109,7 @@ class TestDeadlineLoginDialogReturnValue:
             qtbot.addWidget(dialog)
 
             def close_dialog():
-                close_button = dialog.button(QMessageBox.Close)
+                close_button = dialog.button(QMessageBox.StandardButton.Close)
                 if close_button is None:
                     # Error handler hasn't run yet; poll again shortly.
                     QTimer.singleShot(10, close_dialog)
