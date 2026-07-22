@@ -366,15 +366,21 @@ class TestCorruptBooleanSetting:
         """
         import deadline.client.ui.dialogs.deadline_config_dialog as dcd
 
-        dcd.config_file.get_setting.side_effect = lambda name, config=None: (
-            "notabool"
-            if name == "settings.submitter_update_notification"
-            else "(default)"
-            if name == "defaults.aws_profile_name"
-            else ""
-        )
-
-        config_widget.refresh()
+        # ``dcd.config_file`` is a MagicMock here (patched by the mock_api
+        # fixture); patch.object scopes the corrupt-value side_effect to this
+        # test and restores the fixture's side_effect afterward.
+        with patch.object(
+            dcd.config_file,
+            "get_setting",
+            side_effect=lambda name, config=None: (
+                "notabool"
+                if name == "settings.submitter_update_notification"
+                else "(default)"
+                if name == "defaults.aws_profile_name"
+                else ""
+            ),
+        ):
+            config_widget.refresh()
 
         assert config_widget.submitter_update_notification.isChecked() is True
 
