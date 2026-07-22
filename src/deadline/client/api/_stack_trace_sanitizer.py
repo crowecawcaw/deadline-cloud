@@ -42,13 +42,12 @@ def _normalize(path: str) -> str:
 def _known_package_install_dirs() -> Dict[str, List[str]]:
     """Map each known package name to the normalized directories it is installed in.
 
-    These are the genuine on-disk locations of the package root (the directory
-    that *contains* the package, e.g. ``.../site-packages``). They are used to
-    distinguish a real framework frame from a customer directory that merely
-    shares a package's name (e.g. a customer project tree rooted at
-    ``~/deadline/...``). Only packages that are importable with a real
-    filesystem location contribute an anchor; anything else (frozen modules
-    without a file) is simply omitted.
+    These are the genuine on-disk locations of the package directory itself
+    (e.g. ``.../site-packages/deadline``). They are used to distinguish a real
+    framework frame from a customer directory that merely shares a package's
+    name (e.g. a customer project tree rooted at ``~/deadline/...``). Only
+    packages that are importable with a real filesystem location contribute an
+    anchor; anything else (frozen modules without a file) is simply omitted.
 
     ``deadline`` and ``openjd`` are PEP 420 namespace packages, so a single
     namespace can be contributed by several distributions installed into
@@ -114,13 +113,14 @@ def _sanitize_path(filepath: str) -> str:
         if anchors is not None and _normalize("/".join(parts[: i + 1])) in anchors:
             return "/".join(parts[i:])
 
-    # Unknown third-party library installed into a venv: keep the
-    # library-relative subpath but drop everything above site-packages
-    # (which would otherwise leak the customer's home / venv layout).
-    # Same right-to-left rationale as above — the real site-packages
-    # directory is always at the tail.
+    # Unknown third-party library installed into a venv or system Python:
+    # keep the library-relative subpath but drop everything above the
+    # site-packages / dist-packages directory (which would otherwise leak
+    # the customer's home / venv layout). "dist-packages" is the Debian /
+    # Ubuntu system-Python equivalent of "site-packages". Same right-to-left
+    # rationale as above — the real packages directory is always at the tail.
     for i in range(len(parts) - 1, -1, -1):
-        if parts[i] == "site-packages" and i + 1 < len(parts):
+        if parts[i] in ("site-packages", "dist-packages") and i + 1 < len(parts):
             return "/".join(parts[i + 1 :])
 
     # Anything else (customer scripts, project trees) — keep only the
