@@ -413,52 +413,37 @@ def show_job_bundle_submitter(
     if job_parameters:
         # The controller is a global singleton that outlives this dialog, and its
         # queue_parameters_updated signal also fires with [] to clear stale state
-        # (farm/queue switch, nothing selected). A queue may genuinely have zero
-        # queue parameters, so we can't gate on payload non-emptiness — that would
-        # never validate against an empty-but-real load. Instead we recognize a
-        # completed load by the queue_parameters_loading(False) emission that the
-        # controller sends immediately before queue_parameters_updated on fetch
-        # completion (success or error); clearing emissions have no such prefix.
-        # Both emits happen consecutively in the same main-thread slot, so nothing
-        # can interleave between them. Validate single-shot on the first completed
-        # load, then disconnect so the closure over submitter_dialog can't fire
-        # against a closed dialog later.
+        # (farm/queue switch, fetch error, nothing selected) — indistinguishable
+        # from a queue that genuinely has zero queue parameters. Connect to the
+        # success-only queue_parameters_load_succeeded signal instead, so we only
+        # validate against a real, successful load (which may legitimately be
+        # empty) and keep waiting through clears and transient fetch errors.
+        # Validate single-shot, then disconnect so the closure over
+        # submitter_dialog can't fire against a closed dialog later.
         controller = submitter_dialog.shared_job_settings._controller
-        # Mutable cell: True right after a load finishes (loading(False)), reset
-        # when a new load starts (loading(True)).
-        load_finished = [False]
 
-        def track_queue_parameters_loading(is_loading: bool):
-            load_finished[0] = not is_loading
-
-        def disconnect_validation_signals():
-            for signal, slot in (
-                (controller.queue_parameters_loading, track_queue_parameters_loading),
-                (controller.queue_parameters_updated, validate_parameters_after_queue_load),
-            ):
-                try:
-                    signal.disconnect(slot)
-                except (TypeError, RuntimeError):
-                    # Already disconnected (validation ran before the dialog was destroyed).
-                    pass
+        def disconnect_validation_callback():
+            try:
+                controller.queue_parameters_load_succeeded.disconnect(
+                    validate_parameters_after_queue_load
+                )
+            except (TypeError, RuntimeError):
+                # Already disconnected (validation ran before the dialog was destroyed).
+                pass
 
         def validate_parameters_after_queue_load(queue_parameters: list):
             """Validate CLI parameters against loaded queue parameters and set parameter values"""
-            if not load_finished[0]:
-                # A clearing emission, not a completed load. Keep waiting.
-                return
-            disconnect_validation_signals()
+            disconnect_validation_callback()
             if not _validate_and_warn_about_parameters(
                 job_parameters, initial_settings.parameters, queue_parameters, submitter_dialog
             ):
                 # User cancelled at the validation warning.
                 submitter_dialog.close()
 
-        # Validate CLI params once the controller finishes loading queue params.
-        controller.queue_parameters_loading.connect(track_queue_parameters_loading)
-        controller.queue_parameters_updated.connect(validate_parameters_after_queue_load)
-        # If the dialog goes away before any load completes, tear the connections down.
-        submitter_dialog.destroyed.connect(disconnect_validation_signals)
+        # Validate CLI params once the controller successfully loads queue params.
+        controller.queue_parameters_load_succeeded.connect(validate_parameters_after_queue_load)
+        # If the dialog goes away before any load succeeds, tear the connection down.
+        submitter_dialog.destroyed.connect(disconnect_validation_callback)
 
     submitter_dialog.show()
     return submitter_dialog
