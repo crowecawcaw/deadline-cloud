@@ -451,6 +451,10 @@ def show_job_bundle_submitter(
         controller.queue_parameters_load_succeeded.connect(validate_parameters_after_queue_load)
         connected[0] = True
         # If the dialog goes away before any load succeeds, tear the connection down.
+        # The dialog does not set WA_DeleteOnClose, so an ordinary close never emits
+        # destroyed — hook finished (emitted on accept/reject/close of a visible
+        # dialog) for the close path, and destroyed for deletion without done().
+        submitter_dialog.finished.connect(lambda _result: disconnect_validation_callback())
         submitter_dialog.destroyed.connect(disconnect_validation_callback)
 
     submitter_dialog.show()

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from qtpy.QtCore import QObject  # type: ignore
+from qtpy.QtWidgets import QDialog  # type: ignore
 
 from deadline.client.ui.controllers._deadline_controller import DeadlineUIController
 from deadline.client.ui.controllers._thread_pool import DeadlineThreadPool
@@ -75,9 +75,11 @@ class TestGuiSubmitCliParameterValidationWiring:
         )
         qtbot.addWidget(real_widget)
 
-        class FakeDialog(QObject):
-            # QObject supplies the real ``destroyed`` signal the production code
-            # connects its cleanup to.
+        class FakeDialog(QDialog):
+            # A real QDialog so the production code's teardown hooks (``finished``
+            # on ordinary close, ``destroyed`` on deletion) behave exactly as they
+            # do for SubmitJobToDeadlineDialog, which also does not set
+            # WA_DeleteOnClose.
             def __init__(self, **kwargs):
                 super().__init__()
                 self.shared_job_settings = real_widget
@@ -88,6 +90,7 @@ class TestGuiSubmitCliParameterValidationWiring:
 
             def close(self):
                 self.closed = True
+                return super().close()
 
         template = {"name": "Bundle Job", "steps": []}
         validate_mock = MagicMock(side_effect=validate_side_effect)
@@ -263,6 +266,38 @@ class TestGuiSubmitCliParameterValidationWiring:
         dialog.destroyed.emit()
 
         assert not [w for w in recwarn.list if "disconnect" in str(w.message)]
+
+    def test_dialog_closed_before_load_disconnects_validator(
+        self, qtbot, fresh_deadline_config, tmp_path
+    ):
+        """Ordinarily closing the dialog (user hits X/Esc; no WA_DeleteOnClose, so the
+        QObject stays alive and ``destroyed`` never fires) before any successful load
+        tears down the connection: a later success emission from the long-lived
+        singleton must not run the validator against the closed dialog."""
+        dialog, widget, validate_mock = self._run(
+            qtbot,
+            tmp_path,
+            job_parameters=[{"name": "Foo", "value": "bar"}],
+            validate_side_effect=lambda *a, **k: True,
+        )
+        qtbot.addWidget(dialog)
+
+        # Make the dialog visible (as show_job_bundle_submitter does for real) and
+        # close it the ordinary way — closeEvent -> reject() -> finished.
+        QDialog.show(dialog)
+        assert dialog.isVisible()
+        QDialog.close(dialog)
+        assert not dialog.isVisible()
+
+        with patch(
+            "deadline.client.ui.job_bundle_submitter._validate_and_warn_about_parameters",
+            validate_mock,
+        ):
+            # A successful-load emission (e.g. triggered by another consumer of the
+            # singleton), which would run the validator if the connection were live.
+            widget._controller.queue_parameters_load_succeeded.emit([{"name": "CondaChannels"}])
+
+        validate_mock.assert_not_called()
 
     def test_dialog_destroyed_disconnects_validator(self, qtbot, fresh_deadline_config, tmp_path):
         """Destroying the dialog before queue params load tears down the connection, so the
