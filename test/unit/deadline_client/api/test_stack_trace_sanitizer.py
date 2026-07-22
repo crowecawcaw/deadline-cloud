@@ -12,6 +12,8 @@ not leak customer path segments into telemetry.
 
 import traceback
 
+import pytest
+
 from deadline.client.api._stack_trace_sanitizer import (
     _sanitize_path,
     _sanitize_traceback,
@@ -41,6 +43,46 @@ class TestSanitizePathKeepsFrameworkPaths:
     def test_windows_user_site_packages_is_kept_relative(self):
         raw = r"C:\Users\bob\AppData\Roaming\Python\Python311\site-packages\somelib\core.py"
         assert _sanitize_path(raw) == "somelib/core.py"
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            # System-wide python.org installer (all-users): under Program
+            # Files, which contains a space — the anchor must still hold.
+            pytest.param(
+                r"C:\Program Files\Python311\Lib\site-packages\botocore\client.py",
+                "botocore/client.py",
+                id="win_system_wide_program_files",
+            ),
+            pytest.param(
+                r"C:\Program Files\Python311\Lib\site-packages\deadline\client\api\foo.py",
+                "deadline/client/api/foo.py",
+                id="win_system_wide_program_files_deadline",
+            ),
+            # Microsoft Store Python: WindowsApps install root.
+            pytest.param(
+                r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0"
+                r"\Lib\site-packages\somelib\core.py",
+                "somelib/core.py",
+                id="win_ms_store_python",
+            ),
+            # A customer-named "deadline" directory earlier in the SAME path
+            # must not defeat (or extend) the genuine system-wide anchor.
+            pytest.param(
+                r"D:\deadline\Python311\Lib\site-packages\somelib\core.py",
+                "somelib/core.py",
+                id="win_customer_deadline_dir_above_real_site_packages",
+            ),
+        ],
+    )
+    def test_windows_non_venv_layouts_are_kept_relative(self, raw, expected):
+        """Windows system-wide / Store / per-user (non-venv) interpreter
+        layouts must keep genuine package frames package-relative while
+        never emitting customer path segments above site-packages."""
+        sanitized = _sanitize_path(raw)
+        assert sanitized == expected
+        for marker in ("Program Files", "WindowsApps", "D:", "C:"):
+            assert marker not in sanitized
 
 
 class TestSanitizePathRedactsCustomerDeadlineDir:
