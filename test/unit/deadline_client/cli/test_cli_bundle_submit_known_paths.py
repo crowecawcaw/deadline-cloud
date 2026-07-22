@@ -95,6 +95,51 @@ def test_filter_redundant_known_paths(input, expected):
         ),
         # No roots -> nothing is contained.
         (os.path.join(os.sep, "trusted", "project"), [], False),
+        # A candidate for which the root is a string prefix with no separator
+        # (/trusted/projectextra) is NOT contained.
+        (
+            os.path.join(os.sep, "trusted", "project") + "extra",
+            [os.path.join(os.sep, "trusted", "project")],
+            False,
+        ),
+        # A '..' traversal that escapes the root is NOT contained.
+        (
+            os.path.join(os.sep, "trusted", "project", "..", "project-secret", "f"),
+            [os.path.join(os.sep, "trusted", "project")],
+            False,
+        ),
+        # A '..' round-trip that stays inside the root IS contained.
+        (
+            os.path.join(os.sep, "trusted", "project", "sub", "..", "f"),
+            [os.path.join(os.sep, "trusted", "project")],
+            True,
+        ),
+        # A trailing separator on the root does not defeat sibling-prefix rejection.
+        (
+            os.path.join(os.sep, "trusted", "project-secret", "f"),
+            [os.path.join(os.sep, "trusted", "project") + os.sep],
+            False,
+        ),
+        # A trailing separator on the root still accepts a genuine descendant.
+        (
+            os.path.join(os.sep, "trusted", "project", "f"),
+            [os.path.join(os.sep, "trusted", "project") + os.sep],
+            True,
+        ),
+        # The parent directory of a root is NOT contained.
+        (
+            os.path.join(os.sep, "trusted"),
+            [os.path.join(os.sep, "trusted", "project")],
+            False,
+        ),
+        # Case-variant alias: os.path.commonpath compares case-insensitively on
+        # Windows (matching the filesystem) and case-sensitively on POSIX, where
+        # the mismatch fails closed (warning still fires).
+        (
+            os.path.join(os.sep, "Trusted", "Project", "f"),
+            [os.path.join(os.sep, "trusted", "project")],
+            os.name == "nt",
+        ),
     ],
 )
 def test_is_known_path(path, roots, expected):
