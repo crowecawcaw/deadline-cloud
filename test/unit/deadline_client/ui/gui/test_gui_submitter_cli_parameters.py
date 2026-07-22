@@ -246,6 +246,24 @@ class TestGuiSubmitCliParameterValidationWiring:
         validate_mock.assert_called_once()
         assert validate_mock.call_args.args[2] == queue_parameters
 
+    def test_destroy_after_validation_does_not_warn(
+        self, qtbot, fresh_deadline_config, tmp_path, recwarn
+    ):
+        """Dialog destruction after validation already ran (and self-disconnected) must not
+        attempt a second disconnect — PySide6 reports that with a RuntimeWarning."""
+        dialog, _widget, validate_mock = self._run(
+            qtbot,
+            tmp_path,
+            job_parameters=[{"name": "Foo", "value": "bar"}],
+            validate_side_effect=lambda *a, **k: True,
+            emit_after=[("load", [{"name": "CondaChannels"}])],
+        )
+        validate_mock.assert_called_once()
+
+        dialog.destroyed.emit()
+
+        assert not [w for w in recwarn.list if "disconnect" in str(w.message)]
+
     def test_dialog_destroyed_disconnects_validator(self, qtbot, fresh_deadline_config, tmp_path):
         """Destroying the dialog before queue params load tears down the connection, so the
         stale closure never fires against the singleton controller."""

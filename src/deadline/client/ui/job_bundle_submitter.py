@@ -421,14 +421,21 @@ def show_job_bundle_submitter(
         # Validate single-shot, then disconnect so the closure over
         # submitter_dialog can't fire against a closed dialog later.
         controller = submitter_dialog.shared_job_settings._controller
+        # Mutable cell so both closures below share the connection state. Guards
+        # the double-disconnect (validation ran, then the dialog is destroyed),
+        # which PySide6 reports with a RuntimeWarning rather than an exception.
+        connected = [False]
 
         def disconnect_validation_callback():
+            if not connected[0]:
+                return
+            connected[0] = False
             try:
                 controller.queue_parameters_load_succeeded.disconnect(
                     validate_parameters_after_queue_load
                 )
             except (TypeError, RuntimeError):
-                # Already disconnected (validation ran before the dialog was destroyed).
+                # Some bindings raise instead of warn when already disconnected.
                 pass
 
         def validate_parameters_after_queue_load(queue_parameters: list):
@@ -442,6 +449,7 @@ def show_job_bundle_submitter(
 
         # Validate CLI params once the controller successfully loads queue params.
         controller.queue_parameters_load_succeeded.connect(validate_parameters_after_queue_load)
+        connected[0] = True
         # If the dialog goes away before any load succeeds, tear the connection down.
         submitter_dialog.destroyed.connect(disconnect_validation_callback)
 
