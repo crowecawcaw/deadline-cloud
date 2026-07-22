@@ -52,11 +52,18 @@ class TestGuiSubmitCliParameterValidationWiring:
         the dialog's shared_job_settings. No farm/queue is configured (fresh_deadline_config),
         so the widget does not kick off a background load.
 
-        If ``emit_after`` is provided, the controller's queue_parameters_updated signal is
-        emitted *inside* the patched context so the connected validation callback runs
-        against the mocked ``_validate_and_warn_about_parameters``. It may be a single
-        queue-parameter list, or a list of such lists to emit in sequence. Returns
-        (dialog, widget, validate_mock)."""
+        If ``emit_after`` is provided, controller signals are emitted *inside* the patched
+        context so the connected validation callback runs against the mocked
+        ``_validate_and_warn_about_parameters``. It is a list of (kind, payload) tuples
+        emitted in sequence, mirroring the controller's real emission patterns:
+
+        - ("load", payload): a completed fetch — queue_parameters_loading(True), then
+          queue_parameters_loading(False), then queue_parameters_updated(payload)
+          (see DeadlineUIController._on_queue_parameters_success/_error).
+        - ("clear", payload): a bare queue_parameters_updated(payload) with no loading
+          prefix, as emitted on farm/queue switch or when nothing is selected.
+
+        Returns (dialog, widget, validate_mock)."""
         bundle_dir = _make_bundle(tmp_path)
 
         settings = JobBundleSettings(input_job_bundle_dir=bundle_dir, name="n")
@@ -104,11 +111,15 @@ class TestGuiSubmitCliParameterValidationWiring:
             # Emitting inside the patched block keeps _validate_and_warn_about_parameters mocked
             # when the connected callback fires.
             if emit_after is not None:
-                emissions = (
-                    emit_after if emit_after and isinstance(emit_after[0], list) else [emit_after]
-                )
-                for emission in emissions:
-                    real_widget._controller.queue_parameters_updated.emit(emission)
+                controller = real_widget._controller
+                for kind, payload in emit_after:
+                    if kind == "load":
+                        # A real fetch: loading toggles True -> False, then updated.
+                        controller.queue_parameters_loading.emit(True)
+                        controller.queue_parameters_loading.emit(False)
+                    else:
+                        assert kind == "clear"
+                    controller.queue_parameters_updated.emit(payload)
         return dialog, real_widget, validate_mock
 
     def test_parameter_path_does_not_raise_attribute_error(
@@ -126,15 +137,14 @@ class TestGuiSubmitCliParameterValidationWiring:
     def test_queue_parameters_update_invokes_validator_with_param_list(
         self, qtbot, fresh_deadline_config, tmp_path
     ):
-        """Emitting the controller's queue_parameters_updated signal runs the validator with the
-        emitted queue-parameter list."""
+        """A completed queue-parameter load runs the validator with the loaded list."""
         queue_parameters = [{"name": "CondaChannels", "type": "STRING"}]
         _dialog, _widget, validate_mock = self._run(
             qtbot,
             tmp_path,
             job_parameters=[{"name": "Foo", "value": "bar"}],
             validate_side_effect=lambda *a, **k: True,
-            emit_after=queue_parameters,
+            emit_after=[("load", queue_parameters)],
         )
 
         validate_mock.assert_called_once()
@@ -148,28 +158,48 @@ class TestGuiSubmitCliParameterValidationWiring:
             tmp_path,
             job_parameters=[{"name": "Foo", "value": "bar"}],
             validate_side_effect=lambda *a, **k: False,
-            emit_after=[{"name": "Foo"}],
+            emit_after=[("load", [{"name": "Foo"}])],
         )
 
         assert dialog.closed is True
 
-    def test_empty_emission_does_not_invoke_validator(self, qtbot, fresh_deadline_config, tmp_path):
-        """A clearing emission ([]) — e.g. farm/queue switch or fetch error — must not run
-        validation (which would spuriously flag queue params as unrecognized)."""
+    def test_clearing_emission_does_not_invoke_validator(
+        self, qtbot, fresh_deadline_config, tmp_path
+    ):
+        """A clearing emission ([] with no loading prefix) — e.g. farm/queue switch or nothing
+        selected — must not run validation (which would spuriously flag queue params as
+        unrecognized)."""
         _dialog, _widget, validate_mock = self._run(
             qtbot,
             tmp_path,
             job_parameters=[{"name": "Foo", "value": "bar"}],
             validate_side_effect=lambda *a, **k: True,
-            emit_after=[],
+            emit_after=[("clear", [])],
         )
 
         validate_mock.assert_not_called()
 
-    def test_validator_runs_single_shot_on_first_nonempty_load(
+    def test_empty_but_real_load_still_invokes_validator(
         self, qtbot, fresh_deadline_config, tmp_path
     ):
-        """Validation waits through clearing emissions, runs once on the first non-empty load,
+        """A queue that genuinely has zero queue parameters still validates: a completed load
+        (loading True -> False, then updated([])) runs the validator so an unrecognized CLI
+        --parameter is flagged rather than slipping through."""
+        _dialog, _widget, validate_mock = self._run(
+            qtbot,
+            tmp_path,
+            job_parameters=[{"name": "Foo", "value": "bar"}],
+            validate_side_effect=lambda *a, **k: True,
+            emit_after=[("load", [])],
+        )
+
+        validate_mock.assert_called_once()
+        assert validate_mock.call_args.args[2] == []
+
+    def test_validator_runs_single_shot_on_first_completed_load(
+        self, qtbot, fresh_deadline_config, tmp_path
+    ):
+        """Validation waits through clearing emissions, runs once on the first completed load,
         and disconnects so later reloads don't re-validate."""
         queue_parameters = [{"name": "CondaChannels", "type": "STRING"}]
         _dialog, _widget, validate_mock = self._run(
@@ -177,7 +207,11 @@ class TestGuiSubmitCliParameterValidationWiring:
             tmp_path,
             job_parameters=[{"name": "Foo", "value": "bar"}],
             validate_side_effect=lambda *a, **k: True,
-            emit_after=[[], queue_parameters, [{"name": "Other"}]],
+            emit_after=[
+                ("clear", []),
+                ("load", queue_parameters),
+                ("load", [{"name": "Other"}]),
+            ],
         )
 
         validate_mock.assert_called_once()
@@ -200,6 +234,10 @@ class TestGuiSubmitCliParameterValidationWiring:
             "deadline.client.ui.job_bundle_submitter._validate_and_warn_about_parameters",
             validate_mock,
         ):
+            # A full completed-load emission pattern, which would run the validator
+            # if the connections were still live.
+            widget._controller.queue_parameters_loading.emit(True)
+            widget._controller.queue_parameters_loading.emit(False)
             widget._controller.queue_parameters_updated.emit([{"name": "CondaChannels"}])
 
         validate_mock.assert_not_called()
