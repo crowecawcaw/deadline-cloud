@@ -34,6 +34,14 @@ class TestSanitizePathKeepsFrameworkPaths:
         raw = r"C:\Python311\Lib\site-packages\deadline\client\api\foo.py"
         assert _sanitize_path(raw) == "deadline/client/api/foo.py"
 
+    def test_debian_dist_packages_is_kept_relative(self):
+        raw = "/usr/lib/python3/dist-packages/somelib/core.py"
+        assert _sanitize_path(raw) == "somelib/core.py"
+
+    def test_windows_user_site_packages_is_kept_relative(self):
+        raw = r"C:\Users\bob\AppData\Roaming\Python\Python311\site-packages\somelib\core.py"
+        assert _sanitize_path(raw) == "somelib/core.py"
+
 
 class TestSanitizePathRedactsCustomerDeadlineDir:
     """A customer directory literally named ``deadline`` must not leak."""
@@ -51,6 +59,27 @@ class TestSanitizePathRedactsCustomerDeadlineDir:
         sanitized = _sanitize_path(raw)
         assert "secret_project" not in sanitized
         assert sanitized == "file.py"
+
+    def test_customer_dir_named_site_packages_is_redacted(self):
+        # A customer directory literally named "site-packages" that is NOT
+        # under a lib/pythonX.Y parent must not anchor the trim — everything
+        # below it is customer content.
+        raw = "/home/artist/site-packages/ClientSecretShow/tool.py"
+        sanitized = _sanitize_path(raw)
+        assert "ClientSecretShow" not in sanitized
+        assert sanitized == "tool.py"
+
+    def test_customer_dir_named_dist_packages_is_redacted(self):
+        raw = "/home/artist/dist-packages/ClientSecretShow/tool.py"
+        sanitized = _sanitize_path(raw)
+        assert "ClientSecretShow" not in sanitized
+        assert sanitized == "tool.py"
+
+    def test_windows_customer_dir_named_site_packages_is_redacted(self):
+        raw = r"C:\Users\bob\site-packages\ClientSecretShow\tool.py"
+        sanitized = _sanitize_path(raw)
+        assert "ClientSecretShow" not in sanitized
+        assert sanitized == "tool.py"
 
     def test_customer_deadline_dir_in_rendered_traceback_is_redacted(self):
         # End-to-end: fabricate a TracebackException whose frame filename is a

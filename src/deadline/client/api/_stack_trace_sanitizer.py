@@ -13,6 +13,7 @@ because we have no control over what third-party libraries put in them.
 import functools
 import importlib.util
 import os
+import re
 import traceback
 from typing import Dict, FrozenSet, List
 
@@ -85,6 +86,13 @@ def _known_package_install_dirs() -> Dict[str, List[str]]:
     return dirs
 
 
+# Parent directory names that corroborate a genuine site-packages /
+# dist-packages segment: "lib"/"Lib"/"lib64" (e.g. venv Lib\site-packages on
+# Windows), or a python version directory ("python3.11", "Python311", e.g.
+# POSIX venvs, Debian dist-packages, Windows user site-packages).
+_PACKAGES_DIR_PARENT_RE = re.compile(r"^([Ll]ib(64)?|[Pp]ython\d+(\.\d+)?)$")
+
+
 def _sanitize_path(filepath: str) -> str:
     """Replace a full file path with the package-relative portion or bare filename."""
     # Synthetic frame sources like "<string>", "<stdin>", or
@@ -119,8 +127,20 @@ def _sanitize_path(filepath: str) -> str:
     # the customer's home / venv layout). "dist-packages" is the Debian /
     # Ubuntu system-Python equivalent of "site-packages". Same right-to-left
     # rationale as above — the real packages directory is always at the tail.
-    for i in range(len(parts) - 1, -1, -1):
-        if parts[i] in ("site-packages", "dist-packages") and i + 1 < len(parts):
+    # A bare "site-packages" segment is not proof by itself — a customer
+    # directory can be named "site-packages" too, and everything below it
+    # would leak. Real interpreter layouts always place site-packages /
+    # dist-packages under a "lib"/"Lib"/"lib64" or "pythonX.Y" directory
+    # (POSIX: lib/python3.11/site-packages; Windows venv: Lib\site-packages;
+    # Debian: lib/python3/dist-packages), so require that corroborating
+    # parent before trusting the segment. When in doubt, fall through to the
+    # bare-filename branch: dropping detail is safe, leaking is not.
+    for i in range(len(parts) - 1, 0, -1):
+        if (
+            parts[i] in ("site-packages", "dist-packages")
+            and i + 1 < len(parts)
+            and _PACKAGES_DIR_PARENT_RE.match(parts[i - 1])
+        ):
             return "/".join(parts[i + 1 :])
 
     # Anything else (customer scripts, project trees) — keep only the
