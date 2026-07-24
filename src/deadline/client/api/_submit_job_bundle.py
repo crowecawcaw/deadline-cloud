@@ -80,6 +80,27 @@ def hashing_telemetry_callback(hashing_summary: SummaryStatistics):
     api.get_deadline_cloud_library_telemetry_client().record_hashing_summary(hashing_summary)
 
 
+def _is_known_path(path: Path | str, known_roots: Iterable[Path | str]) -> bool:
+    """Return True iff ``path`` equals or is a descendant of any root in ``known_roots``.
+
+    Containment is anchored via ``os.path.commonpath`` equality (the same idiom as
+    loader.py): a path is contained only when it shares a whole-component prefix with a
+    root, so a sibling that merely shares a string prefix (root ``/trusted/project`` vs
+    candidate ``/trusted/project-secret``) is outside the root.
+    """
+    norm_candidate = os.path.normpath(str(path))
+    for known_path in known_roots:
+        norm_root = os.path.normpath(str(known_path))
+        try:
+            if os.path.commonpath([norm_root, norm_candidate]) == norm_root:
+                return True
+        except ValueError:
+            # commonpath raises for mixed absolute/relative paths or different Windows
+            # drives; such paths are not contained.
+            continue
+    return False
+
+
 def _summarize_asset_paths(
     input_paths: Collection[Path | str], output_paths: Collection[Path | str], name: str
 ) -> list[str]:
@@ -114,14 +135,11 @@ def _generate_message_for_asset_paths(
 
     # Filter to get the unknown paths
     if known_asset_paths:
-        known_path_regex = re.compile(
-            f"{'|'.join(re.escape(path) for path in known_asset_paths)}.*"
-        )
         unknown_input_paths = {
-            path for path in all_input_paths if not known_path_regex.match(str(path))
+            path for path in all_input_paths if not _is_known_path(path, known_asset_paths)
         }
         unknown_output_paths = {
-            path for path in all_output_paths if not known_path_regex.match(str(path))
+            path for path in all_output_paths if not _is_known_path(path, known_asset_paths)
         }
     else:
         unknown_input_paths = all_input_paths
