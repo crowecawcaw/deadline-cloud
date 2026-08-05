@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 import json
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import ANY, patch
 
 import pytest
 
@@ -85,8 +86,8 @@ class TestCliRegionPrecedenceEndToEnd:
         # The deadline client was built for the flag's region, not the configured one.
         assert "eu-central-1" in regions
         assert "us-west-2" not in regions
-        # And the flag overwrote the persisted setting.
-        assert config_file.get_setting("defaults.farm_region") == "eu-central-1"
+        # The override is per-invocation: the stored setting is left as it was.
+        assert config_file.get_setting("defaults.farm_region") == "us-west-2"
 
     def test_no_region_flag_uses_configured_farm_region(self, fresh_deadline_config):
         """with no --region, the command uses the configured defaults.farm_region."""
@@ -112,19 +113,99 @@ class TestCliRegionPrecedenceEndToEnd:
         # region=None means get_session_client was called without an explicit region.
         assert regions == [None]
 
-    def test_region_on_read_only_command_persists_farm_region(self, fresh_deadline_config):
+    def test_region_on_read_only_command_does_not_persist_farm_region(self, fresh_deadline_config):
         """
-        --region on a read-only command (farm get) persists defaults.farm_region.
-        This pins the CURRENT, intended behavior: read-only commands still write the region
-        to config via _apply_cli_options_to_config, so a subsequent command reuses it.
+        --region is scoped to the invocation and is NOT written to the config file.
+
+        The flag reaches the deadline client for this command only; a subsequent command
+        does not reuse it. Persisting a default is done explicitly via
+        ``deadline config set defaults.farm_region``. This matters especially because
+        farm_region is stored per-farm, so an implicit write would stamp a transient
+        flag onto whichever farm happened to be the default.
         """
         assert config_file.get_setting("defaults.farm_region") == ""
 
-        result, _ = self._run_farm_get(["--region", "eu-west-1"])
+        result, regions = self._run_farm_get(["--region", "eu-west-1"])
 
         assert result.exit_code == 0, result.output
-        # Intended: the region is persisted even though farm get does not mutate anything.
-        assert config_file.get_setting("defaults.farm_region") == "eu-west-1"
+        # The flag did reach the client for this invocation...
+        assert "eu-west-1" in regions
+        # ...but nothing was persisted for the next one.
+        assert config_file.get_setting("defaults.farm_region") == ""
+
+
+class TestCliOptionsAreNotPersisted:
+    """
+    Standard CLI options (--farm-id, --queue-id, --region, --profile) are per-invocation
+    overrides and must never be written to the config file.
+
+    These assert against the config file rather than ``get_setting``, which reads the
+    process-wide cached parser and so cannot distinguish a persisted value from one only
+    mutated in memory.
+    """
+
+    def test_flags_do_not_modify_the_config_file(self, fresh_deadline_config):
+        """--farm-id/--queue-id/--region/--profile leave the config file byte-identical."""
+        config_path = Path(fresh_deadline_config)
+        config_file.set_setting("defaults.farm_id", "farm-original")
+        before = config_path.read_bytes()
+
+        _apply_cli_options_to_config(
+            profile="other-profile",
+            farm_id="farm-override",
+            queue_id="queue-override",
+            region="eu-west-1",
+            storage_profile_id="sp-override",
+            job_id=None,
+        )
+
+        assert config_path.read_bytes() == before
+
+    def test_overrides_do_not_mutate_the_cached_config(self, fresh_deadline_config):
+        """
+        The overrides land on a detached copy, leaving ``read_config()``'s cached parser
+        untouched. Mutating that shared parser would make every later disk write an
+        accidental persist.
+        """
+        config_file.set_setting("defaults.farm_id", "farm-original")
+        live = config_file.read_config()
+
+        returned = _apply_cli_options_to_config(
+            farm_id="farm-override",
+            profile=None,
+            region=None,
+            queue_id=None,
+            job_id=None,
+            storage_profile_id=None,
+        )
+
+        assert returned is not live
+        assert config_file.get_setting("defaults.farm_id", config=returned) == "farm-override"
+        assert config_file.get_setting("defaults.farm_id", config=live) == "farm-original"
+
+    def test_overrides_do_not_leak_into_a_later_bare_set_setting(self, fresh_deadline_config):
+        """
+        A later persisting write must not carry the overrides with it.
+
+        A bare ``set_setting`` (e.g. the telemetry identifier) serializes the whole
+        cached parser, which is how an override reaches disk if it was applied there.
+        """
+        config_file.set_setting("defaults.farm_id", "farm-original")
+
+        _apply_cli_options_to_config(
+            farm_id="farm-override",
+            profile=None,
+            region=None,
+            queue_id=None,
+            job_id=None,
+            storage_profile_id=None,
+        )
+
+        # An unrelated setting is persisted through the normal (disk-writing) path.
+        config_file.set_setting("settings.log_level", "DEBUG")
+
+        assert config_file.get_setting("defaults.farm_id") == "farm-original"
+        assert "farm-override" not in Path(fresh_deadline_config).read_text(encoding="utf8")
 
 
 class TestParseFileParameter:
@@ -455,7 +536,11 @@ class TestAutoSelectQueue:
 
 
 class TestApplyCliOptionsAutoSelect:
-    """End-to-end auto-select behavior through _apply_cli_options_to_config."""
+    """End-to-end auto-select behavior through _apply_cli_options_to_config.
+
+    Auto-selected ids land on the returned in-memory config (so the command can use
+    them) and are NOT written to the config file -- same rule as an explicit flag.
+    """
 
     def test_auto_selects_single_farm_and_queue(self, fresh_deadline_config):
         """With one farm and one queue, both required options are auto-filled."""
@@ -466,10 +551,13 @@ class TestApplyCliOptionsAutoSelect:
             mock_farms.return_value = {"farms": [{"farmId": "farm-1"}]}
             mock_queues.return_value = {"queues": [{"queueId": "queue-1"}]}
 
-            _apply_cli_options_to_config(required_options={"farm_id", "queue_id"})
+            config = _apply_cli_options_to_config(required_options={"farm_id", "queue_id"})
 
-        assert config_file.get_setting(SETTING_FARM_ID) == "farm-1"
-        assert config_file.get_setting(SETTING_QUEUE_ID) == "queue-1"
+        assert config_file.get_setting(SETTING_FARM_ID, config=config) == "farm-1"
+        assert config_file.get_setting(SETTING_QUEUE_ID, config=config) == "queue-1"
+        # Auto-select is per-invocation: nothing was persisted.
+        assert config_file.get_setting(SETTING_FARM_ID) == ""
+        assert config_file.get_setting(SETTING_QUEUE_ID) == ""
 
     def test_raises_when_multiple_farms(self, fresh_deadline_config):
         """With multiple farms, the missing-farm UsageError is still raised."""
@@ -489,13 +577,21 @@ class TestApplyCliOptionsAutoSelect:
             with pytest.raises(click.UsageError, match="queue-id"):
                 _apply_cli_options_to_config(required_options={"farm_id", "queue_id"})
 
-        # The farm should still have been auto-selected before the queue failure.
-        assert config_file.get_setting(SETTING_FARM_ID) == "farm-1"
+            # The farm was auto-selected (list_queues was reached for it) before the
+            # queue lookup failed. Nothing is persisted, so assert via the call rather
+            # than the config file.
+            mock_queues.assert_called_once_with(farmId="farm-1", config=ANY)
+
+        assert config_file.get_setting(SETTING_FARM_ID) == ""
 
     def test_explicit_farm_id_skips_auto_select(self, fresh_deadline_config):
         """An explicit --farm-id is honored and list_farms is never called."""
         with patch("deadline.client.cli._common._api.list_farms") as mock_farms:
-            _apply_cli_options_to_config(required_options={"farm_id"}, farm_id="farm-explicit")
+            config = _apply_cli_options_to_config(
+                required_options={"farm_id"}, farm_id="farm-explicit"
+            )
 
         mock_farms.assert_not_called()
-        assert config_file.get_setting(SETTING_FARM_ID) == "farm-explicit"
+        assert config_file.get_setting(SETTING_FARM_ID, config=config) == "farm-explicit"
+        # The flag is per-invocation: nothing was persisted.
+        assert config_file.get_setting(SETTING_FARM_ID) == ""

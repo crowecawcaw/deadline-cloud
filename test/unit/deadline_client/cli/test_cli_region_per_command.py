@@ -7,7 +7,8 @@ The commands fall into two client-construction families, which determines the
 assertion each test makes:
 
   * ``get_boto3_client``-based commands resolve their region from config. ``--region``
-    is persisted to ``defaults.farm_region`` by ``_apply_cli_options_to_config`` and then
+    is applied to an in-memory ``defaults.farm_region`` override by
+    ``_apply_cli_options_to_config`` and then
     ``api.get_boto3_client`` -> ``api._session.get_session_client`` builds a region-scoped
     deadline client. These are exercised in a parametrized table that mocks
     ``api._session.get_session_client`` and asserts ``region="..."`` + ``service_name="deadline"``.
@@ -15,8 +16,9 @@ assertion each test makes:
     ``trace-schedule``) build the deadline client off an explicit boto3 session; each gets a
     dedicated test asserting the region reaches the session/get_session_client call.
 
-Every test also asserts ``defaults.farm_region`` is persisted (the documented current
-behavior, including on read-only commands - see ``test_cli_region_persists_farm_region``).
+``--region`` is a per-invocation override and is deliberately NOT written to the config
+file, so these tests assert the region reached the client rather than that it was
+persisted. See ``test_cli_common.py::TestCliOptionsAreNotPersisted``.
 """
 
 from __future__ import annotations
@@ -54,7 +56,7 @@ def _region_in_calls(get_session_client_mock, region):
 # ---------------------------------------------------------------------------
 # A. Homogeneous get_boto3_client-based commands (cases 1, 2, 3, 4, 5, 7, 8,
 #    9, 10, 11, 12, 13, 15, 16). Each entry drives a command end-to-end and the
-#    test asserts a region-scoped deadline client was built and farm_region persisted.
+#    test asserts a region-scoped deadline client was built.
 # ---------------------------------------------------------------------------
 
 
@@ -254,7 +256,7 @@ _GET_BOTO3_CLIENT_COMMANDS = [
 def test_cli_region_reaches_get_session_client(
     fresh_deadline_config, mock_telemetry, build_command
 ):
-    """--region scopes the deadline client to that region and persists defaults.farm_region."""
+    """--region scopes the deadline client to that region (per-invocation, not persisted)."""
     with (
         patch.object(api._session, "get_boto3_session"),
         patch.object(api._session, "get_session_client") as get_session_client_mock,
@@ -265,7 +267,6 @@ def test_cli_region_reaches_get_session_client(
 
     assert result.exit_code == 0, result.output
     assert _region_in_calls(get_session_client_mock, MOCK_REGION)
-    assert config.get_setting("defaults.farm_region") == MOCK_REGION
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +277,7 @@ def test_cli_region_reaches_get_session_client(
 
 
 def test_cli_job_download_output_region(fresh_deadline_config, mock_telemetry):
-    """job download-output builds a region-scoped deadline client and persists farm_region."""
+    """job download-output builds a region-scoped deadline client."""
     with (
         patch.object(api._session, "get_boto3_session"),
         patch.object(api._session, "get_session_client") as get_session_client_mock,
@@ -310,11 +311,10 @@ def test_cli_job_download_output_region(fresh_deadline_config, mock_telemetry):
     # The deadline client must have been built for the requested region regardless of how
     # far the download proceeds.
     assert _region_in_calls(get_session_client_mock, MOCK_REGION), result.output
-    assert config.get_setting("defaults.farm_region") == MOCK_REGION
 
 
 def test_cli_job_download_input_region(fresh_deadline_config, mock_telemetry):
-    """job download-input builds a region-scoped deadline client and persists farm_region."""
+    """job download-input builds a region-scoped deadline client."""
     with (
         patch.object(api._session, "get_boto3_session"),
         patch.object(api._session, "get_session_client") as get_session_client_mock,
@@ -346,7 +346,6 @@ def test_cli_job_download_input_region(fresh_deadline_config, mock_telemetry):
 
     assert result.exit_code == 0, result.output
     assert _region_in_calls(get_session_client_mock, MOCK_REGION)
-    assert config.get_setting("defaults.farm_region") == MOCK_REGION
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +356,7 @@ def test_cli_job_download_input_region(fresh_deadline_config, mock_telemetry):
 
 
 def test_cli_job_wait_region(fresh_deadline_config, mock_telemetry):
-    """job wait builds a region-scoped deadline client and persists farm_region."""
+    """job wait builds a region-scoped deadline client."""
     wait_result = MagicMock()
     wait_result.status = "SUCCEEDED"
     wait_result.elapsed_time = 1.0
@@ -392,7 +391,6 @@ def test_cli_job_wait_region(fresh_deadline_config, mock_telemetry):
     # A SUCCEEDED job exits 0.
     assert result.exit_code == 0, result.output
     assert _region_in_calls(get_session_client_mock, MOCK_REGION)
-    assert config.get_setting("defaults.farm_region") == MOCK_REGION
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +544,6 @@ def test_cli_queue_sync_output_region(fresh_deadline_config, tmp_path):
     assert result.exit_code == 0, result.output
     mock_get_session_client.assert_called_once()
     assert mock_get_session_client.call_args.kwargs["region"] == MOCK_REGION
-    assert config.get_setting("defaults.farm_region") == MOCK_REGION
 
 
 def test_cli_manifest_download_region(fresh_deadline_config, tmp_path):
@@ -600,13 +597,12 @@ def test_cli_manifest_download_region(fresh_deadline_config, tmp_path):
     # The queue-user session must also be scoped to the farm's region, not the base session.
     queue_session_mock.assert_called_once()
     assert queue_session_mock.call_args.kwargs.get("region") == MOCK_REGION
-    assert config.get_setting("defaults.farm_region") == MOCK_REGION
 
 
 def test_cli_manifest_upload_region(fresh_deadline_config, tmp_path):
     """
     manifest upload (18): with --farm-id/--queue-id, builds its deadline client via
-    api.get_boto3_client which resolves the persisted farm region.
+    api.get_boto3_client which resolves the farm region from the config override.
     """
     manifest_file = tmp_path / "abc_manifest"
     manifest_file.write_text("{}")
@@ -639,13 +635,13 @@ def test_cli_manifest_upload_region(fresh_deadline_config, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert _region_in_calls(get_session_client_mock, MOCK_REGION)
-    assert config.get_setting("defaults.farm_region") == MOCK_REGION
 
 
 def test_cli_trace_schedule_region(fresh_deadline_config, mock_telemetry):
     """
     job trace-schedule (19): builds its deadline client via api.get_boto3_client, scoped to
-    the persisted farm region. A job that hasn't started exits early after the get_job call.
+    the farm region from the config override. A job that hasn't started exits early after
+    the get_job call.
     """
     with (
         patch.object(api._session, "get_boto3_session"),
@@ -677,4 +673,3 @@ def test_cli_trace_schedule_region(fresh_deadline_config, mock_telemetry):
     # "Job hasn't started yet" is surfaced as a DeadlineOperationError (exit 1), but the
     # deadline client was already built for the region by then.
     assert _region_in_calls(get_session_client_mock, MOCK_REGION), result.output
-    assert config.get_setting("defaults.farm_region") == MOCK_REGION

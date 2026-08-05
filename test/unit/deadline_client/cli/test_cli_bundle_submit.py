@@ -120,7 +120,12 @@ def test_cli_bundle_explicit_parameters(fresh_deadline_config, temp_job_bundle_d
             ],
         )
 
-    session_mock.assert_called_with(profile_name="NonDefaultProfileName", region_name=None)
+    # Over all calls, not the last: --profile isn't persisted, so later Session
+    # constructions legitimately carry profile_name=None.
+    assert any(
+        call.kwargs.get("profile_name") == "NonDefaultProfileName"
+        for call in session_mock.call_args_list
+    ), session_mock.call_args_list
     session_mock().client().create_job.assert_called_once_with(
         farmId=MOCK_FARM_ID,
         queueId=MOCK_QUEUE_ID,
@@ -140,7 +145,7 @@ def test_cli_bundle_explicit_parameters(fresh_deadline_config, temp_job_bundle_d
 def test_cli_bundle_submit_region_reaches_client(fresh_deadline_config, temp_job_bundle_dir):
     """
     Confirm that --region scopes the deadline client to that region (the client is
-    created with region_name) and persists `defaults.farm_region`.
+    created with region_name) without persisting `defaults.farm_region`.
     """
     # Write a JSON template
     with open(os.path.join(temp_job_bundle_dir, "template.json"), "w", encoding="utf8") as f:
@@ -172,8 +177,8 @@ def test_cli_bundle_submit_region_reaches_client(fresh_deadline_config, temp_job
         call_args.kwargs.get("region_name") == "us-west-2" and call_args.args[:1] == ("deadline",)
         for call_args in session_mock().client.call_args_list
     ), session_mock().client.call_args_list
-    # The region was persisted to the per-farm region config setting.
-    assert config.get_setting("defaults.farm_region") == "us-west-2"
+    # --region is a per-invocation override; it is not written to the config file.
+    assert config.get_setting("defaults.farm_region") == ""
 
 
 def test_cli_bundle_priority_retries(fresh_deadline_config, deadline_mock, temp_job_bundle_dir):

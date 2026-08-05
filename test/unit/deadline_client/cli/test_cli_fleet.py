@@ -100,8 +100,8 @@ def test_cli_fleet_list_region_reaches_client(fresh_deadline_config, mock_teleme
             and call.kwargs.get("service_name") == "deadline"
             for call in get_session_client_mock.call_args_list
         )
-        # The region was persisted to the per-farm region config setting.
-        assert config.get_setting("defaults.farm_region") == "us-east-1"
+        # --region is a per-invocation override; it is not written to the config file.
+        assert config.get_setting("defaults.farm_region") == ""
         # Don't leak the boto3 session mock as unused.
         assert session_mock is not None
 

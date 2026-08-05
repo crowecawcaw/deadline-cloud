@@ -165,12 +165,24 @@ def _auto_select_queue(config: Optional[ConfigParser] = None) -> Optional[str]:
     return None
 
 
+def _copy_config(config: ConfigParser) -> ConfigParser:
+    """Returns a detached copy of a config, so mutating it can't affect the original."""
+    copied = ConfigParser()
+    copied.read_dict(config)
+    return copied
+
+
 def _apply_cli_options_to_config(
     *, config: Optional[ConfigParser] = None, required_options: Set[str] = set(), **args
 ) -> Optional[ConfigParser]:
     """
     Modifies an AWS Deadline Cloud config object to apply standard option names to it, such as
     the AWS profile, AWS Deadline Cloud Farm, or AWS Deadline Cloud Queue to use.
+
+    The returned config is an in-memory override scoped to this invocation: the standard
+    options are applied with ``config=`` so ``set_setting`` does not write to disk. A flag
+    like ``--farm-id`` therefore affects only the current command and never becomes the
+    persisted default (use ``deadline config set`` for that).
 
     Args:
         config (ConfigParser, optional): an AWS Deadline Cloud config, read by config_file.read_config().
@@ -179,7 +191,9 @@ def _apply_cli_options_to_config(
     # Only work with a custom config if there are standard options provided
     if any(value is not None for value in args.values()):
         if config is None:
-            config = config_file.read_config()
+            # read_config() caches one process-wide parser; mutating it would let a later
+            # bare set_setting() flush these overrides to disk.
+            config = _copy_config(config_file.read_config())
 
         aws_profile_name = args.pop("profile", None)
         if aws_profile_name:
@@ -228,7 +242,7 @@ def _apply_cli_options_to_config(
             farm_id = _auto_select_farm(config)
             if farm_id:
                 if config is None:
-                    config = config_file.read_config()
+                    config = _copy_config(config_file.read_config())
                 config_file.set_setting(SETTING_FARM_ID, farm_id, config=config)
             else:
                 raise click.UsageError("Missing '--farm-id' or default Farm ID configuration")
@@ -239,7 +253,7 @@ def _apply_cli_options_to_config(
             queue_id = _auto_select_queue(config)
             if queue_id:
                 if config is None:
-                    config = config_file.read_config()
+                    config = _copy_config(config_file.read_config())
                 config_file.set_setting(SETTING_QUEUE_ID, queue_id, config=config)
             else:
                 raise click.UsageError("Missing '--queue-id' or default Queue ID configuration")
