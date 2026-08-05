@@ -213,7 +213,9 @@ def queue_paramdefs(**args):
     queue_id = config_file.get_setting("defaults.queue_id", config=config)
 
     try:
-        response = api.get_queue_parameter_definitions(farmId=farm_id, queueId=queue_id)
+        response = api.get_queue_parameter_definitions(
+            farmId=farm_id, queueId=queue_id, config=config
+        )
     except ClientError as exc:
         suggestion = _suggest_resources_on_client_error(
             exc, farm_id=farm_id, queue_id=queue_id, config=config
