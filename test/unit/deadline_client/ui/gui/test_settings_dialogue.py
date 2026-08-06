@@ -4,6 +4,7 @@
 
 import contextlib
 from configparser import ConfigParser
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -245,17 +246,6 @@ class TestSettingsDialogue:
 
         assert config_widget.changes["settings.storage_profile_id"] == "sp-new"
 
-    def test_selection_is_staged_not_written_until_applied(self, config_widget):
-        """A pick is staged only; nothing reaches the config file before Apply."""
-        config_widget.changes.clear()
-
-        config_widget.default_farm_changed("farm-new")
-
-        # Staged, and no write happened (the dialog's config_file is mocked, so assert
-        # against the staging dict plus the absence of a write call).
-        assert config_widget.changes["defaults.farm_id"] == "farm-new"
-        assert not config_widget.changes_were_applied
-
     def test_selectors_do_not_auto_select_a_lone_resource(self, config_widget):
         """A lone resource is not a choice the user made, so it must not become a default."""
         assert config_widget.default_farm_box._auto_select_when_single is False
@@ -489,3 +479,106 @@ def test_profile_switch_preserves_each_profiles_farm_queue(fresh_deadline_config
     config_file.set_setting("defaults.aws_profile_name", "profile-2")
     assert config_file.get_setting("defaults.farm_id") == "farm-2"
     assert config_file.get_setting("defaults.queue_id") == "queue-2"
+
+
+@contextlib.contextmanager
+def _headless_config_widget():
+    """A config widget with no UI, driving the real config_file for persistence.
+
+    Only the UI-refresh side effects that need a populated dialog are patched out; the
+    staging dict and ``apply`` (set_setting + write_config) run for real.
+    """
+    with (
+        patch.object(DeadlineWorkstationConfigWidget, "_build_ui"),
+        patch.object(DeadlineWorkstationConfigWidget, "_fill_aws_profiles_box"),
+        patch.object(DeadlineWorkstationConfigWidget, "refresh"),
+    ):
+        widget = DeadlineWorkstationConfigWidget.__new__(DeadlineWorkstationConfigWidget)
+        widget.changes = {}
+        widget.changes_were_applied = False
+        widget.default_farm_box = MagicMock()
+        # region_for_id feeds a staged setting value, so it must be a real string.
+        widget.default_farm_box.region_for_id.return_value = ""
+        widget.default_queue_box = MagicMock()
+        widget.default_storage_profile_box = MagicMock()
+        yield widget
+
+
+class TestSettingsDialoguePersistence:
+    """The settings dialog is the one place a default is written to the config file.
+
+    These drive the real ``default_*_changed`` -> ``apply`` path against the real
+    config_file, and assert against the file, so they observe an actual write rather
+    than only the staging dict. Note the module-level ``mock_api`` fixture is NOT used
+    here: it patches the dialog's ``config_file`` to a no-op, which would hide the write.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _real_config_file(self):
+        """Import the real config_file for these tests."""
+        from deadline.client.config import config_file
+
+        self.config_file = config_file
+
+    def test_applying_a_farm_selection_persists_it(self, fresh_deadline_config):
+        self.config_file.set_setting("defaults.farm_id", "farm-old")
+
+        with _headless_config_widget() as widget:
+            widget.default_farm_changed("farm-new")
+            DeadlineWorkstationConfigWidget.apply(widget)
+
+        assert self.config_file.get_setting("defaults.farm_id") == "farm-new"
+        assert "farm-new" in Path(fresh_deadline_config).read_text(encoding="utf8")
+
+    def test_applying_a_queue_selection_persists_it(self, fresh_deadline_config):
+        self.config_file.set_setting("defaults.farm_id", "farm-1")
+
+        with _headless_config_widget() as widget:
+            widget.default_queue_changed("queue-new")
+            DeadlineWorkstationConfigWidget.apply(widget)
+
+        assert self.config_file.get_setting("defaults.queue_id") == "queue-new"
+
+    def test_applying_a_storage_profile_selection_persists_it(self, fresh_deadline_config):
+        self.config_file.set_setting("defaults.farm_id", "farm-1")
+
+        with _headless_config_widget() as widget:
+            widget.default_storage_profile_changed("sp-new")
+            DeadlineWorkstationConfigWidget.apply(widget)
+
+        assert self.config_file.get_setting("settings.storage_profile_id") == "sp-new"
+
+    def test_farm_and_queue_persist_together(self, fresh_deadline_config):
+        """A farm then queue pick applied in one batch stores the queue under that farm."""
+        with _headless_config_widget() as widget:
+            widget.default_farm_changed("farm-new")
+            widget.default_queue_changed("queue-new")
+            DeadlineWorkstationConfigWidget.apply(widget)
+
+        assert self.config_file.get_setting("defaults.farm_id") == "farm-new"
+        # queue_id is farm-scoped, so this also pins that it landed under farm-new.
+        assert self.config_file.get_setting("defaults.queue_id") == "queue-new"
+
+    def test_selection_is_not_written_until_applied(self, fresh_deadline_config):
+        """A pick is staged only; the config file is untouched until Apply."""
+        self.config_file.set_setting("defaults.farm_id", "farm-old")
+        before = Path(fresh_deadline_config).read_bytes()
+
+        with _headless_config_widget() as widget:
+            widget.default_farm_changed("farm-new")
+
+            assert widget.changes["defaults.farm_id"] == "farm-new"
+            assert Path(fresh_deadline_config).read_bytes() == before
+            assert self.config_file.get_setting("defaults.farm_id") == "farm-old"
+
+    def test_abandoning_the_dialog_leaves_the_default_alone(self, fresh_deadline_config):
+        """Staged picks discarded without Apply never reach the file."""
+        self.config_file.set_setting("defaults.farm_id", "farm-old")
+
+        with _headless_config_widget() as widget:
+            widget.default_farm_changed("farm-new")
+            widget.default_queue_changed("queue-new")
+            # Dialog closes without apply(); the staged changes go with it.
+
+        assert self.config_file.get_setting("defaults.farm_id") == "farm-old"
+        assert "farm-new" not in Path(fresh_deadline_config).read_text(encoding="utf8")

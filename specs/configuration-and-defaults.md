@@ -1,81 +1,59 @@
 # Spec: Configuration and Defaults
 
-How workstation configuration is stored, how a default is chosen, and which
-actions may change it.
+How workstation configuration is stored, how an operation decides what to use, and
+what may change a stored default.
 
-## Design goals
+## Principle
 
-1. **Persisting a default is a deliberate act.** Changing what the *next*
-   command or session does requires the user to go somewhere that means
-   "configure me" — the settings interface. Doing work must never silently
-   reconfigure the workstation.
-2. **Doing work is scoped to the work.** Choosing a farm for one submission, or
-   passing an option to one command, affects that operation and nothing else.
-3. **Switching context is non-destructive.** Moving between AWS profiles or
-   farms surfaces that context's own values. It must never overwrite the values
-   belonging to the context being left or entered.
+Configuring is separate from doing. The settings interface exists to change
+defaults; everything else — a command, a submission — reads them and leaves them
+alone. A user who sends one job to a different farm has not reconfigured their
+workstation.
+
+This holds for every interface. A graphical selector is not a licence to persist.
 
 ## Storage model
 
-Settings live in a single config file, in sections scoped by the context they
-belong to. Scoping is hierarchical: profile-scoped settings nest under the AWS
-profile, farm-scoped settings under the farm, and so on.
+Settings live in one config file, in sections scoped by the context they belong
+to: profile-scoped settings nest under the AWS profile, farm-scoped settings
+under the farm.
 
-The practical consequence — and the reason the nesting exists — is that each
-context keeps its own values simultaneously. Selecting a different farm changes
-which queue is *read*, not which queue is *stored*. Returning to a previous farm
-restores its queue.
+Each context therefore keeps its own values at once. Selecting a different farm
+changes which queue is *read*, not which queue is *stored*; returning to the
+previous farm restores its queue. Switching context must never write to the
+context being left or entered.
 
-Because a setting's location depends on the current value of what it's scoped
-to, writing a scoped setting while its parent is in flux files it under the
-wrong context. Establish the parent first.
+A scoped setting's location depends on the current value of its parent, so
+establish the parent before writing the child.
 
-## Two states, one rule
+## Scoped choices and stored defaults
 
-Configuration exists as the file on disk and as an in-memory copy belonging to
-one operation. A write either targets the persistent config or an explicit
-in-memory config, and only the former reaches disk.
+An operation works on an in-memory copy of the configuration, seeded from the
+stored defaults. Options passed to a command, and resources chosen in a
+submitter, go there and expire with the operation.
 
-An in-memory config is a **detached copy**, never a shared cached instance.
-Configuration is cached per process, so mutating the cached instance in place
-doesn't create an override — it creates a pending change that any later
-persisting write will serialize, turning a scoped choice into a stored default.
+Only the settings interface writes to the file. Its edits are staged and applied
+together, so the user can review or abandon them.
 
-## Who may set a default
-
-Only the settings interface — the settings dialog and the equivalent CLI
-commands — writes defaults. Its edits are staged and applied together, so the
-user can review or abandon them before anything is stored.
-
-Everything else operates on an in-memory copy for the duration of one operation:
-options passed to a single command, and resources chosen in the submitter for a
-single submission. Both read the stored defaults as their starting point and
-leave them untouched.
-
-Both interfaces follow the same rule; a graphical selector is not a licence to
-persist. The submitter's farm and queue controls exist so a user can send one
-job somewhere else, not to reconfigure the workstation.
+The in-memory copy must be detached. Configuration is cached per process, so
+mutating the cached instance produces not an override but a pending change, which
+the next write to the file will silently carry with it.
 
 ## Resolving what to use
 
-An operation resolves each resource in this order:
+1. What this operation already chose.
+2. The stored default for the current context, if still available.
+3. The only available resource, if exactly one exists.
+4. Nothing.
 
-1. The value already chosen for this operation, if any.
-2. The stored default for the current context, if it is still available.
-3. The sole available resource, when exactly one exists and nothing is stored.
-4. Nothing selected.
+Auto-selecting a sole resource serves the operation in progress: it never
+overrides a stored default, and never becomes one. A stored value that cannot be
+listed — usable by this user but not enumerable — is still honored.
 
-Auto-selecting a sole resource is a convenience for the current operation, not a
-choice made on the user's behalf: it is never persisted, and it never overrides a
-stored default. A stored value that cannot be listed — the user may have
-permission to use a resource but not to enumerate its siblings — is still
-honored and shown, not discarded.
+## Testing
 
-## Testing this
+Assert persistence against the config file. Reading a setting back consults the
+cache, which cannot distinguish a stored value from a scoped one.
 
-Assertions about persistence must read the **config file**. Reading a setting
-back through the normal accessor consults the in-memory cache, so it cannot
-distinguish a value written to disk from one only mutated in memory.
-
-For a scoped choice, assert both halves: the value reached the operation, and the
-file did not change.
+A scoped choice has two halves and both need asserting: the value reached the
+operation, and the file did not change.
