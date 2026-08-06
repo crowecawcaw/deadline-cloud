@@ -575,23 +575,10 @@ class TestDeadlineStorageProfileListComboBoxController:
 class TestStaleConfigOnFarmChange:
     """Regression tests: changing farms must not show stale queue/storage profile IDs.
 
-    When `select_farm` writes to the config file via `set_setting`, the next
-    `read_config()` detects the change and creates a fresh ConfigParser, leaving any
-    combo that still holds the OLD object in `self.config` reading stale values --
-    showing a raw id instead of "<none selected>".
-
-    These tests reproduce that staleness the way it happens in the submit dialog: the
-    combo is handed the *live* global config object (exactly what the dialog passes),
-    then the cascade's writes force `read_config()` to swap in a fresh parser,
-    orphaning the combo's reference. The swap normally hinges on the config file's
-    mtime changing, which is filesystem-granularity dependent -- so we force it
-    deterministically by making `_should_read_config` always report a change *during
-    the cascade only*. (It must NOT be forced while `set_config` runs: `set_config`
-    records whether it was handed the live global via an identity check, and forcing a
-    swap there would hand it a different object and defeat the check.) The fix
-    (`_sync_config`) re-reads the live config on display, so the combo must reflect the
-    cleared values. Without the fix, `refresh_selected_id` reads the orphaned parser
-    and shows the stale id.
+    The combo and the cascade must read and write the same config object. When
+    `select_farm` clears the now-invalid queue/storage selection, the display sync that
+    follows has to observe those cleared values and fall back to "<none selected>"
+    rather than showing a raw id left over from the previous farm.
     """
 
     def setup_method(self):
@@ -618,21 +605,17 @@ class TestStaleConfigOnFarmChange:
         set_setting("defaults.queue_id", "queue-B")
         set_setting("settings.storage_profile_id", "sp-stale-id")
 
-        # The combo is configured with the live global config, like the submit dialog.
-        # No swap is forced here so the identity check in set_config sees the global.
+        # The combo is handed the session config, like the submit dialog.
+        controller = DeadlineUIController.getInstance()
         widget = DeadlineStorageProfileListComboBoxController()
         qtbot.addWidget(widget)
-        widget.set_config(config_file.read_config())
+        widget.set_config(controller.session_config)
 
         # The user re-selects farm-B; the controller clears the now-invalid queue/
-        # storage selection. Forcing _should_read_config to True makes every
-        # read_config() rebuild the parser, orphaning the combo's reference exactly the
-        # way a real mtime change would -- so self.config keeps "sp-stale-id".
-        controller = DeadlineUIController.getInstance()
-        with patch.object(config_file, "_should_read_config", return_value=True):
-            controller.select_farm("farm-B")
-            # storage_profiles_updated([]) arrives -> _handle_list_update([]).
-            widget._handle_list_update([])
+        # storage selection in that same config.
+        controller.select_farm("farm-B")
+        # storage_profiles_updated([]) arrives -> _handle_list_update([]).
+        widget._handle_list_update([])
 
         # Must reflect the cleared value, not the stale "sp-stale-id".
         assert widget.box.currentText() != "sp-stale-id", (
@@ -651,17 +634,16 @@ class TestStaleConfigOnFarmChange:
         set_setting("defaults.farm_id", "farm-B")
         set_setting("defaults.queue_id", "queue-stale-id")
 
-        # Configured with the live global config, like the submit dialog.
+        # Handed the session config, like the submit dialog.
+        controller = DeadlineUIController.getInstance()
         widget = DeadlineQueueListComboBoxController()
         qtbot.addWidget(widget)
-        widget.set_config(config_file.read_config())
+        widget.set_config(controller.session_config)
 
-        # select_farm clears the queue; forcing the swap orphans the combo's reference.
-        controller = DeadlineUIController.getInstance()
-        with patch.object(config_file, "_should_read_config", return_value=True):
-            controller.select_farm("farm-B")
-            # queues_updated arrives with the new (empty) list -> _handle_list_update([]).
-            widget._handle_list_update([])
+        # select_farm clears the queue in that same config.
+        controller.select_farm("farm-B")
+        # queues_updated arrives with the new (empty) list -> _handle_list_update([]).
+        widget._handle_list_update([])
 
         # Must reflect the cleared value, not the stale "queue-stale-id".
         assert widget.box.currentText() != "queue-stale-id", (
@@ -670,21 +652,14 @@ class TestStaleConfigOnFarmChange:
         assert widget.box.currentData() == ""
 
 
-class TestInjectedConfigPreservedOnSync:
-    """`_sync_config` must not clobber a caller-injected config that differs from disk.
+class TestInjectedConfigPreserved:
+    """A caller-injected config that differs from disk must survive a display sync.
 
-    The config dialog (`deadline_config_dialog.refresh`) builds a *copy* of the config
-    and layers the user's unsaved `changes` on top before handing it to these combos
-    via `set_config`. That copy intentionally differs from the on-disk config. A naive
-    `_sync_config` that unconditionally re-reads the live config on every display sync
-    would discard those pending edits -- the combo would snap back to the persisted id
-    instead of showing what the user just picked.
-
-    The fix gates the re-read on an identity check (`self.config is the live global`),
-    so an injected copy is left untouched. These tests assert that: after a list
-    update triggers `_sync_config`, the combo still reflects the injected copy's value,
-    not the value on disk. Without the identity gate they fail (the pending edit is
-    lost); with the previous unconditional-read behavior they would also fail.
+    Both hosts hand these combos a config that intentionally differs from the config
+    file: the settings dialog's copy carrying unsaved edits, and the submit dialog's
+    session config carrying this submission's selections. The combo must use it as
+    given -- re-reading from disk on a display sync would discard whichever the user
+    just picked.
     """
 
     def setup_method(self):
@@ -726,14 +701,13 @@ class TestInjectedConfigPreservedOnSync:
         widget = DeadlineStorageProfileListComboBoxController()
         qtbot.addWidget(widget)
         widget.set_config(injected)
-        assert widget._config_tracks_global is False  # a copy, not the live global
 
-        # A list update arrives (both profiles are selectable) -> _sync_config runs.
+        # A list update arrives (both profiles are selectable) -> display sync runs.
         widget._handle_list_update([("Saved SP", "sp-saved"), ("Pending SP", "sp-pending")])
 
-        # The pending edit must win; _sync_config must not have re-read disk's "sp-saved".
+        # The pending edit must win over disk's "sp-saved".
         assert widget.box.currentData() == "sp-pending", (
-            "Injected pending storage-profile edit was clobbered by _sync_config"
+            "Injected pending storage-profile edit was clobbered on display sync"
         )
         # And the injected copy itself must be untouched (not swapped for the global).
         assert widget.config is injected
@@ -755,7 +729,7 @@ class TestInjectedConfigPreservedOnSync:
         qtbot.addWidget(widget)
         widget.set_config(injected)
 
-        # _handle_loading_state(True) also calls _sync_config; it must keep the copy.
+        # The loading-state display sync must also keep the injected copy.
         widget._handle_loading_state(True)
 
         assert widget.config is injected, "Injected config was replaced during loading sync"

@@ -208,6 +208,59 @@ class TestSettingsDialogue:
         assert "defaults.queue_id" not in config_widget.changes
         assert "settings.storage_profile_id" not in config_widget.changes
 
+    def test_resource_selectors_present(self, config_widget):
+        """The settings dialog is where a default farm/queue/storage profile is chosen."""
+        assert config_widget.default_farm_box is not None
+        assert config_widget.default_queue_box is not None
+        assert config_widget.default_storage_profile_box is not None
+        assert config_widget.labels["defaults.farm_id"].text() == "Default farm"
+        assert config_widget.labels["defaults.queue_id"].text() == "Default queue"
+        assert (
+            config_widget.labels["settings.storage_profile_id"].text() == "Default storage profile"
+        )
+
+    def test_selecting_farm_stages_farm_and_clears_dependents(self, config_widget):
+        """Picking a farm stages it, plus clears the queue/storage that belonged to the old one."""
+        config_widget.changes.clear()
+
+        config_widget.default_farm_changed("farm-new")
+
+        assert config_widget.changes["defaults.farm_id"] == "farm-new"
+        assert config_widget.changes["defaults.queue_id"] == ""
+        assert config_widget.changes["settings.storage_profile_id"] == ""
+
+    def test_selecting_queue_stages_queue_and_clears_storage_profile(self, config_widget):
+        """Picking a queue stages it, plus clears the storage profile from the old queue."""
+        config_widget.changes.clear()
+
+        config_widget.default_queue_changed("queue-new")
+
+        assert config_widget.changes["defaults.queue_id"] == "queue-new"
+        assert config_widget.changes["settings.storage_profile_id"] == ""
+
+    def test_selecting_storage_profile_stages_it(self, config_widget):
+        config_widget.changes.clear()
+
+        config_widget.default_storage_profile_changed("sp-new")
+
+        assert config_widget.changes["settings.storage_profile_id"] == "sp-new"
+
+    def test_selection_is_staged_not_written_until_applied(self, config_widget):
+        """A pick is staged only; nothing reaches the config file before Apply."""
+        config_widget.changes.clear()
+
+        config_widget.default_farm_changed("farm-new")
+
+        # Staged, and no write happened (the dialog's config_file is mocked, so assert
+        # against the staging dict plus the absence of a write call).
+        assert config_widget.changes["defaults.farm_id"] == "farm-new"
+        assert not config_widget.changes_were_applied
+
+    def test_selectors_do_not_auto_select_a_lone_resource(self, config_widget):
+        """A lone resource is not a choice the user made, so it must not become a default."""
+        assert config_widget.default_farm_box._auto_select_when_single is False
+        assert config_widget.default_queue_box._auto_select_when_single is False
+
     def test_auto_accept_checkbox_is_checkable(self, config_widget):
         """Verify auto accept prompt defaults checkbox is checkable."""
         assert config_widget.auto_accept.isCheckable()
@@ -388,15 +441,13 @@ class TestCorruptBooleanSetting:
 def test_profile_switch_preserves_each_profiles_farm_queue(fresh_deadline_config):
     """End-to-end regression for the profile-switch clobber bug.
 
-    Farm/queue are profile-scoped. Switching profile-1 -> profile-2 -> profile-1
-    through the real config_file must leave each profile's stored farm/queue
-    intact. The previous aws_profile_changed cleared farm/queue in the same
-    ``changes`` batch as the new profile name, so applying the switch wrote empty
-    values into the *target* profile's section, wiping its saved defaults.
+    Farm/queue are profile-scoped, so switching profile-1 -> profile-2 -> profile-1
+    through the real config_file must leave each profile's stored farm/queue intact.
+    Staging empty farm/queue values alongside the new profile name would write them
+    into the *target* profile's section, wiping its saved defaults.
 
-    This drives the actual ``aws_profile_changed`` -> ``apply`` flow against the
-    real config_file (not the mock), so it exercises the genuine bug path: it fails
-    if aws_profile_changed reintroduces the farm/queue/storage clears.
+    This drives the actual ``aws_profile_changed`` -> ``apply`` flow against the real
+    config_file (not the mock).
     """
     from deadline.client.config import config_file
     from deadline.client.ui.dialogs.deadline_config_dialog import DeadlineWorkstationConfigWidget
@@ -420,6 +471,11 @@ def test_profile_switch_preserves_each_profiles_farm_queue(fresh_deadline_config
         widget = DeadlineWorkstationConfigWidget.__new__(DeadlineWorkstationConfigWidget)
         widget.changes = {}
         widget.changes_were_applied = False
+        # aws_profile_changed clears and reloads the resource selectors; this widget is
+        # built without a UI, so stub them out.
+        widget.default_farm_box = MagicMock()
+        widget.default_queue_box = MagicMock()
+        widget.default_storage_profile_box = MagicMock()
 
         # Switch back to profile-1, then apply (writes the staged changes to config).
         widget.aws_profile_changed("profile-1")

@@ -36,6 +36,7 @@ from deadline.job_attachments.progress_tracker import ProgressReportMetadata
 
 from .. import api as _api
 from ..config import config_file
+from ..config.config_file import _copy_config
 from ..config.config_file import _SETTING_FARM_ID as SETTING_FARM_ID
 from ..config.config_file import _SETTING_QUEUE_ID as SETTING_QUEUE_ID
 from ..exceptions import DeadlineOperationError
@@ -163,13 +164,6 @@ def _auto_select_queue(config: Optional[ConfigParser] = None) -> Optional[str]:
     except Exception:
         pass
     return None
-
-
-def _copy_config(config: ConfigParser) -> ConfigParser:
-    """Returns a detached copy of a config, so mutating it can't affect the original."""
-    copied = ConfigParser()
-    copied.read_dict(config)
-    return copied
 
 
 def _apply_cli_options_to_config(

@@ -4,14 +4,15 @@
 job settings tab (``DeadlineCloudSettingsWidget``) using pytest-qt.
 
 These mirror the controller-driven patterns in ``test_settings_dialogue.py`` but
-exercise the new editable selectors on the submit dialog's tab rather than the
-Settings dialog. Selections persist immediately to a real (temporary) config file
-via ``fresh_deadline_config``, so the round-trip can be asserted with
-``config.get_setting``.
+exercise the submit dialog's selectors rather than the Settings dialog's. A selection
+here is scoped to the submission: it is recorded in the controller's session config and
+must not reach the config file, which ``fresh_deadline_config`` points at a real
+temporary path so both halves can be asserted.
 """
 
 import contextlib
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -251,9 +252,11 @@ class TestDropdownPopulation:
             assert "Windows Storage Profile" in items
 
 
-class TestPersistence:
-    def test_selecting_farm_persists_and_clears_stale_queue(self, qtbot, widget, seeded_backend):
-        """Selecting a farm writes defaults.farm_id and clears the stale queue/storage.
+class TestSessionSelection:
+    """Selections are recorded for this submission and never written to the config file."""
+
+    def test_selecting_farm_records_and_clears_stale_queue(self, qtbot, widget, seeded_backend):
+        """Selecting a farm records defaults.farm_id and clears the stale queue/storage.
 
         Uses a second farm that has no queues so the queue list can't auto-select a
         replacement — that isolates the "stale selections are cleared" behavior.
@@ -272,11 +275,15 @@ class TestPersistence:
             _select_by_data(widget.farm_box.box, empty_farm_id)
         QApplication.processEvents()
 
-        assert config_file.get_setting("defaults.farm_id") == empty_farm_id
-        assert config_file.get_setting("defaults.queue_id") == ""
-        assert config_file.get_setting("settings.storage_profile_id") == ""
+        session = DeadlineUIController.getInstance().session_config
+        assert config_file.get_setting("defaults.farm_id", config=session) == empty_farm_id
+        assert config_file.get_setting("defaults.queue_id", config=session) == ""
+        assert config_file.get_setting("settings.storage_profile_id", config=session) == ""
+        # The stored defaults are untouched.
+        assert config_file.get_setting("defaults.farm_id") == ""
+        assert config_file.get_setting("defaults.queue_id") == "queue-stale"
 
-    def test_selecting_queue_persists(self, qtbot, widget, seeded_backend):
+    def test_selecting_queue_records_for_the_session(self, qtbot, widget, seeded_backend):
         # Add a second queue so neither is auto-selected and we can pick a specific one.
         backend, farm_id, queue_id = seeded_backend
         queue_id_2 = backend.create_queue(farmId=farm_id, displayName="Second Queue")["queueId"]
@@ -292,7 +299,11 @@ class TestPersistence:
             _select_by_data(widget.queue_box.box, queue_id_2)
         QApplication.processEvents()
 
-        assert config_file.get_setting("defaults.queue_id") == queue_id_2
+        assert (
+            config_file.get_setting("defaults.queue_id", config=controller.session_config)
+            == queue_id_2
+        )
+        assert config_file.get_setting("defaults.queue_id") == ""
 
     def test_selecting_queue_clears_stale_storage_profile(self, qtbot, widget, seeded_backend):
         """Selecting a different queue clears the storage profile from the old queue.
@@ -319,10 +330,12 @@ class TestPersistence:
             _select_by_data(widget.queue_box.box, queue_id_2)
         QApplication.processEvents()
 
-        assert config_file.get_setting("defaults.queue_id") == queue_id_2
-        assert config_file.get_setting("settings.storage_profile_id") == ""
+        session = controller.session_config
+        assert config_file.get_setting("defaults.queue_id", config=session) == queue_id_2
+        assert config_file.get_setting("settings.storage_profile_id", config=session) == ""
+        assert config_file.get_setting("settings.storage_profile_id") == "sp-stale"
 
-    def test_selecting_storage_profile_persists(self, qtbot, widget, seeded_backend):
+    def test_selecting_storage_profile_records_for_the_session(self, qtbot, widget, seeded_backend):
         backend, farm_id, queue_id = seeded_backend
         config_file.set_setting("defaults.farm_id", farm_id)
         config_file.set_setting("defaults.queue_id", queue_id)
@@ -345,7 +358,34 @@ class TestPersistence:
         _select_by_data(sp_combo, real[0])
         QApplication.processEvents()
 
-        assert config_file.get_setting("settings.storage_profile_id") == real[0]
+        assert (
+            config_file.get_setting("settings.storage_profile_id", config=controller.session_config)
+            == real[0]
+        )
+        assert config_file.get_setting("settings.storage_profile_id") == ""
+
+    def test_selecting_a_farm_leaves_the_config_file_untouched(
+        self, qtbot, widget, seeded_backend, fresh_deadline_config
+    ):
+        """Choosing a farm in the submitter must not write to the config file at all.
+
+        Asserted against the file's bytes: reading a setting back consults the cached
+        parser, which cannot distinguish a stored default from a session selection.
+        """
+        backend, farm_id, _ = seeded_backend
+        farm_b = backend.create_farm(displayName="Farm B")["farmId"]
+        config_file.set_setting("defaults.farm_id", farm_id)
+        before = Path(fresh_deadline_config).read_bytes()
+
+        widget.refresh_setting_controls(deadline_authorized=True)
+        _wait_for_farm(qtbot, widget, farm_b)
+        with qtbot.waitSignal(widget.selection_changed, timeout=5000):
+            _select_by_data(widget.farm_box.box, farm_b)
+        QApplication.processEvents()
+
+        session = DeadlineUIController.getInstance().session_config
+        assert config_file.get_setting("defaults.farm_id", config=session) == farm_b
+        assert Path(fresh_deadline_config).read_bytes() == before
 
 
 class TestStorageProfileVisibility:
@@ -444,15 +484,8 @@ class TestCascade:
         farm's queue/storage ids must not linger as raw-id rows (``queue-...`` /
         ``sp-...``); the combos must fall back to ``<none selected>``.
 
-        The defect only surfaces when the combo reads a *stale* config object: when
-        ``select_farm`` persists the cleared ids, ``set_setting`` writes to disk and the
-        next ``read_config()`` swaps in a fresh ``ConfigParser``, orphaning the combo's
-        reference. Whether that swap happens hinges on the config file's mtime changing,
-        which is filesystem-granularity dependent -- so we force it deterministically by
-        making ``_should_read_config`` always report a change. That way every
-        ``read_config()`` hands back a new object, reliably reproducing the staleness
-        through the real farm-pick -> cascade -> list-update signal chain regardless of
-        host filesystem. (This test fails if the ``_sync_config`` fix is reverted.)
+        The combos and the cascade must observe the same session config object, so the
+        cleared ids are visible to the display sync that follows the farm pick.
         """
         backend, farm_a, queue_a = seeded_backend
         # Start on farm A with its queue + a stored storage profile (as after prior use).
@@ -474,16 +507,14 @@ class TestCascade:
         widget.refresh_setting_controls(deadline_authorized=True)
         _wait_for_farm(qtbot, widget, farm_b)
 
-        # Force every read_config() to rebuild the ConfigParser, deterministically
-        # orphaning the combo's cached self.config the way a real mtime change would.
-        with patch.object(config_file, "_should_read_config", return_value=True):
-            with qtbot.waitSignal(controller.queues_updated, timeout=5000):
-                _select_by_data(widget.farm_box.box, farm_b)
-            QApplication.processEvents()
+        with qtbot.waitSignal(controller.queues_updated, timeout=5000):
+            _select_by_data(widget.farm_box.box, farm_b)
+        QApplication.processEvents()
 
-        # Config is genuinely cleared...
-        assert config_file.get_setting("defaults.queue_id") == ""
-        assert config_file.get_setting("settings.storage_profile_id") == ""
+        # The session selection is genuinely cleared...
+        session = controller.session_config
+        assert config_file.get_setting("defaults.queue_id", config=session) == ""
+        assert config_file.get_setting("settings.storage_profile_id", config=session) == ""
 
         # ...and, crucially, the *display* reflects that -- no raw ids from farm A.
         queue_text = widget.queue_box.box.currentText()
@@ -523,9 +554,12 @@ class TestProfileSwitch:
         _switch_profile_and_refresh(qtbot, widget, "profile-B")
         QApplication.processEvents()
 
-        # Exactly one farm exists -> it is auto-selected (and persisted) for profile B.
+        # Exactly one farm exists -> it is auto-selected for this session. Auto-select is
+        # a convenience for the current submission, so it is not stored as the default.
         assert widget.farm_box.box.currentData() == farm_id
-        assert config_file.get_setting("defaults.farm_id") == farm_id
+        session = DeadlineUIController.getInstance().session_config
+        assert config_file.get_setting("defaults.farm_id", config=session) == farm_id
+        assert config_file.get_setting("defaults.farm_id") == ""
 
     def test_switch_to_profile_without_default_clears_when_multiple_farms(
         self, qtbot, widget, seeded_backend
@@ -702,4 +736,6 @@ class TestProfileSwitch:
         QApplication.processEvents()
 
         assert widget.farm_box.box.currentData() == farm_id
-        assert config_file.get_setting("defaults.farm_id") == farm_id
+        session = DeadlineUIController.getInstance().session_config
+        assert config_file.get_setting("defaults.farm_id", config=session) == farm_id
+        assert config_file.get_setting("defaults.farm_id") == ""

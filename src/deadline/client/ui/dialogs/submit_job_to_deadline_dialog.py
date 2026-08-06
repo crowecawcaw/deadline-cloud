@@ -33,9 +33,10 @@ from ..dataclasses import HostRequirements
 from ...dataclasses import SubmitterInfo
 from ... import api
 from ...api._session import session_context as _session_context
+from ..controllers import DeadlineUIController
 from ..deadline_authentication_status import DeadlineAuthenticationStatus
 from .._utils import block_signals, tr
-from ...config import get_setting, set_setting, config_file
+from ...config import get_setting, set_setting
 from ...config.config_file import _SETTING_FARM_ID, _SETTING_QUEUE_ID
 from ...exceptions import UserInitiatedCancel, NonValidInputError
 from ...job_bundle import create_job_history_bundle_dir
@@ -264,8 +265,9 @@ class SubmitJobToDeadlineDialog(QDialog):
         # Enable/disable the Submit button based on whether the
         # AWS Deadline Cloud API is accessible and the farm+queue are configured.
         api_available = self.deadline_authentication_status.api_availability is True
-        farm_configured = get_setting(_SETTING_FARM_ID) != ""
-        queue_configured = get_setting(_SETTING_QUEUE_ID) != ""
+        session_config = DeadlineUIController.getInstance().session_config
+        farm_configured = get_setting(_SETTING_FARM_ID, config=session_config) != ""
+        queue_configured = get_setting(_SETTING_QUEUE_ID, config=session_config) != ""
         queue_valid = self.shared_job_settings.is_queue_valid()
 
         enable = api_available and farm_configured and queue_configured and queue_valid
@@ -630,7 +632,9 @@ class SubmitJobToDeadlineDialog(QDialog):
             job_progress_dialog.start_job_submission(
                 job_bundle_dir=self.job_history_bundle_dir,
                 submitter_name=self.submitter_info.submitter_name,
-                config=config_file.read_config(),
+                # The session config carries the farm/queue/storage profile chosen in
+                # this submitter, which may differ from the stored defaults.
+                config=DeadlineUIController.getInstance().session_config,
                 require_paths_exist=self.job_attachments.get_require_paths_exist(),
                 job_parameters=job_parameters,
                 known_asset_paths=self.known_asset_paths

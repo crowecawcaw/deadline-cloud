@@ -142,11 +142,11 @@ def _build_dialog(qtbot, auth_status):
 
 
 def test_lone_farm_and_queue_auto_selected_through_dialog(qtbot, fresh_deadline_config):
-    """A single farm + single queue are auto-selected and persisted end-to-end.
+    """A single farm + single queue are auto-selected for the session end-to-end.
 
     refresh_deadline_settings refreshes the combos; the farm combo auto-selects
     the lone farm, the controller persists + cascades to queues, and the lone
-    queue is auto-selected and persisted in turn.
+    queue is auto-selected and recorded in turn.
     """
     auth = _AuthStatusStub(True)
     dialog = _build_dialog(qtbot, auth)
@@ -176,22 +176,26 @@ def test_lone_farm_and_queue_auto_selected_through_dialog(qtbot, fresh_deadline_
     ):
         dialog.refresh_deadline_settings()
         # The cascade is multi-hop and async (farm list -> auto-select farm ->
-        # queue list -> auto-select queue), so wait until both are persisted rather
+        # queue list -> auto-select queue), so wait until both are recorded rather
         # than for a single signal.
+        session = DeadlineUIController.getInstance().session_config
         qtbot.waitUntil(
             lambda: (
-                get_setting(SETTING_FARM_ID) == "farm-1"
-                and get_setting(SETTING_QUEUE_ID) == "queue-1"
+                get_setting(SETTING_FARM_ID, config=session) == "farm-1"
+                and get_setting(SETTING_QUEUE_ID, config=session) == "queue-1"
             ),
             timeout=5000,
         )
 
-    assert get_setting(SETTING_FARM_ID) == "farm-1"
-    assert get_setting(SETTING_QUEUE_ID) == "queue-1"
+    assert get_setting(SETTING_FARM_ID, config=session) == "farm-1"
+    assert get_setting(SETTING_QUEUE_ID, config=session) == "queue-1"
+    # Auto-select serves this submission only; the stored defaults are untouched.
+    assert get_setting(SETTING_FARM_ID) == ""
+    assert get_setting(SETTING_QUEUE_ID) == ""
 
 
 def test_multiple_farms_not_auto_selected_through_dialog(qtbot, fresh_deadline_config):
-    """With more than one farm, nothing is auto-selected or persisted."""
+    """With more than one farm, nothing is auto-selected."""
     auth = _AuthStatusStub(True)
     dialog = _build_dialog(qtbot, auth)
     controller = DeadlineUIController.getInstance()

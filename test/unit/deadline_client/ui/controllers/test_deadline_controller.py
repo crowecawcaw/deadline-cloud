@@ -392,7 +392,7 @@ class TestDeadlineUIController:
     def test_select_farm_persists_and_updates_current_farm(
         self, mock_api, qtbot, fresh_deadline_config
     ):
-        """select_farm persists defaults.farm_id and updates current_farm_id."""
+        """select_farm records the farm in the session config, not on disk."""
         from deadline.client.config import get_setting
 
         controller = DeadlineUIController.getInstance()
@@ -401,7 +401,9 @@ class TestDeadlineUIController:
         controller.select_farm("farm-123")
 
         assert controller.current_farm_id == "farm-123"
-        assert get_setting("defaults.farm_id") == "farm-123"
+        assert get_setting("defaults.farm_id", config=controller.session_config) == "farm-123"
+        # The stored default is untouched: this choice is for this submission only.
+        assert get_setting("defaults.farm_id") == ""
 
     @patch("deadline.client.ui.controllers._deadline_controller.api")
     def test_select_farm_clears_queue_and_storage(self, mock_api, qtbot, fresh_deadline_config):
@@ -416,9 +418,12 @@ class TestDeadlineUIController:
 
         controller.select_farm("farm-123")
 
+        session = controller.session_config
         assert controller.current_queue_id == ""
-        assert get_setting("defaults.queue_id") == ""
-        assert get_setting("settings.storage_profile_id") == ""
+        assert get_setting("defaults.queue_id", config=session) == ""
+        assert get_setting("settings.storage_profile_id", config=session) == ""
+        # The stored defaults still hold the previous values.
+        assert get_setting("defaults.queue_id") == "old-queue"
 
     @patch("deadline.client.ui.controllers._deadline_controller.api")
     def test_select_farm_triggers_queue_refresh(self, mock_api, qtbot, fresh_deadline_config):
@@ -473,7 +478,7 @@ class TestDeadlineUIController:
     def test_select_queue_persists_and_updates_current_queue(
         self, mock_api, qtbot, fresh_deadline_config
     ):
-        """select_queue persists defaults.queue_id and updates current_queue_id."""
+        """select_queue records the queue in the session config, not on disk."""
         from deadline.client.config import get_setting, set_setting
 
         set_setting("defaults.farm_id", "farm-123")
@@ -485,7 +490,8 @@ class TestDeadlineUIController:
         controller.select_queue("queue-456")
 
         assert controller.current_queue_id == "queue-456"
-        assert get_setting("defaults.queue_id") == "queue-456"
+        assert get_setting("defaults.queue_id", config=controller.session_config) == "queue-456"
+        assert get_setting("defaults.queue_id") == ""
 
     @patch("deadline.client.ui.controllers._deadline_controller.api")
     def test_select_queue_clears_stale_storage_profile(
@@ -503,7 +509,8 @@ class TestDeadlineUIController:
 
         controller.select_queue("queue-456")
 
-        assert get_setting("settings.storage_profile_id") == ""
+        assert get_setting("settings.storage_profile_id", config=controller.session_config) == ""
+        assert get_setting("settings.storage_profile_id") == "old-sp"
 
     @patch("deadline.client.ui.controllers._deadline_controller.api")
     def test_select_queue_triggers_storage_profile_refresh(
@@ -553,17 +560,20 @@ class TestDeadlineUIController:
         assert params_received[0] == [{"name": "param1"}]
 
     @patch("deadline.client.ui.controllers._deadline_controller.api")
-    def test_select_storage_profile_persists_without_cascade(
+    def test_select_storage_profile_records_without_cascade(
         self, mock_api, qtbot, fresh_deadline_config
     ):
-        """select_storage_profile persists only; it has no dependents to cascade."""
+        """select_storage_profile records only; it has no dependents to cascade."""
         from deadline.client.config import get_setting
 
         controller = DeadlineUIController.getInstance()
 
         controller.select_storage_profile("sp-789")
 
-        assert get_setting("settings.storage_profile_id") == "sp-789"
+        assert (
+            get_setting("settings.storage_profile_id", config=controller.session_config) == "sp-789"
+        )
+        assert get_setting("settings.storage_profile_id") == ""
         mock_api.list_storage_profiles_for_queue.assert_not_called()
         mock_api.get_queue_parameter_definitions.assert_not_called()
 

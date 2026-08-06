@@ -23,7 +23,7 @@ from qtpy.QtWidgets import (  # type: ignore
 from .radio_button_widget import HoverRadioButton
 
 from ...api._queue_parameters import _apply_deadline_cloud_v2_channel_migration
-from ...config import config_file, get_setting
+from ...config import get_setting
 from .._utils import tr
 from ..controllers import DeadlineUIController
 from ._deadline_list_combo_boxes import (
@@ -97,13 +97,15 @@ class SharedJobSettingsWidget(QWidget):  # pylint: disable=too-few-public-method
             lambda message: self.parameter_changed.emit(message)
         )
 
-        # Track current farm/queue IDs for change detection
-        self.farm_id = get_setting("defaults.farm_id")
-        self.queue_id = get_setting("defaults.queue_id")
-        self.__valid_queue = False
-
         # Connect to the controller for queue parameters
         self._controller = DeadlineUIController.getInstance()
+
+        # Track current farm/queue IDs for change detection. These come from the session
+        # config, so they follow the selection made in this submitter.
+        session_config = self._controller.session_config
+        self.farm_id = get_setting("defaults.farm_id", config=session_config)
+        self.queue_id = get_setting("defaults.queue_id", config=session_config)
+        self.__valid_queue = False
         self._controller.queue_parameters_updated.connect(
             self._handle_queue_parameters_update, Qt.QueuedConnection
         )
@@ -141,8 +143,9 @@ class SharedJobSettingsWidget(QWidget):  # pylint: disable=too-few-public-method
         """
         If the default queue id or job bundle has changed, refresh the queue parameters.
         """
-        farm_id = get_setting("defaults.farm_id")
-        queue_id = get_setting("defaults.queue_id")
+        session_config = self._controller.session_config
+        farm_id = get_setting("defaults.farm_id", config=session_config)
+        queue_id = get_setting("defaults.queue_id", config=session_config)
         if not farm_id or not queue_id:
             self.queue_parameters_box.rebuild_ui(async_loading_state="")
             return  # If the user has not selected a farm or queue ID, don't try to load
@@ -178,8 +181,9 @@ class SharedJobSettingsWidget(QWidget):  # pylint: disable=too-few-public-method
         """
         Triggers the controller to load queue parameters.
         """
-        self.farm_id = farm_id = get_setting("defaults.farm_id")
-        self.queue_id = queue_id = get_setting("defaults.queue_id")
+        session_config = self._controller.session_config
+        self.farm_id = farm_id = get_setting("defaults.farm_id", config=session_config)
+        self.queue_id = queue_id = get_setting("defaults.queue_id", config=session_config)
         if not self.farm_id or not self.queue_id:
             # If the user has not selected a farm or queue ID, don't bother loading
             return
@@ -581,22 +585,29 @@ class DeadlineCloudSettingsWidget(QGroupBox):
                     api.check_deadline_available, for example from
                     an AWS Deadline Cloud Status Widget.
         """
-        config = config_file.read_config()
+        # Detect an AWS profile switch. Farm/queue/storage settings are profile-scoped,
+        # so the combos must reflect the NEW profile. The combos apply the unified
+        # selection rule on each list update (chosen value, else stored default, else
+        # lone resource, else <none>); here we only need to drop the previous profile's
+        # stale list contents so they don't linger when the new profile can't be listed
+        # (e.g. not logged in yet).
+        new_profile = get_setting("defaults.aws_profile_name")
+        profile_changed = new_profile != self._current_aws_profile
+        self._current_aws_profile = new_profile
 
-        # Align the controller's cascade ids with what's persisted, so the queue/
+        # The session config carries selections made in this submitter. A profile switch
+        # invalidates them (they belong to the old profile's sections), so re-seed from
+        # the stored defaults; otherwise keep them so a refresh doesn't discard the
+        # user's choice.
+        if profile_changed:
+            config = self._controller.reload_session_config()
+        else:
+            config = self._controller.session_config
+
+        # Align the controller's cascade ids with the session config, so the queue/
         # storage list fetches below use the current farm/queue (this refresh wasn't
         # driven through select_*).
         self._controller.sync_selection_state(config)
-
-        # Detect an AWS profile switch. Farm/queue/storage settings are profile-scoped,
-        # so the combos must reflect the NEW profile. The combos apply the unified
-        # selection rule on each list update (stored default, else lone resource, else
-        # <none>); here we only need to drop the previous profile's stale list contents
-        # so they don't linger when the new profile can't be listed (e.g. not logged
-        # in yet).
-        new_profile = get_setting("defaults.aws_profile_name", config=config)
-        profile_changed = new_profile != self._current_aws_profile
-        self._current_aws_profile = new_profile
 
         for box in (self.farm_box, self.queue_box, self.storage_profile_box):
             box.set_config(config)

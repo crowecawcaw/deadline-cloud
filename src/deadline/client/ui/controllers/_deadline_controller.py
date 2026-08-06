@@ -18,6 +18,7 @@ from ... import api
 from ...api._list_apis import _iter_farms_by_region
 from ...api._session import _resolve_region
 from ...config import config_file, set_setting
+from ...config.config_file import _copy_config
 from ...exceptions import DeadlineOperationError
 from ...job_bundle.parameters import JobParameter
 from ._async_runner import AsyncTaskRunner
@@ -176,18 +177,36 @@ class DeadlineUIController(QObject):
         """
         Update the configuration used for API calls.
 
+        The config is adopted by reference so that selections recorded through
+        ``select_*`` are visible to whoever owns it (the submit dialog uses this to
+        build the job with the resources chosen in the submitter). Callers that must
+        not be mutated should hand in a copy.
+
         Args:
             config: ConfigParser instance, or None to use default config
         """
-        if config is not None:
-            self._config = ConfigParser()
-            self._config.read_dict(config)
-        else:
-            self._config = None
+        self._config = config
 
     @property
     def config(self) -> Optional[ConfigParser]:
         """Current configuration."""
+        return self._config
+
+    @property
+    def session_config(self) -> ConfigParser:
+        """
+        The config for this session's selections, seeded from the stored defaults.
+
+        Selections made in the submitter are recorded here rather than on disk, so a
+        one-off choice of farm or queue doesn't change the stored default.
+        """
+        if self._config is None:
+            self._config = _copy_config(config_file.read_config())
+        return self._config
+
+    def reload_session_config(self) -> ConfigParser:
+        """Discard session selections and re-seed from the stored defaults."""
+        self._config = _copy_config(config_file.read_config())
         return self._config
 
     @property
@@ -512,19 +531,24 @@ class DeadlineUIController(QObject):
     # Selection Handlers (single source of truth)
     # ─────────────────────────────────────────────────────────────
     #
-    # These are the ONLY place farm/queue/storage selections are persisted and
+    # These are the ONLY place farm/queue/storage selections are recorded and
     # cascaded. A user picking a resource in a combo, or the combo auto-selecting
     # a lone resource, routes here. The controller:
-    #   1. persists the selection (and clears now-invalid dependents) on the main
-    #      thread via the module-level set_setting (global config + disk), and
+    #   1. writes the selection (and clears now-invalid dependents) into its own
+    #      session config on the main thread -- never to disk, so choosing a farm
+    #      for one submission does not change the stored default, and
     #   2. updates its own _current_* ids, which refresh_queues/refresh_storage_
     #      profiles read, so dependent list fetches always use the just-selected
     #      ids rather than a stale per-widget config snapshot.
-    # Having a single writer on a single thread is what removes the family of
-    # races the previous dual-cascade design had to patch piecemeal.
+    # Having a single writer on a single thread is what keeps the cascade free of
+    # races.
+
+    def _set_session_setting(self, setting_name: str, value: str) -> None:
+        """Record a setting in the session config, leaving the config file alone."""
+        set_setting(setting_name, value, config=self.session_config)
 
     def select_farm(self, farm_id: str) -> None:
-        """Persist a farm selection and cascade to queues.
+        """Record a farm selection for this session and cascade to queues.
 
         Clears the previously selected queue/storage profile, since they belong to
         the old farm, then refreshes the queue list for the new farm. ``selection_
@@ -534,10 +558,10 @@ class DeadlineUIController(QObject):
         Args:
             farm_id: The newly selected farm ID (may be "" to clear).
         """
-        set_setting("defaults.farm_id", farm_id)
+        self._set_session_setting("defaults.farm_id", farm_id)
         # The previous queue/storage profile belong to the old farm.
-        set_setting("defaults.queue_id", "")
-        set_setting("settings.storage_profile_id", "")
+        self._set_session_setting("defaults.queue_id", "")
+        self._set_session_setting("settings.storage_profile_id", "")
 
         self._current_farm_id = farm_id
         self._current_queue_id = ""
@@ -550,7 +574,7 @@ class DeadlineUIController(QObject):
         self.selection_changed.emit()
 
     def select_queue(self, queue_id: str) -> None:
-        """Persist a queue selection and cascade to storage profiles + queue params.
+        """Record a queue selection and cascade to storage profiles + queue params.
 
         Clears the previously selected storage profile (it is queue-scoped), then
         refreshes the storage-profile list and queue parameters for the new queue.
@@ -558,9 +582,9 @@ class DeadlineUIController(QObject):
         Args:
             queue_id: The newly selected queue ID (may be "" to clear).
         """
-        set_setting("defaults.queue_id", queue_id)
+        self._set_session_setting("defaults.queue_id", queue_id)
         # The previous storage profile belongs to the old queue.
-        set_setting("settings.storage_profile_id", "")
+        self._set_session_setting("settings.storage_profile_id", "")
 
         self._current_queue_id = queue_id
 
@@ -569,18 +593,18 @@ class DeadlineUIController(QObject):
         self.selection_changed.emit()
 
     def select_storage_profile(self, storage_profile_id: str) -> None:
-        """Persist a storage-profile selection.
+        """Record a storage-profile selection.
 
         A storage profile has no dependents and does not gate the Submit button or
-        queue parameters, so this only persists; no cascade or notification.
+        queue parameters, so this only records; no cascade or notification.
 
         Args:
             storage_profile_id: The newly selected storage profile ID (may be "").
         """
-        set_setting("settings.storage_profile_id", storage_profile_id or "")
+        self._set_session_setting("settings.storage_profile_id", storage_profile_id or "")
 
     def sync_selection_state(self, config: Optional[ConfigParser] = None) -> None:
-        """Align the controller's cascade ids with the persisted config.
+        """Align the controller's cascade ids with the config it was given.
 
         Called on a plain refresh (dialog open, profile switch, sign-in) where the
         selection wasn't made through select_*; keeps refresh_queues/refresh_storage_

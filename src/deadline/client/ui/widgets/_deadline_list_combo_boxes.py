@@ -67,6 +67,10 @@ class _DeadlineResourceListComboBoxController(QWidget):
     # here - the single point every list refresh funnels through - so auto-select works
     # regardless of what triggered the refresh (dialog open, profile switch, sign-in,
     # manual refresh) without each trigger needing its own hook.
+    #
+    # Auto-select is a convenience for the operation in progress, so hosts that record a
+    # stored default (the settings dialog) turn it off per instance: a value the user
+    # never chose must not become their default.
     _auto_select_when_single: bool = False
 
     def __init__(self, resource_name: str, parent: Optional[QWidget] = None):
@@ -74,12 +78,6 @@ class _DeadlineResourceListComboBoxController(QWidget):
 
         self.resource_name = resource_name
         self.config: Optional[ConfigParser] = None
-        # True only while ``self.config`` is the live module-level config object
-        # (i.e. ``set_config`` was handed ``config_file.read_config()``). When a
-        # caller injects a *different* parser - e.g. the config dialog's deep copy
-        # with unsaved edits layered on - this stays False so ``_sync_config`` won't
-        # clobber those pending edits by re-reading from disk. See ``_sync_config``.
-        self._config_tracks_global: bool = False
         self._controller = DeadlineUIController.getInstance()
         # Maps resource_id -> region for resources that carry a region (farms).
         self._region_by_id: dict = {}
@@ -138,7 +136,6 @@ class _DeadlineResourceListComboBoxController(QWidget):
 
     def _handle_list_update(self, items_list: List) -> None:
         """Handle a wholesale list (re)set from the controller."""
-        self._sync_config()
         with block_signals(self.box):
             self.box.clear()
             self._region_by_id = {}
@@ -283,7 +280,6 @@ class _DeadlineResourceListComboBoxController(QWidget):
 
     def _handle_loading_state(self, is_loading: bool) -> None:
         """Handle loading state changes."""
-        self._sync_config()
         if is_loading:
             # Show refreshing indicator
             selected_id = config_file.get_setting(self._get_setting_name(), config=self.config)
@@ -327,47 +323,14 @@ class _DeadlineResourceListComboBoxController(QWidget):
         """Updates the AWS Deadline Cloud config object the control uses.
 
         ``self.config`` is the object ``_maybe_auto_select_single`` and
-        ``refresh_selected_id`` read the configured id from. Two kinds of caller hand
-        it in:
-
-        - The submit dialog passes the live ``config_file.read_config()`` object and
-          persists selections through the module-level ``set_setting``. ``set_setting``
-          writes to disk, and the next ``read_config`` detects the mtime change and
-          swaps in a *fresh* ``ConfigParser`` — so the object handed in here can go
-          stale after a cascade (e.g. ``select_farm`` zeroing ``queue_id``).
-          ``_sync_config`` re-points ``self.config`` at the live config before each
-          display sync so those reads never observe the pre-cascade values.
-
-        - The config dialog builds a *copy* of the config and layers the user's
-          unsaved ``changes`` on top before handing it in. That copy intentionally
-          differs from disk, so ``_sync_config`` must NOT re-read over it or the
-          pending edits would vanish from the display. We detect this by identity: the
-          re-sync only happens when the config we were given *is* the live global.
+        ``refresh_selected_id`` read the configured id from. Callers hand in a config
+        that intentionally differs from what is on disk — the submit dialog's session
+        config carrying this submission's selections, or the settings dialog's copy
+        carrying unsaved edits — and the cascade mutates that same object in place, so
+        it is used as given and never re-read from disk.
         """
         self.config = config
-        self._config_tracks_global = config is config_file.read_config()
         self._controller.set_config(config)
-
-    def _sync_config(self) -> None:
-        """Re-point ``self.config`` at the live global config before a display sync.
-
-        ``set_setting`` (used by the controller's ``select_*`` cascade) writes to
-        disk, which makes the next ``read_config()`` detect the mtime change and
-        build a *new* ``ConfigParser``, replacing the cached ``__config``. A combo
-        that keeps its original reference in ``self.config`` would then read stale
-        values - e.g. after selecting a farm the user has used before, the old
-        queue/storage-profile ids stored under that farm's section would still be
-        visible, so the combo shows a raw id instead of "<none selected>".
-
-        Only re-read when ``self.config`` is tracking the live global object (see
-        ``set_config``). If a caller injected its own parser - e.g. the config
-        dialog's copy carrying unsaved edits - re-reading would silently discard
-        those edits, so we leave ``self.config`` untouched. When nothing was
-        configured yet, ``self.config`` stays ``None`` and reads fall through to the
-        global config as before.
-        """
-        if self.config is not None and self._config_tracks_global:
-            self.config = config_file.read_config()
 
     def clear_list(self) -> None:
         """

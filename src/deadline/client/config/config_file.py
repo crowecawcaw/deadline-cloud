@@ -435,6 +435,22 @@ def _reset_directory_permissions_windows(directory: Path) -> None:
     )
 
 
+def _copy_config(config: ConfigParser) -> ConfigParser:
+    """
+    Returns a detached copy of a config, so mutating it can't affect the original.
+
+    Use this to build the in-memory config for one operation. `read_config` caches one
+    parser per process; mutating it would let a later persisting write flush those
+    changes to disk.
+
+    Args:
+        config (ConfigParser): The config to copy.
+    """
+    copied = ConfigParser()
+    copied.read_dict(config)
+    return copied
+
+
 def write_config(config: ConfigParser) -> None:
     """
     Writes the provided config to the AWS Deadline Cloud configuration.

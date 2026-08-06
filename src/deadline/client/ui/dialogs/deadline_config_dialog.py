@@ -47,10 +47,16 @@ from qtpy.QtWidgets import (  # pylint: disable=import-error; type: ignore
 import os
 
 from ... import api
+from ..controllers import DeadlineUIController
 from ..deadline_authentication_status import DeadlineAuthenticationStatus
 from ...config import config_file, get_setting_default, str2bool
 from .._utils import block_signals, tr
 from ..widgets import DirectoryPickerWidget
+from ..widgets._deadline_list_combo_boxes import (
+    DeadlineFarmListComboBoxController,
+    DeadlineQueueListComboBoxController,
+    DeadlineStorageProfileListComboBoxController,
+)
 from ..widgets.deadline_authentication_status_widget import (
     DeadlineAuthenticationStatusWidget,
 )
@@ -83,12 +89,21 @@ class DeadlineConfigDialog(QDialog):
 
         Returns True if any changes were applied, False otherwise.
         """
+        # This dialog points the shared controller at its own staged config while it is
+        # open. Restore whatever the host had afterwards so an in-progress submission
+        # keeps the resources it had selected.
+        controller = DeadlineUIController.getInstance()
+        host_config = controller.config
+
         deadline_config = DeadlineConfigDialog(parent=parent)
 
         if set_profile_focus:
             deadline_config.config_box.aws_profiles_box.setFocus()
 
-        deadline_config.exec_()
+        try:
+            deadline_config.exec_()
+        finally:
+            controller.set_config(host_config)
         return deadline_config.changes_were_applied
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -216,6 +231,10 @@ class DeadlineWorkstationConfigWidget(QWidget):
         self._build_ui()
         self._fill_aws_profiles_box()
         self.refresh()
+        # Populate the resource lists. Each cascades to the next as it resolves.
+        self.default_farm_box.refresh_list()
+        self.default_queue_box.refresh_list()
+        self.default_storage_profile_box.refresh_list()
 
     def minimumSizeHint(self):
         return QSize(500, 700)
@@ -306,8 +325,36 @@ class DeadlineWorkstationConfigWidget(QWidget):
         layout.addRow(job_history_dir_label, self.job_history_dir_edit)
         self.job_history_dir_edit.path_changed.connect(self.job_history_dir_changed)
 
+        self.default_farm_box = DeadlineFarmListComboBoxController(parent=group)
+        # A lone farm is not a choice the user made, so it must not be staged as their
+        # default here.
+        self.default_farm_box._auto_select_when_single = False
+        default_farm_box_label = self.labels["defaults.farm_id"] = QLabel(tr("Default farm"))
+        self.default_farm_box.user_selected.connect(self.default_farm_changed)
+        self.default_farm_box.background_exception.connect(self.handle_background_exception)
+        layout.addRow(default_farm_box_label, self.default_farm_box)
+
     def _build_farm_settings_ui(self, group, layout):
         layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+
+        self.default_queue_box = DeadlineQueueListComboBoxController(parent=group)
+        self.default_queue_box._auto_select_when_single = False
+        default_queue_box_label = self.labels["defaults.queue_id"] = QLabel(tr("Default queue"))
+        self.default_queue_box.user_selected.connect(self.default_queue_changed)
+        self.default_queue_box.background_exception.connect(self.handle_background_exception)
+        layout.addRow(default_queue_box_label, self.default_queue_box)
+
+        self.default_storage_profile_box = DeadlineStorageProfileListComboBoxController(
+            parent=group
+        )
+        default_storage_profile_box_label = self.labels["settings.storage_profile_id"] = QLabel(
+            tr("Default storage profile")
+        )
+        self.default_storage_profile_box.user_selected.connect(self.default_storage_profile_changed)
+        self.default_storage_profile_box.background_exception.connect(
+            self.handle_background_exception
+        )
+        layout.addRow(default_storage_profile_box_label, self.default_storage_profile_box)
 
         item_name_copied = JobAttachmentsFileSystem.COPIED.value
         item_name_virtual = JobAttachmentsFileSystem.VIRTUAL.value
@@ -773,6 +820,16 @@ class DeadlineWorkstationConfigWidget(QWidget):
             )
             self.job_history_dir_edit.setText(job_history_dir)
 
+        # Point the resource selectors at the staged config so they display pending
+        # edits, then sync each combo's display to it.
+        for box in (
+            self.default_farm_box,
+            self.default_queue_box,
+            self.default_storage_profile_box,
+        ):
+            box.set_config(self.config)
+            box.refresh_selected_id()
+
         for refresh_callback in self._refresh_callbacks:
             refresh_callback()
 
@@ -829,9 +886,37 @@ class DeadlineWorkstationConfigWidget(QWidget):
         # surfaces the new profile's own stored values. Clearing them would instead
         # write empty values into the *new* profile's section - destroying the very
         # defaults we're switching to (and orphaning the queue under a malformed
-        # section). The farm/queue/storage selectors live on the submit dialog's
-        # Shared job settings tab and re-derive their selection from the switched-to
-        # profile on the next refresh.
+        # section).
+        self.default_farm_box.clear_list()
+        self.default_queue_box.clear_list()
+        self.default_storage_profile_box.clear_list()
+        self.refresh()
+        self.default_farm_box.refresh_list()
+
+    def default_farm_changed(self, farm_id):
+        """Stage a default-farm change and cascade to the queue list."""
+        self.changes["defaults.farm_id"] = farm_id
+        # Record the farm's region alongside its id, per the (region, farm_id)
+        # convention. Empty means "use the session/profile region".
+        self.changes["defaults.farm_region"] = self.default_farm_box.region_for_id(farm_id)
+        # The old queue/storage profile belong to the previous farm.
+        self.changes["defaults.queue_id"] = ""
+        self.changes["settings.storage_profile_id"] = ""
+        self.default_storage_profile_box.clear_list()
+        self.refresh()
+        self.default_queue_box.refresh_list()
+
+    def default_queue_changed(self, queue_id):
+        """Stage a default-queue change and cascade to the storage-profile list."""
+        self.changes["defaults.queue_id"] = queue_id
+        # The old storage profile belongs to the previous queue.
+        self.changes["settings.storage_profile_id"] = ""
+        self.refresh()
+        self.default_storage_profile_box.refresh_list()
+
+    def default_storage_profile_changed(self, storage_profile_id):
+        """Stage a default storage-profile change."""
+        self.changes["settings.storage_profile_id"] = storage_profile_id
         self.refresh()
 
     def job_history_dir_changed(self):
