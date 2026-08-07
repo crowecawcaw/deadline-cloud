@@ -41,6 +41,7 @@ from ....job_attachments.api import (
 
 from ... import api
 from ...config import config_file
+from ..._path_utils import common_ancestor
 from ...exceptions import DeadlineOperationError, DeadlineOperationTimedOut
 from .._common import (
     _OUTPUT_FORMAT_HELP,
@@ -910,7 +911,7 @@ def _get_summary_of_files_to_download_message(
         return _get_json_line(JSON_MSG_TYPE_PRESUMMARY, output_paths_by_root)
     else:
         paths_message_joined = "    " + "\n    ".join(
-            f"{os.path.commonpath([os.path.join(directory, p) for p in output_paths])} ({len(output_paths)} file{'s' if len(output_paths) > 1 else ''})"
+            f"{common_ancestor([os.path.join(directory, p) for p in output_paths], path_module=os.path)} ({len(output_paths)} file{'s' if len(output_paths) > 1 else ''})"
             for directory, output_paths in output_paths_by_root.items()
         )
         return f"\nSummary of files to download:\n{paths_message_joined}\n"

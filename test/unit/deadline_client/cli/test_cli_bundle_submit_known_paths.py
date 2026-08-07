@@ -4,6 +4,7 @@
 Tests for the known asset paths functionality in the bundle_submit CLI command.
 """
 
+import ntpath
 import os
 import json
 import tempfile
@@ -16,6 +17,7 @@ import pytest
 
 from deadline.client import config
 from deadline.client.cli import main
+from deadline.client.api import _submit_job_bundle as sjb
 from deadline.client.api._submit_job_bundle import (
     _filter_redundant_known_paths,
     _generate_message_for_asset_paths,
@@ -144,6 +146,146 @@ def test_filter_redundant_known_paths(input, expected):
 )
 def test_is_known_path(path, roots, expected):
     assert _is_known_path(path, roots) is expected
+
+
+@pytest.mark.parametrize(
+    "path, roots, expected",
+    [
+        # Regression for https://github.com/aws-deadline/deadline-cloud/issues/1321:
+        # a host-level UNC root must contain paths under any of its shares.
+        (
+            r"\\192.168.20.20\projects\assets\FA_Anim\260304_FA_Anim.c4d",
+            [r"\\192.168.20.20"],
+            True,
+        ),
+        (r"\\host\share\file", [r"\\host"], True),
+        (r"\\host\share\file", ["\\\\host\\"], True),
+        (r"\\host\share\file", [r"\\host\share"], True),
+        # Neither a different nor a prefix-sharing host is contained.
+        (r"\\other\share\file", [r"\\host"], False),
+        (r"\\host2\share\file", [r"\\host"], False),
+        (r"\\host\share2\file", [r"\\host\share"], False),
+        # A UNC candidate is not contained by a drive-letter root, and vice versa.
+        (r"\\host\share\file", [r"C:\trusted"], False),
+        (r"C:\trusted\file", [r"\\host\share"], False),
+        # Contained by the second of several roots, including a mismatched-drive first root.
+        (r"\\host\share\file", [r"D:\other", r"\\host"], True),
+        # A bare UNC anchor names no server, so it must not trust every reachable share. It
+        # passes the isabs filter, so '--known-asset-path \\' reaches here as a root.
+        (r"\\corp\finance\salaries.xlsx", ["\\\\"], False),
+        (r"\\corp\finance\salaries.xlsx", ["//"], False),
+        (r"\\corp\finance\salaries.xlsx", ["\\\\?\\UNC\\"], False),
+        # A useless root must not shadow a real one that follows it.
+        (r"\\host\share\file", ["\\\\", r"\\host"], True),
+    ],
+)
+def test_is_known_path_windows_semantics(path, roots, expected):
+    """Windows path semantics, exercised via ntpath so the cases run on every platform."""
+    with patch.object(sjb.os, "path", ntpath):
+        assert _is_known_path(path, roots) is expected
+
+
+@pytest.mark.parametrize(
+    "input, expected",
+    [
+        # A host-level root makes its shares redundant.
+        ([r"\\host", r"\\host\share"], [r"\\host"]),
+        ([r"\\host\share", r"\\host"], [r"\\host"]),
+        ([r"\\host\share\a", r"\\host"], [r"\\host"]),
+        # Distinct hosts and shares are all kept.
+        ([r"\\host\s1", r"\\host\s2"], [r"\\host\s1", r"\\host\s2"]),
+        ([r"\\host1", r"\\host2"], [r"\\host1", r"\\host2"]),
+        # A host sharing a string prefix is not made redundant.
+        ([r"\\host", r"\\host2\share"], [r"\\host", r"\\host2\share"]),
+        # Case variants of the same location are redundant on Windows.
+        ([r"\\host\Share", r"\\HOST\share\sub"], [r"\\host\Share"]),
+        ([r"C:\proj", r"c:\PROJ\sub"], [r"C:\proj"]),
+        # Drive-letter roots stay separate from UNC roots.
+        ([r"C:\proj", r"\\host\share"], [r"C:\proj", r"\\host\share"]),
+    ],
+)
+def test_filter_redundant_known_paths_windows_semantics(input, expected):
+    # abspath is left native so the already-absolute inputs pass through unchanged.
+    with patch.object(sjb.os.path, "abspath", lambda p: p), patch.object(sjb.os, "path", ntpath):
+        assert _filter_redundant_known_paths(input) == expected
+
+
+def test_filter_redundant_known_paths_expands_user_paths():
+    """
+    A '~'-prefixed root has to be expanded to match an absolute candidate. Such a root
+    reaches here from the config file and the CLI job submitter's default data
+    directory, neither of which goes through shell expansion.
+    """
+    home_root = os.path.join("~", "projects")
+    expected_home = os.path.join(os.path.expanduser("~"), "projects")
+
+    assert _filter_redundant_known_paths([home_root]) == [expected_home]
+    assert _is_known_path(os.path.join(expected_home, "scene.ma"), [expected_home]) is True
+
+    # Expanding must not defeat redundancy filtering: '~/projects' and its subdirectory
+    # name the same tree, so only the ancestor survives.
+    assert _filter_redundant_known_paths([home_root, os.path.join(home_root, "sub")]) == [
+        expected_home
+    ]
+
+
+@pytest.mark.parametrize(
+    "known_path",
+    [
+        # An empty known path reaches this code from `--known-asset-path ""`, from the
+        # MCP tool's unvalidated JSON array, and from a PATH/FILE job parameter whose
+        # allowedValues suppressed absolutization (os.path.dirname("scene.ma") == "").
+        "",
+        # Relative roots, including the Windows root-relative and drive-relative forms.
+        "assets",
+        os.path.join("..", "shared"),
+        "\\projects",
+        "C:rel",
+    ],
+)
+def test_filter_redundant_known_paths_drops_unanchored_paths(known_path):
+    """
+    A root that names no absolute location must be dropped, not resolved against the cwd.
+
+    It matches no candidate either way, but dropping it at the boundary means a future
+    caller cannot turn it into a trusted tree: os.path.abspath("") is the whole working
+    directory, which would suppress the unknown-asset-path warning and let a
+    non-interactive submit upload undesignated files.
+    """
+    assert _filter_redundant_known_paths([known_path]) == []
+
+    # A real root alongside an unanchored one still survives.
+    real_root = os.path.abspath(os.path.join(os.sep, "trusted", "project"))
+    assert _filter_redundant_known_paths([known_path, real_root]) == [real_root]
+
+
+def test_filter_redundant_known_paths_unanchored_path_does_not_trust_cwd():
+    """The working directory must not become a known root via an empty path."""
+    cwd_file = os.path.join(os.getcwd(), "unrelated_secret.txt")
+    assert _is_known_path(cwd_file, _filter_redundant_known_paths([""])) is False
+
+
+def test_generate_message_for_asset_paths_unc_host_root_is_known():
+    """
+    Regression for issue #1321: files on a share under a host-level UNC known root
+    must not trigger the unknown-path warning.
+    """
+    known_root = r"\\192.168.20.20"
+    inside_file = r"\\192.168.20.20\projects\assets\FA_Anim\260304_FA_Anim.c4d"
+
+    upload_group = AssetUploadGroup(
+        asset_groups=[AssetRootGroup(root_path=r"\\192.168.20.20\projects", inputs={inside_file})],  # type: ignore[arg-type]
+        total_input_files=1,
+        total_input_bytes=12,
+    )
+
+    with patch("deadline.client.api._submit_job_bundle.os.path", ntpath):
+        message, no_warnings = _generate_message_for_asset_paths(
+            upload_group, storage_profile=None, known_asset_paths=[known_root]
+        )
+
+    assert no_warnings is True, message
+    assert "WARNING: Files were specified outside of known asset paths." not in message, message
 
 
 def test_generate_message_for_asset_paths_sibling_prefix_is_unknown():

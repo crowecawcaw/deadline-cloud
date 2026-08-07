@@ -7,6 +7,11 @@ job bundle parameters
 
 from __future__ import annotations
 
+import ntpath
+from contextlib import contextmanager
+from copy import deepcopy
+from unittest.mock import patch
+
 import pytest
 
 from deadline.client.job_bundle import parameters
@@ -686,3 +691,86 @@ def test_ui_control_for_parameter_definition_errors(parameter_def):
 def test_parameter_definition_difference(parameter1, parameter2, expected_difference):
     """Test that parameter_definition_difference returns expected differences."""
     assert parameters.parameter_definition_difference(parameter1, parameter2) == expected_difference
+
+
+class TestPathDefaultContainmentWindowsPaths:
+    """
+    Windows path semantics for the PATH-default containment check in
+    read_job_bundle_parameters, exercised through a simulated ntpath filesystem so the
+    cases run on every platform.
+
+    os.path.commonpath raises ValueError when the bundle sits at a UNC share root
+    ('\\\\host\\share' vs '\\\\host\\share\\sub' -> "Can't mix absolute and relative
+    paths"). That exception is not caught, so a valid template would fail to load with a
+    raw ValueError instead of resolving its default.
+    """
+
+    TEMPLATE = {
+        "specificationVersion": "jobtemplate-2023-09",
+        "name": "PathDefault",
+        "parameterDefinitions": [
+            {
+                "name": "OutDir",
+                "type": "PATH",
+                "objectType": "DIRECTORY",
+                "dataFlow": "OUT",
+                "default": "output",
+            }
+        ],
+    }
+
+    @contextmanager
+    def _simulated_windows_bundle(self, bundle_dir, resolves_to=None):
+        resolves_to = resolves_to or {}
+
+        class _WindowsPath:
+            def __getattr__(self, name):
+                return getattr(ntpath, name)
+
+            @staticmethod
+            def realpath(path):
+                return resolves_to.get(ntpath.normpath(path), ntpath.normpath(path))
+
+        def read_yaml_or_json_object(bundle_dir, filename, required):
+            # Deep-copied because read_job_bundle_parameters sets 'value' on the
+            # parameter definitions in place.
+            return deepcopy(self.TEMPLATE) if filename == "template" else None
+
+        with (
+            patch.object(parameters.os, "path", _WindowsPath()),
+            patch.object(parameters, "read_yaml_or_json_object", read_yaml_or_json_object),
+        ):
+            yield
+
+    def _out_dir_value(self, result):
+        return next(p for p in result if p["name"] == "OutDir")["value"]
+
+    def test_bundle_at_unc_share_root_resolves_default(self):
+        bundle_dir = r"\\host\share"
+        with self._simulated_windows_bundle(bundle_dir):
+            result = parameters.read_job_bundle_parameters(bundle_dir)
+        assert self._out_dir_value(result) == r"\\host\share\output"
+
+    def test_bundle_under_unc_share_resolves_default(self):
+        bundle_dir = r"\\host\share\bundle"
+        with self._simulated_windows_bundle(bundle_dir):
+            result = parameters.read_job_bundle_parameters(bundle_dir)
+        assert self._out_dir_value(result) == r"\\host\share\bundle\output"
+
+    def test_default_resolving_outside_unc_share_is_rejected(self):
+        bundle_dir = r"\\host\share\bundle"
+        with self._simulated_windows_bundle(
+            bundle_dir,
+            {r"\\host\share\bundle\output": r"\\host\other\secret"},
+        ):
+            with pytest.raises(exceptions.DeadlineOperationError):
+                parameters.read_job_bundle_parameters(bundle_dir)
+
+    def test_default_resolving_from_drive_bundle_onto_unc_share_is_rejected(self):
+        bundle_dir = r"C:\bundle"
+        with self._simulated_windows_bundle(
+            bundle_dir,
+            {r"C:\bundle\output": r"\\host\share\secret"},
+        ):
+            with pytest.raises(exceptions.DeadlineOperationError):
+                parameters.read_job_bundle_parameters(bundle_dir)

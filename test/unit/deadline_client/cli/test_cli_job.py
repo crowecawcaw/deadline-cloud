@@ -7,6 +7,7 @@ Tests for the CLI job commands.
 from datetime import timezone
 import datetime
 import json
+import ntpath
 import os
 from typing import Dict, List
 import pytest
@@ -911,6 +912,38 @@ def test_get_summary_of_files_to_download_message_windows(
         _get_summary_of_files_to_download_message(output_paths_by_root, is_json_format)
         == expected_result
     )
+
+
+@pytest.mark.parametrize(
+    "output_paths_by_root, expected_result",
+    [
+        # A root under a UNC share summarizes to the shared subdirectory.
+        (
+            {r"\\host\share": ["renders/image1.png", "renders/image2.png"]},
+            "\nSummary of files to download:\n    \\\\host\\share\\renders (2 files)\n",
+        ),
+        # Files directly at a UNC share root summarize to the share itself. os.path.commonpath
+        # returns '\\\\host\\share\\' here, leaving a stray trailing separator in the message.
+        (
+            {r"\\host\share": ["image1.png", "image2.png"]},
+            "\nSummary of files to download:\n    \\\\host\\share (2 files)\n",
+        ),
+        (
+            {r"\\host\share": ["only.png"]},
+            "\nSummary of files to download:\n    \\\\host\\share\\only.png (1 file)\n",
+        ),
+    ],
+)
+def test_get_summary_of_files_to_download_message_unc_paths(
+    output_paths_by_root: Dict[str, List[str]],
+    expected_result: str,
+):
+    """UNC path summaries, exercised via ntpath so the cases run on every platform."""
+    with patch.object(job_group.os, "path", ntpath):
+        assert (
+            _get_summary_of_files_to_download_message(output_paths_by_root, is_json_format=False)
+            == expected_result
+        )
 
 
 def test_cli_job_wait_succeeded(fresh_deadline_config):

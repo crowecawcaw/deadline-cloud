@@ -71,6 +71,7 @@ from ...job_attachments._path_summarization import (
     summarize_path_list,
 )
 from ...job_attachments.api._hashing import _hash_attachments
+from .._path_utils import is_any_path_contained, path_components
 
 logger = logging.getLogger(__name__)
 
@@ -83,22 +84,12 @@ def hashing_telemetry_callback(hashing_summary: SummaryStatistics):
 def _is_known_path(path: Path | str, known_roots: Iterable[Path | str]) -> bool:
     """Return True iff ``path`` equals or is a descendant of any root in ``known_roots``.
 
-    Containment is anchored via ``os.path.commonpath`` equality (the same idiom as
-    loader.py): a path is contained only when it shares a whole-component prefix with a
-    root, so a sibling that merely shares a string prefix (root ``/trusted/project`` vs
-    candidate ``/trusted/project-secret``) is outside the root.
+    Containment is anchored on whole components, so a sibling that merely shares a
+    string prefix (root ``/trusted/project`` vs candidate ``/trusted/project-secret``)
+    is outside the root.
     """
-    norm_candidate = os.path.normpath(str(path))
-    for known_path in known_roots:
-        norm_root = os.path.normpath(str(known_path))
-        try:
-            if os.path.commonpath([norm_root, norm_candidate]) == norm_root:
-                return True
-        except ValueError:
-            # commonpath raises for mixed absolute/relative paths or different Windows
-            # drives; such paths are not contained.
-            continue
-    return False
+    # Passed explicitly, and read at call time, so tests can patch it for another platform.
+    return is_any_path_contained(path, known_roots, path_module=os.path)
 
 
 def _summarize_asset_paths(
@@ -294,22 +285,42 @@ def _filter_redundant_known_paths(known_asset_paths: Iterable[str]) -> list[str]
     This algorithm identifies any paths that have a different path as a prefix,
     and removes them from the list. Pseudo-code is:
 
-        1. Sort the paths from shortest to longest, so any prefix of a path has
+        1. Sort the paths from fewest to most components, so any prefix of a path has
            to happen before that path.
         2. For each path, split it into parts (i.e. '/mnt/prod/project' becomes
-           ['/', 'mnt', 'prod', 'project']), and then insert it part by part into
+           ['', 'mnt', 'prod', 'project']), and then insert it part by part into
            a nested dict called dir_tree organized as a TRIE. The value True in the
            TRIE indicates that a path with that as its final part is in the list.
         3. While inserting a path into the TRIE, detect whether another path already
            had a prefix of the parts, and filter out the path when that occurs.
+
+    Components come from ``path_components`` rather than ``Path.parts`` so a Windows UNC
+    host is an ancestor of its shares (``Path.parts`` collapses '\\\\server\\share' into one
+    atom) and case variants of one location dedupe on Windows.
+
+    Roots are expanded for '~' (the config file and the CLI submitter's default data
+    directory supply one unexpanded) and dropped unless absolute. A non-absolute root
+    matches no candidate anyway, but dropping it here means a future caller cannot turn it
+    into a trusted tree by resolving it -- ``os.path.abspath("")`` is the whole working
+    directory, which would suppress the unknown-path warning and let a non-interactive
+    submit upload undesignated files. An empty root arrives from a PATH parameter whose
+    allowedValues suppressed absolutization, and from ``--known-asset-path``/MCP input.
     """
+    # Passed explicitly, and read at call time, so tests can patch it for another platform.
+    expanded = (os.path.expanduser(path) for path in known_asset_paths if path)
+    # normpath, not abspath: dedupes equivalent spellings without consulting the cwd.
+    ordered = list(
+        dict.fromkeys(os.path.normpath(path) for path in expanded if os.path.isabs(path))
+    )
+    components = {path: path_components(path, path_module=os.path) for path in ordered}
     # This directory tree gets filled with the known asset paths, with
     # a True value as a marker for the last part of already seen paths.
     dir_tree: dict[str, Any] = {}
     filtered_paths: list[str] = []
-    # Process the paths from shortest to longest, so that prefixes are always seen first
-    for path in sorted(known_asset_paths, key=len):
-        parts = Path(path).parts
+    # Fewest components first, so prefixes are seen first. Ties keep input order, so of two
+    # spellings of one location the caller's first -- highest precedence -- is retained.
+    for path in sorted(ordered, key=lambda p: (len(components[p]), ordered.index(p))):
+        parts = components[path]
         current: Optional[dict[str, Any]] = dir_tree
         for part in parts[:-1]:
             # If we see a True value, another path is a prefix so we can skip it.

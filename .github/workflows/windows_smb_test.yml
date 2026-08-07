@@ -1,0 +1,66 @@
+name: Windows SMB Path Test
+
+# Validates UNC path containment against a real SMB share, which lexical ntpath modeling
+# cannot do. Regression coverage for issue #1321.
+#
+# Not part of Code Quality: creating a share needs administrator rights, and the loopback
+# share is slower and more environment-dependent than a unit test.
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: Git ref (tag/branch/SHA) to test. Defaults to the triggering ref.
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  test:
+    name: UNC Containment (real SMB)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Confirm SMB prerequisites
+        # Fail with a clear message here rather than having every test skip itself,
+        # which would look like a pass.
+        shell: pwsh
+        run: |
+          $admin = ([Security.Principal.WindowsPrincipal] `
+            [Security.Principal.WindowsIdentity]::GetCurrent()
+          ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          if (-not $admin) { throw "Administrator rights are required to create an SMB share." }
+          Get-Service LanmanServer, LanmanWorkstation | Format-Table -AutoSize
+          Start-Service LanmanServer
+          Start-Service LanmanWorkstation
+          # Developer Mode lets a non-elevated process create symlinks; the escape
+          # test needs one and skips itself otherwise.
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+          New-Item -Path $key -Force | Out-Null
+          Set-ItemProperty -Path $key -Name AllowDevelopmentWithoutDevLicense -Value 1 -Type DWord
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip hatch
+
+      - name: Run the SMB path tests
+        shell: pwsh
+        run: |
+          hatch run pytest test/integ/windows_smb -v --no-cov -p no:randomly
+
+      - name: Report skips
+        # A skipped SMB test is indistinguishable from a passing one in the summary,
+        # so surface the count explicitly.
+        if: always()
+        shell: pwsh
+        run: |
+          hatch run pytest test/integ/windows_smb --no-cov -q -rs 2>&1 |
+            Select-String -Pattern 'SKIPPED|passed|failed'
