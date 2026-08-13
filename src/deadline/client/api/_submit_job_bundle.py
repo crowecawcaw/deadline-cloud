@@ -71,7 +71,7 @@ from ...job_attachments._path_summarization import (
     summarize_path_list,
 )
 from ...job_attachments.api._hashing import _hash_attachments
-from .._path_utils import is_any_path_contained, path_components
+from .._path_utils import is_any_path_contained, normalized_path, path_components
 
 logger = logging.getLogger(__name__)
 
@@ -308,9 +308,14 @@ def _filter_redundant_known_paths(known_asset_paths: Iterable[str]) -> list[str]
     """
     # Passed explicitly, and read at call time, so tests can patch it for another platform.
     expanded = (os.path.expanduser(path) for path in known_asset_paths if path)
-    # normpath, not abspath: dedupes equivalent spellings without consulting the cwd.
+    # normalized_path, not abspath: dedupes equivalent spellings without consulting the cwd.
+    # Not os.path.normpath, which before Python 3.11 collapses the leading pair on a
+    # host-level UNC root ('\\host' -> '\host'), moving it out of the UNC space so it then
+    # matches none of its own shares -- and this list is what _is_known_path compares.
     ordered = list(
-        dict.fromkeys(os.path.normpath(path) for path in expanded if os.path.isabs(path))
+        dict.fromkeys(
+            normalized_path(path, path_module=os.path) for path in expanded if os.path.isabs(path)
+        )
     )
     components = {path: path_components(path, path_module=os.path) for path in ordered}
     # This directory tree gets filled with the known asset paths, with

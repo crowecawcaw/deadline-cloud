@@ -25,7 +25,8 @@ from typing import Iterator
 
 import pytest
 
-from deadline.client._path_utils import common_ancestor, is_path_contained
+from deadline.client._path_summary import common_ancestor
+from deadline.client._path_utils import is_path_contained
 from deadline.client.api._submit_job_bundle import (
     _filter_redundant_known_paths,
     _is_known_path,

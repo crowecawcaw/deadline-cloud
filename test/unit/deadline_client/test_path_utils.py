@@ -19,9 +19,9 @@ import pytest
 
 from deadline.client._path_utils import (
     _splitroot,
-    common_ancestor,
     is_any_path_contained,
     is_path_contained,
+    normalized_path,
     path_components,
 )
 
@@ -84,17 +84,19 @@ from deadline.client._path_utils import (
         # Relative paths are not contained by absolute roots and vice versa.
         (r"relative\file", r"C:\trusted", False),
         (r"C:\trusted\file", r"relative", False),
-        # An extended-length path occupies its own path space rather than being folded into
-        # the plain form it denotes, so comparing across the two spellings fails closed. No
-        # caller needs the fold: every call site feeds realpath output or isabs-filtered
-        # roots, neither of which carries a '\\?\' prefix.
-        (r"\\?\C:\trusted\project\file", r"C:\trusted\project", False),
-        (r"C:\trusted\project\file", r"\\?\C:\trusted\project", False),
-        (r"\\?\UNC\host\share\file", r"\\host\share", False),
-        (r"\\host\share\file", r"\\?\UNC\host\share", False),
-        (r"\\?\UNC\host\share\file", r"\\host", False),
+        # An extended-length prefix only turns off Win32 normalization; it denotes an
+        # ordinary location, so it folds to the plain spelling and compares equal to it in
+        # either direction. job-attachments carries the '\\?\' form through its internals
+        # and strips it only at display boundaries, so a prefixed path does reach here.
+        (r"\\?\C:\trusted\project\file", r"C:\trusted\project", True),
+        (r"C:\trusted\project\file", r"\\?\C:\trusted\project", True),
+        (r"\\?\UNC\host\share\file", r"\\host\share", True),
+        (r"\\host\share\file", r"\\?\UNC\host\share", True),
+        (r"\\?\UNC\host\share\file", r"\\host", True),
         (r"\\?\C:\trusted\project\file", r"\\?\C:\trusted\project", True),
         (r"\\?\UNC\host\share\file", r"\\?\UNC\host\share", True),
+        # Folding does not weaken component anchoring: a sibling that merely shares a
+        # string prefix is still outside the root.
         (r"\\?\C:\trusted\project-secret\f", r"\\?\C:\trusted\project", False),
         # A rooted, driveless root ('\') is a different path space than the UNC
         # namespace, so it must not contain remote paths -- nor they it.
@@ -123,13 +125,14 @@ from deadline.client._path_utils import (
         (r"C:\secret", r"\\.\C:", False),
         (r"\\?\Volume{abc}\trusted\f", r"Volume{abc}\trusted", False),
         (r"\\?\Volume{abc}\trusted\f", r"\\?\Volume{abc}\trusted", True),
-        # '\\?\C:' must contain paths in neither the drive-relative 'C:' space nor plain
-        # 'C:\'. isabs reports it absolute, so a caller filtering on that lets it through.
-        ("C:foo", r"\\?\C:", False),
+        # '\\?\C:' folds to the drive-relative 'C:' space and '\\?\C:\' to the drive root,
+        # so each behaves as the plain spelling it denotes -- including keeping those two
+        # spaces apart, which is why the last two disagree.
+        ("C:foo", r"\\?\C:", True),
         (r"C:\a", r"\\?\C:", False),
-        (r"C:\a\f", "\\\\?\\C:\\", False),
-        # Within its own space it behaves like the drive root it spells.
-        (r"\\?\C:\a", r"\\?\C:", True),
+        (r"C:\a\f", "\\\\?\\C:\\", True),
+        (r"\\?\C:\a", "\\\\?\\C:\\", True),
+        (r"\\?\C:\a", r"\\?\C:", False),
         # A relative path is contained in itself even when normpath leaves a leading
         # '..' it cannot cancel; only a '..' below the root can climb back out.
         (r"..\a", r"..\a", True),
@@ -211,36 +214,128 @@ def test_is_path_contained_is_reflexive(path_module):
         assert is_path_contained(path, path, path_module=path_module) is True, path
 
 
-@pytest.mark.parametrize("path_module", [ntpath, posixpath])
-def test_common_ancestor_contains_its_inputs(path_module):
-    """A non-empty common_ancestor must contain every path it was derived from."""
-    paths = (
-        [
-            r"\\host\share\a",
-            r"\\host\s2\b",
-            r"C:\a\b",
-            r"C:\a\c",
-            "C:foo",
-            r"..\a\b",
-            r"..\a\c",
-            # Drive-relative '..' puts the run behind an anchor, where a guard counting
-            # from index zero would miss it.
-            r"C:..\x",
-            r"C:..\..\x",
-            r"C:..\a\y",
-            r"\\?\C:",
-            r"\\?\C:\a",
-        ]
-        if path_module is ntpath
-        else ["/a/b", "/a/c", "//a/d", "../a/b", "../a/c", "../../a/b", "rel/f", "rel/g"]
-    )
-    for first in paths:
-        for second in paths:
-            ancestor = common_ancestor([first, second], path_module=path_module)
-            if not ancestor:
-                continue
-            assert is_path_contained(first, ancestor, path_module=path_module), (first, ancestor)
-            assert is_path_contained(second, ancestor, path_module=path_module), (second, ancestor)
+@pytest.mark.parametrize(
+    "root, contained",
+    [
+        # The reported case: a host-level root and a file on one of its shares. Before
+        # Python 3.11 both normpath and splitdrive strip a share-less UNC path down to a
+        # rooted-driveless one ('\\host' -> '\host', splitdrive -> no drive), which put the
+        # root in a different path space than the candidate and left #1321 unfixed on 3.9
+        # and 3.10.
+        (r"\\host", True),
+        ("\\\\host\\", True),
+        (r"\\host\share", True),
+        # A different server, and the bare anchor that names none, must not contain it.
+        (r"\\host2", False),
+        ("\\\\", False),
+        ("\\", False),
+    ],
+)
+def test_host_level_unc_root_containment_is_version_independent(root, contained):
+    """Issue #1321 on every supported interpreter, not just 3.10+."""
+    assert is_path_contained(r"\\host\share\f", root, path_module=ntpath) is contained
+
+
+class _PreThreeElevenNtpath:
+    """``ntpath`` as it behaved before Python 3.11 for a UNC path that names no share.
+
+    Both ``normpath`` and ``splitdrive`` stripped such a path down to a rooted, driveless
+    one. Injecting this exercises that branch on any interpreter, rather than only on the
+    3.9 and 3.10 jobs -- the same reason the rest of this file injects ``ntpath``.
+    """
+
+    # Forces the _splitroot backport, which is what those versions had.
+    splitroot = None
+
+    @staticmethod
+    def _is_shareless_unc(text: str) -> bool:
+        return text.startswith("\\\\") and "\\" not in text[2:]
+
+    @staticmethod
+    def normpath(text: str) -> str:
+        result = ntpath.normpath(text)
+        if _PreThreeElevenNtpath._is_shareless_unc(result):
+            return result[1:]
+        return result
+
+    @staticmethod
+    def splitdrive(text: str):
+        if _PreThreeElevenNtpath._is_shareless_unc(text):
+            return "", text
+        return ntpath.splitdrive(text)
+
+    def __getattr__(self, name):
+        return getattr(ntpath, name)
+
+
+def test_host_level_unc_root_survives_pre_3_11_normpath():
+    """A host-level root stays in the UNC space even when normpath collapses its anchor."""
+    legacy: Any = _PreThreeElevenNtpath()
+    # Confirm the proxy actually reproduces the old behavior, so this cannot pass vacuously.
+    assert legacy.normpath("\\\\host") == "\\host"
+    assert legacy.splitdrive("\\\\host") == ("", "\\\\host")
+
+    assert path_components(r"\\host", path_module=legacy) == ["\\\\", "host"]
+    assert is_path_contained(r"\\host\share\f", r"\\host", path_module=legacy) is True
+    assert normalized_path(r"\\host", path_module=legacy) == r"\\host"
+    # A rooted, driveless path must not be promoted into the UNC space by the restore.
+    assert path_components(r"\host", path_module=legacy) == ["\\", "host"]
+    assert is_path_contained(r"\\host\share\f", "\\", path_module=legacy) is False
+
+
+@pytest.mark.parametrize(
+    "prefixed, plain",
+    [
+        (r"\\?\C:\proj\a.txt", r"C:\proj\a.txt"),
+        (r"\\?\UNC\host\share\a.txt", r"\\host\share\a.txt"),
+    ],
+)
+def test_extended_length_prefix_agrees_with_plain_spelling(prefixed, plain):
+    """A prefixed path is contained by exactly the roots its plain spelling is.
+
+    job-attachments carries the '\\\\?\\' form through its internals and strips it only at
+    display boundaries, so a prefixed path can reach a containment check. Treating it as its
+    own path space would report it outside a root that plainly contains it.
+    """
+    roots = [
+        plain,
+        ntpath.dirname(plain),
+        r"C:\proj",
+        "C:\\",
+        r"\\host\share",
+        r"\\host",
+        r"D:\other",
+    ]
+    for root in roots:
+        assert is_path_contained(prefixed, root, path_module=ntpath) is is_path_contained(
+            plain, root, path_module=ntpath
+        ), root
+        # A prefixed *root* folds the same way, so it behaves like its plain spelling.
+        assert is_path_contained(plain, root, path_module=ntpath) is is_path_contained(
+            plain, _prefixed_form(root), path_module=ntpath
+        ), root
+
+
+def _prefixed_form(path: str) -> str:
+    """Spell ``path`` in extended-length form."""
+    if path.startswith("\\\\"):
+        return "\\\\?\\UNC" + path[1:]
+    return "\\\\?\\" + path
+
+
+def test_extended_length_prefix_resolves_dot_segments_uniformly():
+    """normpath leaves '..' alone inside a '\\\\?\\' path before 3.10 and collapses it after.
+
+    Folding to the plain spelling first makes the components the same on every supported
+    interpreter, so containment does not depend on the running Python.
+    """
+    assert path_components(r"\\?\C:\a\..\b", path_module=ntpath) == ["c:\\", "b"]
+    assert path_components(r"\\?\UNC\host\share\a\..\b", path_module=ntpath) == [
+        "\\\\",
+        "host",
+        "share",
+        "b",
+    ]
 
 
 @pytest.mark.parametrize("path_module", [ntpath, posixpath])
@@ -382,14 +477,25 @@ def test_is_any_path_contained():
         # A rooted, driveless path is its own space, distinct from the UNC anchor.
         ("\\", ntpath, ["\\"]),
         ("\\\\", ntpath, ["\\\\"]),
-        # A prefixed drive keeps its prefix and stays whole, so it occupies a space of
-        # its own and cannot alias the plain drive or UNC path it resembles.
-        (r"\\?\C:\a", ntpath, ["\\\\?\\c:\\", "a"]),
-        # The anchor carries its own trailing separator, so a share root and a file
-        # under it share an anchor and containment holds between them.
-        (r"\\?\UNC\host\share", ntpath, ["\\\\?\\unc\\host\\share\\"]),
-        (r"\\?\UNC\host\share\f", ntpath, ["\\\\?\\unc\\host\\share\\", "f"]),
+        # An extended-length prefix only turns off Win32 normalization: it denotes the
+        # same location, so it folds to the plain spelling rather than occupying a space
+        # of its own. Otherwise a prefixed path reads as outside a root that plainly
+        # contains it, which is the same false negative as issue #1321.
+        (r"\\?\C:\a", ntpath, ["c:\\", "a"]),
+        (r"\\?\c:\a", ntpath, ["c:\\", "a"]),
+        (r"\\?\C:", ntpath, ["c:"]),
+        ("//?/C:/a", ntpath, ["c:\\", "a"]),
+        (r"\\?\UNC\host\share", ntpath, ["\\\\", "host", "share"]),
+        (r"\\?\UNC\host\share\f", ntpath, ["\\\\", "host", "share", "f"]),
+        (r"\\?\unc\host\share\f", ntpath, ["\\\\", "host", "share", "f"]),
+        (r"\\?\UNC\host", ntpath, ["\\\\", "host"]),
+        # 'UNC' alone names no server, so it folds to the bare anchor, which contains
+        # nothing rather than prefixing every reachable share.
+        (r"\\?\UNC", ntpath, ["\\\\"]),
+        # These denote no plain path, so they keep their prefix and a space of their own
+        # and cannot alias the drive or UNC path they resemble.
         (r"\\?\Volume{abc}\a", ntpath, ["\\\\?\\volume{abc}\\", "a"]),
+        (r"\\?\GLOBALROOT\Device\X\f", ntpath, ["\\\\?\\globalroot\\", "device", "x", "f"]),
         (r"\\.\C:\a", ntpath, ["\\\\.\\c:\\", "a"]),
         ("/", posixpath, ["/"]),
         ("/a/b", posixpath, ["/", "a", "b"]),
@@ -405,6 +511,33 @@ def test_path_components(path, path_module, expected):
     assert path_components(path, path_module=path_module) == expected
 
 
+@pytest.mark.parametrize(
+    "path, path_module, expected",
+    [
+        # The reason this exists rather than calling normpath directly: before Python 3.11
+        # normpath collapses the leading pair on a UNC path that names no share, which moves
+        # a host-level known-asset root out of the UNC space so it matches none of its own
+        # shares. _filter_redundant_known_paths feeds its output to _is_known_path.
+        (r"\\host", ntpath, r"\\host"),
+        ("\\\\host\\", ntpath, r"\\host"),
+        ("\\\\", ntpath, "\\\\"),
+        (r"\\host\share\a\..\b", ntpath, r"\\host\share\b"),
+        # Case is preserved, unlike the components used for comparison.
+        (r"\\Host\Share", ntpath, r"\\Host\Share"),
+        (r"C:\A\.\b\..\c", ntpath, r"C:\A\c"),
+        ("C:/a/b", ntpath, r"C:\a\b"),
+        # An extended-length prefix folds to the plain path it denotes.
+        (r"\\?\C:\a", ntpath, r"C:\a"),
+        (r"\\?\UNC\host\share\f", ntpath, r"\\host\share\f"),
+        ("/a/", posixpath, "/a"),
+        ("/a/b/../c", posixpath, "/a/c"),
+        ("/", posixpath, "/"),
+    ],
+)
+def test_normalized_path(path, path_module, expected):
+    assert normalized_path(path, path_module=path_module) == expected
+
+
 def test_path_components_preserves_case_when_asked():
     assert path_components(r"\\Host\Share\File", path_module=ntpath, normalize_case=False) == [
         "\\\\",
@@ -412,65 +545,3 @@ def test_path_components_preserves_case_when_asked():
         "Share",
         "File",
     ]
-
-
-@pytest.mark.parametrize(
-    "paths, path_module, expected",
-    [
-        # The common ancestor of paths under one share, spelled with its real case.
-        (
-            [r"\\host\Share\Proj\a.txt", r"\\host\Share\Proj\sub\b.txt"],
-            ntpath,
-            r"\\host\Share\Proj",
-        ),
-        # Different shares on one host share only the host. os.path.commonpath raises
-        # ValueError for this pair.
-        ([r"\\host\s1\a", r"\\host\s2\b"], ntpath, r"\\host"),
-        # Different hosts share nothing. There is no location above a UNC host, so the
-        # bare '\\\\' that their leading components have in common is not an answer.
-        ([r"\\host1\s\a", r"\\host2\s\b"], ntpath, ""),
-        ([r"\\host1", r"\\host2"], ntpath, ""),
-        # Different drives share nothing.
-        ([r"C:\a\b", r"D:\a\b"], ntpath, ""),
-        ([r"C:\a\b", r"\\host\share\b"], ntpath, ""),
-        ([r"C:\proj\a", r"C:\proj\b"], ntpath, r"C:\proj"),
-        ([r"C:\proj\a"], ntpath, r"C:\proj\a"),
-        (["/a/b/c", "/a/b/d"], posixpath, "/a/b"),
-        (["/a/b", "/c/d"], posixpath, "/"),
-        # A doubled POSIX root is the same space as '/', so these behave like ordinary
-        # absolute paths rather than a separate namespace.
-        (["//a/b", "//c/d"], posixpath, "/"),
-        (["//a/b", "//a/c"], posixpath, "/a"),
-        (["/a", "/b"], posixpath, "/"),
-        (["/a/b"], posixpath, "/a/b"),
-        (["a/b", "/c/d"], posixpath, ""),
-        ([], posixpath, ""),
-        # Paths whose unresolved leading '..' runs differ in depth are rooted at
-        # different unknown directories, so they share none. Positional comparison
-        # would wrongly read the shared '..' as one directory and return '..', which
-        # is not an ancestor of '../../up'. os.path.commonpath has that bug.
-        (["../up", "../../up"], posixpath, ""),
-        (["../../up", "../up"], posixpath, ""),
-        ([r"..\up", r"..\..\up"], ntpath, ""),
-        # The '..' run can sit behind an anchor, where a guard counting from index 0
-        # would not see it. 'C:..' is the cwd's parent on C:, 'C:..\..' its grandparent.
-        ([r"C:..\x", r"C:..\..\x"], ntpath, ""),
-        ([r"C:..", r"C:..\.."], ntpath, ""),
-        # Equal depth behind an anchor is still comparable.
-        ([r"C:..\a\x", r"C:..\a\y"], ntpath, r"C:..\a"),
-        # Equal '..' depth is comparable again.
-        (["../a/x", "../a/y"], posixpath, "../a"),
-        (["../../a/x", "../../a/y"], posixpath, "../../a"),
-        # Relative inputs keep their own spelling and gain no leading separator. A
-        # Windows-style path read under posixpath semantics is one of these, since
-        # 'C:' is an ordinary component there rather than a drive.
-        (["a/b/c", "a/b/d"], posixpath, "a/b"),
-        (
-            ["C:/Users/u/renders/i1.png", "C:/Users/u/renders/i2.png"],
-            posixpath,
-            "C:/Users/u/renders",
-        ),
-    ],
-)
-def test_common_ancestor(paths, path_module, expected):
-    assert common_ancestor(paths, path_module=path_module) == expected

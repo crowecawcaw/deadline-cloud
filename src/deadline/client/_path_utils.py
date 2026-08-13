@@ -20,18 +20,25 @@ whether a path is trusted.
 from __future__ import annotations
 
 import os
-from typing import Any, Iterable, Sequence
+import string
+from typing import Any, Iterable
 
 __all__ = [
-    "common_ancestor",
     "is_any_path_contained",
     "is_path_contained",
+    "normalized_path",
     "path_components",
 ]
 
 # Anchors the UNC path space. It names no server on its own, so unlike POSIX '/' it is not
 # a directory and contains nothing.
 _UNC_ANCHOR = "\\\\"
+
+# Spelled out rather than taken from os.* because these helpers parse Windows paths on any
+# host, where os.sep is '/'.
+_EXTENDED_PREFIX = "\\\\?\\"
+_DEVICE_PREFIX = "\\\\.\\"
+_EXTENDED_UNC_MARKER = "UNC"
 
 _PARDIR = ".."
 
@@ -56,6 +63,33 @@ def _splitroot(text: str, path_module: Any) -> tuple[str, str, str]:
     return drive, rest[:root_length], rest[root_length:]
 
 
+def _denotes_drive(text: str) -> bool:
+    """True for a bare drive spelling such as ``'C:'``."""
+    return len(text) == 2 and text[1] == ":" and text[0] in string.ascii_letters
+
+
+def _fold_extended_length_prefix(text: str) -> str:
+    """Rewrite an extended-length path as the plain path it denotes.
+
+    ``\\\\?\\`` only turns off Win32 normalization; it names the same location as the plain
+    spelling. Folding it keeps one location from having two sets of components, which would
+    report a prefixed path outside a root that plainly contains it. Forms with no plain
+    spelling (``Volume{GUID}``, ``GLOBALROOT``, and the ``\\\\.\\`` device namespace) are
+    left alone, so they keep a path space of their own and alias nothing.
+    """
+    if not text.startswith(_EXTENDED_PREFIX):
+        return text
+    denoted = text[len(_EXTENDED_PREFIX) :]
+    head = denoted.split("\\", 1)[0]
+    if head.upper() == _EXTENDED_UNC_MARKER:
+        # '\\?\UNC\server\share' is '\\server\share'. 'UNC' alone names no server, so it
+        # folds to the bare anchor, which contains nothing.
+        return _UNC_ANCHOR + denoted[len(_EXTENDED_UNC_MARKER) :].lstrip("\\")
+    if _denotes_drive(head):
+        return denoted
+    return text
+
+
 def _split_anchored(path: Any, path_module: Any, normalize_case: bool) -> tuple[str, list[str]]:
     """Return ``(anchor, parts)``, where ``anchor + sep.join(parts)`` reconstructs ``path``.
 
@@ -67,7 +101,24 @@ def _split_anchored(path: Any, path_module: Any, normalize_case: bool) -> tuple[
     windows = path_module.sep == "\\"
     if windows:
         text = text.replace("/", "\\")
+        # Folded before normpath, which leaves '..' alone inside a '\\?\' path before 3.11
+        # and collapses it after. Folding first makes the result the same on every
+        # supported interpreter.
+        text = _fold_extended_length_prefix(text)
+    # Read off the text, not off splitdrive's drive: before Python 3.11 splitdrive reports
+    # no drive at all for a UNC path that names no share, which would put a host-level root
+    # in the rooted-driveless space and stop it containing its own shares -- the bug this
+    # module exists to fix.
+    in_unc_space = (
+        windows
+        and text.startswith(_UNC_ANCHOR)
+        and not text.startswith(_EXTENDED_PREFIX)
+        and not text.startswith(_DEVICE_PREFIX)
+    )
     text = path_module.normpath(text)
+    if in_unc_space and not text.startswith(_UNC_ANCHOR):
+        # Those same versions collapse the leading pair itself ('\\host' -> '\host').
+        text = _UNC_ANCHOR + text.lstrip(path_module.sep)
     if normalize_case:
         text = path_module.normcase(text)
 
@@ -78,28 +129,16 @@ def _split_anchored(path: Any, path_module: Any, normalize_case: bool) -> tuple[
         # '//foo' and '/foo' are the same file on the platforms this client targets.
         return (path_module.sep if root else ""), parts
 
-    if drive[:4] in ("\\\\?\\", "\\\\.\\"):
-        # These prefixes disable normalization: the drive is a whole anchor, so it never
-        # aliases the plain path it resembles, and a share root and its files -- which
-        # differ only by a trailing separator -- still take the same anchor.
+    if drive.startswith(_EXTENDED_PREFIX) or drive.startswith(_DEVICE_PREFIX):
+        # Whatever reaches here has no plain spelling to fold to, so the drive is a whole
+        # anchor occupying its own space. The anchor carries its own trailing separator, so
+        # a share root and the files under it -- which differ only by it -- still match.
         return drive + path_module.sep, parts
-    if drive.startswith(_UNC_ANCHOR):
-        return _UNC_ANCHOR, [p for p in drive[len(_UNC_ANCHOR) :].split("\\") if p] + parts
+    if in_unc_space:
+        # The server and share are ordinary parts beneath the bare anchor, which is what
+        # lets a host-level root contain the shares under it.
+        return _UNC_ANCHOR, [p for p in text[len(_UNC_ANCHOR) :].split(path_module.sep) if p]
     return drive + root, parts
-
-
-def _leading_pardir_count(parts: list[str]) -> int:
-    """Count the leading '..' run that ``normpath`` could not resolve.
-
-    Counted on parts rather than whole components because an anchor can precede the run
-    ('C:..\\x' is the parent of the working directory on drive C:).
-    """
-    count = 0
-    for part in parts:
-        if part != _PARDIR:
-            break
-        count += 1
-    return count
 
 
 def path_components(
@@ -115,10 +154,26 @@ def path_components(
     the rest are the path's parts, so comparing these lists component-wise confuses neither
     one path space for another nor a string prefix for a directory prefix.
 
+    An extended-length prefix folds to the plain path it denotes, so ``\\\\?\\C:\\a`` and
+    ``C:\\a`` yield the same components. Prefixed forms that denote no plain path keep a
+    space of their own.
+
     ``normalize_case`` lowercases components on Windows to match the filesystem.
     """
     anchor, parts = _split_anchored(path, path_module, normalize_case)
     return ([anchor] if anchor else []) + parts
+
+
+def normalized_path(path: Any, *, path_module: Any = os.path) -> str:
+    """Return ``path`` with ``..``, ``.``, repeated separators and separator style resolved.
+
+    ``path_module.normpath`` with the version differences handled: before Python 3.11 it
+    collapses the leading pair on a UNC path that names no share (``\\\\host`` -> ``\\host``),
+    moving a host-level root out of the UNC space so it matches none of its own shares.
+    Case is preserved, unlike the components used for comparison.
+    """
+    anchor, parts = _split_anchored(path, path_module, normalize_case=False)
+    return anchor + path_module.sep.join(parts)
 
 
 def is_path_contained(
@@ -154,40 +209,3 @@ def is_any_path_contained(
 ) -> bool:
     """Return True iff ``path`` is contained by any root in ``roots``."""
     return any(is_path_contained(path, root, path_module=path_module) for root in roots)
-
-
-def common_ancestor(paths: Sequence[Any], *, path_module: Any = os.path) -> str:
-    """Return the deepest directory containing every path in ``paths``.
-
-    This is ``os.path.commonpath`` without the exceptions: paths in unrelated spaces return
-    ``""`` rather than raising, and a UNC host is a valid answer for paths on different
-    shares of one server. The result keeps the first path's spelling and, like
-    ``commonpath``, is purely lexical.
-    """
-    if not paths:
-        return ""
-
-    split = [_split_anchored(p, path_module, normalize_case=True) for p in paths]
-    normalized = [([a] if a else []) + parts for a, parts in split]
-    anchor, spelled_parts = _split_anchored(paths[0], path_module, normalize_case=False)
-    spelled = ([anchor] if anchor else []) + spelled_parts
-
-    # '..' and '../..' are rooted at different unknown places, so runs of differing depth
-    # share nothing. Comparing them positionally would return the shallower path, which is
-    # not an ancestor of the deeper one -- os.path.commonpath has that bug.
-    if len({_leading_pardir_count(parts) for _, parts in split}) > 1:
-        return ""
-
-    shared = min(len(components) for components in normalized)
-    while shared > 0 and any(other[:shared] != normalized[0][:shared] for other in normalized):
-        shared -= 1
-    if shared == 0:
-        return ""
-    # Matching only the bare anchor means different servers, so no shared directory.
-    if shared == 1 and normalized[0][0] == _UNC_ANCHOR:
-        return ""
-
-    # The anchor carries its own separator, so it abuts the first part directly.
-    if anchor:
-        return anchor + path_module.sep.join(spelled[1:shared])
-    return path_module.sep.join(spelled[:shared])

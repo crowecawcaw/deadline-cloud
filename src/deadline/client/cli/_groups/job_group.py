@@ -41,7 +41,7 @@ from ....job_attachments.api import (
 
 from ... import api
 from ...config import config_file
-from ..._path_utils import common_ancestor
+from ..._path_summary import common_ancestor
 from ...exceptions import DeadlineOperationError, DeadlineOperationTimedOut
 from .._common import (
     _OUTPUT_FORMAT_HELP,
