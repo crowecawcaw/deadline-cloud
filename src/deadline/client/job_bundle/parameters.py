@@ -23,7 +23,7 @@ else:
     NotRequired = object
     TypedDict = object
 
-from .._path_utils import is_path_contained
+from .._path_utils import is_absolute_path, is_path_contained
 from ..exceptions import DeadlineOperationError
 from .loader import read_yaml_or_json_object
 
@@ -794,7 +794,10 @@ def read_job_bundle_parameters(bundle_dir: str) -> list[JobParameter]:
         ):
             default = parameter.get("default")
             if default:
-                if os.path.isabs(default):
+                # Not os.path.isabs, which before Python 3.11 reads a UNC path naming a
+                # share as relative -- such a default reached the containment check below
+                # and failed there, reporting the wrong reason.
+                if is_absolute_path(default, path_module=os.path):
                     raise DeadlineOperationError(
                         f"Job Template for job bundle {bundle_dir}:\nDefault PATH '{default}' for parameter '{name}' is absolute.\nPATH values must be relative, and must resolve within the Job Bundle directory."
                     )

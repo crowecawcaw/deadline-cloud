@@ -71,7 +71,12 @@ from ...job_attachments._path_summarization import (
     summarize_path_list,
 )
 from ...job_attachments.api._hashing import _hash_attachments
-from .._path_utils import is_any_path_contained, normalized_path, path_components
+from .._path_utils import (
+    is_absolute_path,
+    is_any_path_contained,
+    normalized_path,
+    path_components,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +319,9 @@ def _filter_redundant_known_paths(known_asset_paths: Iterable[str]) -> list[str]
     # matches none of its own shares -- and this list is what _is_known_path compares.
     ordered = list(
         dict.fromkeys(
-            normalized_path(path, path_module=os.path) for path in expanded if os.path.isabs(path)
+            normalized_path(path, path_module=os.path)
+            for path in expanded
+            if is_absolute_path(path, path_module=os.path)
         )
     )
     components = {path: path_components(path, path_module=os.path) for path in ordered}
@@ -807,7 +814,10 @@ def create_job_from_job_bundle(
                     bundle_parameter_types.get(name) == "PATH"
                     and isinstance(value, str)
                     and value != ""
-                    and not os.path.isabs(value)
+                    # Not os.path.isabs: before Python 3.11 it reads a UNC path naming a
+                    # share as relative, rejecting a valid value on the very setup #1321
+                    # reports.
+                    and not is_absolute_path(value, path_module=os.path)
                 ):
                     raise DeadlineOperationError(
                         f"Pre-submission hook emitted a relative PATH value for parameter "

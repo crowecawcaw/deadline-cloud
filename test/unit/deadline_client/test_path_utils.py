@@ -19,6 +19,7 @@ import pytest
 
 from deadline.client._path_utils import (
     _splitroot,
+    is_absolute_path,
     is_any_path_contained,
     is_path_contained,
     normalized_path,
@@ -104,8 +105,9 @@ from deadline.client._path_utils import (
         ("\\x", "\\\\", False),
         ("\\x", "\\", True),
         # The bare anchor names no server, so it is an ancestor of nothing -- treating it as
-        # POSIX '/' would trust every reachable share. ntpath.isabs('\\') is True, so a
-        # caller filtering roots on that lets it through; '//' and '\\?\UNC\' normalize to it.
+        # POSIX '/' would trust every reachable share. It counts as fully qualified, so a
+        # caller filtering roots on is_absolute_path lets it reach here; '//' and
+        # '\\?\UNC\' normalize to it.
         (r"\\host\share\file", "\\\\", False),
         (r"\\host\share\file", "\\\\\\\\", False),
         (r"\\host\share\file", "//", False),
@@ -509,6 +511,72 @@ def test_is_any_path_contained():
 )
 def test_path_components(path, path_module, expected):
     assert path_components(path, path_module=path_module) == expected
+
+
+@pytest.mark.parametrize(
+    "path, path_module, expected",
+    [
+        # The reason this exists rather than calling isabs directly: before Python 3.11
+        # ntpath.isabs tests what splitdrive leaves behind, and for a UNC path naming a
+        # share splitdrive consumes the whole string -- so isabs(r"\\host\s1") is False
+        # there. Callers gate trust on this, so a valid root was dropped and a valid
+        # PATH parameter value rejected.
+        (r"\\host\s1", ntpath, True),
+        (r"\\host\s1\f", ntpath, True),
+        ("\\\\host\\", ntpath, True),
+        (r"\\host", ntpath, True),
+        # The bare anchor names no server but is still fully qualified, so it reaches the
+        # containment check -- which rejects it, as test_is_path_contained_windows pins.
+        ("\\\\", ntpath, True),
+        (r"C:\a", ntpath, True),
+        ("C:\\", ntpath, True),
+        (r"\\?\C:\a", ntpath, True),
+        (r"\\?\UNC\host\share", ntpath, True),
+        (r"\\.\C:\a", ntpath, True),
+        # Drive-relative needs the working directory on that drive; rooted-driveless needs
+        # the current drive. Neither is fully qualified, so neither may be trusted as a
+        # root. ntpath.isabs accepted the latter until 3.13.
+        ("C:", ntpath, False),
+        ("C:foo", ntpath, False),
+        ("\\", ntpath, False),
+        (r"\x", ntpath, False),
+        ("rel", ntpath, False),
+        (r"rel\f", ntpath, False),
+        (r"..\a", ntpath, False),
+        ("", ntpath, False),
+        (".", ntpath, False),
+        ("/a", posixpath, True),
+        ("//a", posixpath, True),
+        ("rel/f", posixpath, False),
+        ("../a", posixpath, False),
+        ("", posixpath, False),
+    ],
+)
+def test_is_absolute_path(path, path_module, expected):
+    assert is_absolute_path(path, path_module=path_module) is expected
+
+
+def test_is_absolute_path_is_at_least_as_strict_as_the_stdlib():
+    """Never accept something ``isabs`` rejects on the running interpreter.
+
+    This is what makes the helper safe to swap in at trust boundaries: it may be stricter
+    than the stdlib (it is, for rooted-driveless paths before 3.13), and it may accept a UNC
+    share that older versions wrongly rejected, but it must not otherwise widen what counts
+    as absolute.
+    """
+    for path_module in (ntpath, posixpath):
+        corpus = (
+            [r"\\host", r"\\host\s1", "\\", r"\x", "C:", "C:foo", r"C:\a", "rel", ""]
+            if path_module is ntpath
+            else ["/", "/a", "rel", "../a", ""]
+        )
+        for path in corpus:
+            if not is_absolute_path(path, path_module=path_module):
+                continue
+            # The only sanctioned widening: a UNC path whose share splitdrive swallowed.
+            if not path_module.isabs(path):
+                assert path_module is ntpath, path
+                assert path.startswith("\\\\"), path
 
 
 @pytest.mark.parametrize(

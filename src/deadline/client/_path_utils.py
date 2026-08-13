@@ -24,6 +24,7 @@ import string
 from typing import Any, Iterable
 
 __all__ = [
+    "is_absolute_path",
     "is_any_path_contained",
     "is_path_contained",
     "normalized_path",
@@ -162,6 +163,28 @@ def path_components(
     """
     anchor, parts = _split_anchored(path, path_module, normalize_case)
     return ([anchor] if anchor else []) + parts
+
+
+def is_absolute_path(path: Any, *, path_module: Any = os.path) -> bool:
+    """Return True iff ``path`` names a location without consulting the working directory.
+
+    ``path_module.isabs`` cannot be used before Python 3.11: it tests what ``splitdrive``
+    leaves behind, and for a UNC path that names a share ``splitdrive`` consumes the whole
+    string, so ``isabs(r'\\\\host\\share')`` is False there. Callers use this to decide
+    whether a path may be trusted as a root or accepted as a parameter value, so a UNC
+    share silently reading as relative drops valid roots and rejects valid values.
+
+    Only a fully qualified path counts. On Windows a drive-relative anchor (``C:x``) needs
+    the working directory on that drive and a rooted, driveless one (``\\x``) needs the
+    current drive, so neither qualifies -- ``ntpath.isabs`` accepted ``\\x`` until 3.13, and
+    this is deliberately as strict as the newest stdlib rather than as loose as the oldest.
+    """
+    anchor, _ = _split_anchored(path, path_module, normalize_case=True)
+    if not anchor:
+        return False
+    if path_module.sep != "\\":
+        return True
+    return not _denotes_drive(anchor) and anchor != path_module.sep
 
 
 def normalized_path(path: Any, *, path_module: Any = os.path) -> str:
