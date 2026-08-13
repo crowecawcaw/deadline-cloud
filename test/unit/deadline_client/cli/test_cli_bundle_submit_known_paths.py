@@ -180,7 +180,11 @@ def test_is_known_path(path, roots, expected):
         (r"\\corp\finance\salaries.xlsx", ["\\\\"], False),
         (r"\\corp\finance\salaries.xlsx", ["//"], False),
         (r"\\corp\finance\salaries.xlsx", ["\\\\?\\UNC\\"], False),
-        # A useless root must not shadow a real one that follows it.
+        # A useless root must not shadow a real one that follows it. _is_known_path is only
+        # half the story here -- the submit flow runs _filter_redundant_known_paths first,
+        # where the bare anchor used to prefix and so delete every real UNC root. See
+        # test_filter_redundant_known_paths_drops_the_bare_unc_anchor and
+        # test_generate_message_for_asset_paths_bare_anchor_does_not_shadow_a_real_root.
         (r"\\host\share\file", ["\\\\", r"\\host"], True),
     ],
 )
@@ -268,6 +272,59 @@ def test_filter_redundant_known_paths_unanchored_path_does_not_trust_cwd():
     """The working directory must not become a known root via an empty path."""
     cwd_file = os.path.join(os.getcwd(), "unrelated_secret.txt")
     assert _is_known_path(cwd_file, _filter_redundant_known_paths([""])) is False
+
+
+@pytest.mark.parametrize(
+    "input, expected",
+    [
+        # The bare anchor is a single component, so it sorts first and would prefix -- and
+        # therefore delete -- every real UNC root in the trie, leaving only a root that
+        # matches nothing. It is dropped instead.
+        (["\\\\", r"\\host"], [r"\\host"]),
+        ([r"\\host", "\\\\"], [r"\\host"]),
+        (["\\\\", r"\\server\share", r"\\other\share"], [r"\\server\share", r"\\other\share"]),
+        # It arrives from more spellings than it looks like: '//' and '\\?\UNC\' both
+        # normalize to it, the latter via _fold_extended_length_prefix.
+        (["//", r"\\host"], [r"\\host"]),
+        ([r"\\?\UNC\\", r"\\host"], [r"\\host"]),
+        # On its own it leaves no roots at all, which is correct: it contains nothing, so
+        # every path is unknown and the warning is the right outcome.
+        (["\\\\"], []),
+    ],
+)
+def test_filter_redundant_known_paths_drops_the_bare_unc_anchor(input, expected):
+    """The bare anchor is anchored but names no location, unlike every other absolute root."""
+    with patch.object(sjb.os, "path", ntpath):
+        assert _filter_redundant_known_paths(input) == expected
+
+
+def test_generate_message_for_asset_paths_bare_anchor_does_not_shadow_a_real_root():
+    """End-to-end: the filter runs before containment, so the two must agree about '\\\\'.
+
+    The halves are covered separately above; this pins them together, because the bug this
+    guards against was invisible to either one alone -- _is_known_path handles the bare
+    anchor correctly, and the filter deleted the real root before it ever got there.
+    """
+    upload_group = AssetUploadGroup(
+        asset_groups=[
+            AssetRootGroup(
+                root_path=r"\\host\projects",
+                inputs={r"\\host\projects\scene.ma"},  # type: ignore[arg-type]
+            )
+        ],
+        total_input_files=1,
+        total_input_bytes=12,
+    )
+
+    with patch("deadline.client.api._submit_job_bundle.os.path", ntpath):
+        known_asset_paths = _filter_redundant_known_paths(["\\\\", r"\\host"])
+        message, no_warnings = _generate_message_for_asset_paths(
+            upload_group, storage_profile=None, known_asset_paths=known_asset_paths
+        )
+
+    assert known_asset_paths == [r"\\host"], known_asset_paths
+    assert no_warnings is True, message
+    assert "WARNING: Files were specified outside of known asset paths." not in message, message
 
 
 def test_generate_message_for_asset_paths_unc_host_root_is_known():

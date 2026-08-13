@@ -21,6 +21,7 @@ from deadline.client._path_utils import (
     _splitroot,
     is_absolute_path,
     is_any_path_contained,
+    is_bare_unc_anchor,
     is_path_contained,
     normalized_path,
     path_components,
@@ -612,3 +613,41 @@ def test_path_components_preserves_case_when_asked():
         "Share",
         "File",
     ]
+
+
+@pytest.mark.parametrize(
+    "path, path_module, expected",
+    [
+        ("\\\\", ntpath, True),
+        ("\\\\\\\\", ntpath, True),
+        ("//", ntpath, True),
+        # _fold_extended_length_prefix collapses this to the bare anchor.
+        ("\\\\?\\UNC\\", ntpath, True),
+        (r"\\?\UNC", ntpath, True),
+        # A server name makes it a location, so it is no longer bare.
+        (r"\\host", ntpath, False),
+        (r"\\host\share", ntpath, False),
+        # Other path spaces are never the UNC anchor, however root-like.
+        ("\\", ntpath, False),
+        ("C:\\", ntpath, False),
+        ("", ntpath, False),
+        ("/", posixpath, False),
+        ("//", posixpath, False),
+    ],
+)
+def test_is_bare_unc_anchor(path, path_module, expected):
+    assert is_bare_unc_anchor(path, path_module=path_module) is expected
+
+
+def test_bare_unc_anchor_contains_nothing_and_is_contained_by_nothing_real():
+    """Why callers must drop it rather than treat it as a root.
+
+    It is the one absolute path that names no location, so a caller that keeps it holds a
+    root matching nothing -- and in a component trie it prefixes every real UNC root.
+    """
+    assert is_absolute_path("\\\\", path_module=ntpath) is True
+    assert is_path_contained(r"\\host\share\f", "\\\\", path_module=ntpath) is False
+    assert is_path_contained(r"\\host", "\\\\", path_module=ntpath) is False
+    # Reflexive, and still its own path space rather than the rooted-driveless one.
+    assert is_path_contained("\\\\", "\\\\", path_module=ntpath) is True
+    assert is_path_contained("\\\\", "\\", path_module=ntpath) is False

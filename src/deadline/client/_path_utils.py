@@ -26,6 +26,7 @@ from typing import Any, Iterable
 __all__ = [
     "is_absolute_path",
     "is_any_path_contained",
+    "is_bare_unc_anchor",
     "is_path_contained",
     "normalized_path",
     "path_components",
@@ -190,6 +191,20 @@ def is_absolute_path(path: Any, *, path_module: Any = os.path) -> bool:
     if path_module.sep != "\\":
         return True
     return not _denotes_drive(anchor) and anchor != path_module.sep
+
+
+def is_bare_unc_anchor(path: Any, *, path_module: Any = os.path) -> bool:
+    """True iff ``path`` is the bare ``\\\\`` marker, which names no server.
+
+    It is fully qualified yet identifies no location, so it contains nothing --
+    :func:`is_path_contained` enforces that. As a trusted root it is worse than useless: in a
+    component trie it is a prefix of *every* real UNC root, so keeping it would filter them
+    all out and leave only a root that matches nothing.
+
+    ``'//'`` and ``'\\\\?\\UNC\\'`` both normalize to it, so it arrives from more spellings
+    than it looks like.
+    """
+    return path_components(path, path_module=path_module) == [_UNC_ANCHOR]
 
 
 def normalized_path(path: Any, *, path_module: Any = os.path) -> str:

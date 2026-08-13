@@ -73,6 +73,7 @@ from ...job_attachments._path_summarization import (
 from ...job_attachments.api._hashing import _hash_attachments
 from .._path_utils import (
     is_absolute_path,
+    is_bare_unc_anchor,
     is_any_path_contained,
     normalized_path,
     path_components,
@@ -304,7 +305,10 @@ def _filter_redundant_known_paths(known_asset_paths: Iterable[str]) -> list[str]
     atom) and case variants of one location dedupe on Windows.
 
     Roots are expanded for '~' (the config file and the CLI submitter's default data
-    directory supply one unexpanded) and dropped unless absolute. A non-absolute root
+    directory supply one unexpanded), and dropped unless absolute and naming a location.
+    The bare UNC anchor is dropped for the second reason: it contains nothing, and being a
+    single component it would prefix every real UNC root in the trie below and filter them
+    all out, leaving only a root that matches nothing. A non-absolute root
     matches no candidate anyway, but dropping it here means a future caller cannot turn it
     into a trusted tree by resolving it -- ``os.path.abspath("")`` is the whole working
     directory, which would suppress the unknown-path warning and let a non-interactive
@@ -322,6 +326,7 @@ def _filter_redundant_known_paths(known_asset_paths: Iterable[str]) -> list[str]
             normalized_path(path, path_module=os.path)
             for path in expanded
             if is_absolute_path(path, path_module=os.path)
+            and not is_bare_unc_anchor(path, path_module=os.path)
         )
     )
     components = {path: path_components(path, path_module=os.path) for path in ordered}
