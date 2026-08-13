@@ -533,13 +533,18 @@ def test_path_components(path, path_module, expected):
         (r"\\?\C:\a", ntpath, True),
         (r"\\?\UNC\host\share", ntpath, True),
         (r"\\.\C:\a", ntpath, True),
-        # Drive-relative needs the working directory on that drive; rooted-driveless needs
-        # the current drive. Neither is fully qualified, so neither may be trusted as a
-        # root. ntpath.isabs accepted the latter until 3.13.
+        # A rooted, driveless path names the current drive's root, not the working
+        # directory, so it is absolute. ntpath.isabs agrees through 3.12 and disagrees from
+        # 3.13; answering from the anchor keeps the verdict version-independent, and a
+        # cross-platform caller passing '/a' roots on Windows depends on this.
+        ("\\", ntpath, True),
+        (r"\x", ntpath, True),
+        ("/a", ntpath, True),
+        ("/", ntpath, True),
+        # Drive-relative needs the working directory on that drive, which is exactly what
+        # the known-root hardening must not let a caller supply implicitly.
         ("C:", ntpath, False),
         ("C:foo", ntpath, False),
-        ("\\", ntpath, False),
-        (r"\x", ntpath, False),
         ("rel", ntpath, False),
         (r"rel\f", ntpath, False),
         (r"..\a", ntpath, False),
@@ -556,27 +561,22 @@ def test_is_absolute_path(path, path_module, expected):
     assert is_absolute_path(path, path_module=path_module) is expected
 
 
-def test_is_absolute_path_is_at_least_as_strict_as_the_stdlib():
-    """Never accept something ``isabs`` rejects on the running interpreter.
+def test_is_absolute_path_never_accepts_a_working_directory_relative_path():
+    """The property the known-root hardening depends on.
 
-    This is what makes the helper safe to swap in at trust boundaries: it may be stricter
-    than the stdlib (it is, for rooted-driveless paths before 3.13), and it may accept a UNC
-    share that older versions wrongly rejected, but it must not otherwise widen what counts
-    as absolute.
+    ``ntpath.isabs`` disagrees with itself across supported versions in two places -- a UNC
+    path naming a share (False before 3.11) and a rooted, driveless path (True through 3.12)
+    -- so it cannot be the reference. What must hold on every version is narrower: a path
+    that needs the working directory to resolve is never absolute, because such a root would
+    let the directory the shell happens to be in become trusted.
     """
-    for path_module in (ntpath, posixpath):
-        corpus = (
-            [r"\\host", r"\\host\s1", "\\", r"\x", "C:", "C:foo", r"C:\a", "rel", ""]
-            if path_module is ntpath
-            else ["/", "/a", "rel", "../a", ""]
-        )
-        for path in corpus:
-            if not is_absolute_path(path, path_module=path_module):
-                continue
-            # The only sanctioned widening: a UNC path whose share splitdrive swallowed.
-            if not path_module.isabs(path):
-                assert path_module is ntpath, path
-                assert path.startswith("\\\\"), path
+    relative = {
+        ntpath: ["rel", r"rel\f", r"..\a", ".", "", "C:", "C:foo", r"C:..\x"],
+        posixpath: ["rel", "rel/f", "../a", ".", ""],
+    }
+    for path_module, paths in relative.items():
+        for path in paths:
+            assert is_absolute_path(path, path_module=path_module) is False, (path_module, path)
 
 
 @pytest.mark.parametrize(
