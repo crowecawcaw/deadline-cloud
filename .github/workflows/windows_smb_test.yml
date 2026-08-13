@@ -4,9 +4,14 @@ name: Windows SMB Path Test
 # cannot do. Regression coverage for issue #1321.
 #
 # Not part of Code Quality: creating a share needs administrator rights, and the loopback
-# share is slower and more environment-dependent than a unit test.
+# share is slower and more environment-dependent than a unit test. It runs post-merge
+# instead, matching dcm_integration_tests.yml -- if it only ran on manual dispatch a
+# regression in UNC handling would ship, since test/integ is outside testpaths and so no
+# other job reaches it, and the unit tests are lexical by their own docstring.
 on:
   workflow_dispatch:
+  push:
+    branches: [mainline]
   workflow_call:
     inputs:
       tag:
