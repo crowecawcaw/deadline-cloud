@@ -187,11 +187,12 @@ def test_mapped_drive_resolves_and_compares(smb_share):
     unc_root, _ = smb_share
     host_root = unc_root.rsplit("\\", 1)[0]
 
+    drive = None
     for letter in ("Y:", "Z:"):
         if _run("net", "use", letter, unc_root).returncode == 0:
             drive = letter
             break
-    else:
+    if drive is None:
         pytest.skip("no free drive letter to map the share onto")
 
     try:
