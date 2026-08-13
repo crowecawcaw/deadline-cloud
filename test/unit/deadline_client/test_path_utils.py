@@ -533,16 +533,14 @@ def test_path_components(path, path_module, expected):
         (r"\\?\C:\a", ntpath, True),
         (r"\\?\UNC\host\share", ntpath, True),
         (r"\\.\C:\a", ntpath, True),
-        # A rooted, driveless path names the current drive's root, not the working
-        # directory, so it is absolute. ntpath.isabs agrees through 3.12 and disagrees from
-        # 3.13; answering from the anchor keeps the verdict version-independent, and a
-        # cross-platform caller passing '/a' roots on Windows depends on this.
-        ("\\", ntpath, True),
-        (r"\x", ntpath, True),
-        ("/a", ntpath, True),
-        ("/", ntpath, True),
-        # Drive-relative needs the working directory on that drive, which is exactly what
-        # the known-root hardening must not let a caller supply implicitly.
+        # Neither Windows form that consults the working directory is absolute: '\x' is at
+        # the root of whichever drive the process is on, and 'C:x' is under the working
+        # directory on C:. ntpath.isabs accepted the former through 3.12 and rejects it from
+        # 3.13, so answering from the anchor is what keeps this version-independent.
+        ("\\", ntpath, False),
+        (r"\x", ntpath, False),
+        ("/a", ntpath, False),
+        ("/", ntpath, False),
         ("C:", ntpath, False),
         ("C:foo", ntpath, False),
         ("rel", ntpath, False),
@@ -571,7 +569,8 @@ def test_is_absolute_path_never_accepts_a_working_directory_relative_path():
     let the directory the shell happens to be in become trusted.
     """
     relative = {
-        ntpath: ["rel", r"rel\f", r"..\a", ".", "", "C:", "C:foo", r"C:..\x"],
+        # '\x' and '/a' are here because on Windows they resolve against the current drive.
+        ntpath: ["rel", r"rel\f", r"..\a", ".", "", "C:", "C:foo", r"C:..\x", "\\", r"\x", "/a"],
         posixpath: ["rel", "rel/f", "../a", ".", ""],
     }
     for path_module, paths in relative.items():

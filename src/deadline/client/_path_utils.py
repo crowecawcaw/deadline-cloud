@@ -174,17 +174,22 @@ def is_absolute_path(path: Any, *, path_module: Any = os.path) -> bool:
     whether a path may be trusted as a root or accepted as a parameter value, so a UNC
     share silently reading as relative drops valid roots and rejects valid values.
 
-    A drive-relative path (``C:x``, meaning ``x`` under the working directory on ``C:``) is
-    not absolute, because resolving it needs the working directory -- which is the thing the
-    known-root hardening must never let a caller supply implicitly. A rooted, driveless path
-    (``\\x``) is absolute: it names the current drive's root, not the working directory.
+    Only a fully anchored path counts. On Windows neither a drive-relative path (``C:x``,
+    meaning ``x`` under the working directory on ``C:``) nor a rooted, driveless one
+    (``\\x``, meaning ``x`` at the root of whichever drive the process is on) names a fixed
+    location: resolving either consults the working directory, which is exactly what the
+    known-root hardening must not let a caller supply implicitly.
 
-    That second answer is why this cannot just call ``path_module.isabs`` on the newest
-    interpreters either -- ``ntpath.isabs`` returns True for ``\\x`` through 3.12 and False
-    from 3.13. Answering from the anchor keeps the verdict the same on every version.
+    ``ntpath.isabs`` accepted ``\\x`` through 3.12 and rejects it from 3.13, so it cannot be
+    the reference in either direction. Answering from the anchor keeps the verdict the same
+    on every version.
     """
     anchor, _ = _split_anchored(path, path_module, normalize_case=True)
-    return bool(anchor) and not _denotes_drive(anchor)
+    if not anchor:
+        return False
+    if path_module.sep != "\\":
+        return True
+    return not _denotes_drive(anchor) and anchor != path_module.sep
 
 
 def normalized_path(path: Any, *, path_module: Any = os.path) -> str:

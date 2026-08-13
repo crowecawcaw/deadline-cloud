@@ -46,19 +46,19 @@ from ..testing_utilities import patch_calls_for_create_job_from_job_bundle
     ],
 )
 def test_filter_redundant_known_paths(input, expected):
-    if os.name == "nt":
-        # The filter normalizes its roots, so a '/a' root comes back spelled '\a' here.
-        # Redundancy filtering is what these cases pin; the separator is os.path's business.
-        expected = [path.replace("/", "\\") for path in expected]
-    assert sorted(_filter_redundant_known_paths(input)) == expected
-    if os.name == "nt":
-        assert (
-            sorted(_filter_redundant_known_paths(path.replace("/", "\\") for path in input))
-            == expected
-        )
-        assert sorted(
-            _filter_redundant_known_paths("C:" + path.replace("/", "\\") for path in input)
-        ) == ["C:" + path for path in expected]
+    if os.name != "nt":
+        assert sorted(_filter_redundant_known_paths(input)) == expected
+        return
+
+    # On Windows these POSIX-style paths are root-relative rather than absolute: '\a'
+    # resolves against whichever drive the process is on, so it is dropped as unanchored --
+    # see test_filter_redundant_known_paths_drops_unanchored_paths. Only the drive-qualified
+    # spelling is a usable root here, so that is the one carrying the redundancy cases.
+    assert _filter_redundant_known_paths(input) == []
+    assert _filter_redundant_known_paths(path.replace("/", "\\") for path in input) == []
+    assert sorted(
+        _filter_redundant_known_paths("C:" + path.replace("/", "\\") for path in input)
+    ) == ["C:" + path.replace("/", "\\") for path in expected]
 
 
 @pytest.mark.parametrize(
