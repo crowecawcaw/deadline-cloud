@@ -223,8 +223,8 @@ def test_symlink_escaping_the_share_is_rejected(smb_share):
         validate_directory_symlink_containment(str(bundle))
 
 
-def test_archive_extracts_at_a_share_root_and_still_rejects_an_escape(smb_share):
-    """A bundle archive must extract onto a share root, and still not out of one.
+def test_archive_extracts_at_a_share_root(smb_share):
+    """A bundle archive must extract onto a share root.
 
     ``\\\\server\\share`` against its own files is the pair ``commonpath`` answered with
     ``ValueError``, which the extraction guard read as an escape -- so every entry of
@@ -243,13 +243,40 @@ def test_archive_extracts_at_a_share_root_and_still_rejects_an_escape(smb_share)
     assert (Path(unc_root) / "extract_probe.yaml").is_file()
     assert (Path(unc_root) / "extract_probe" / "scene.c4d").is_file()
 
-    # '..' from a share root lands on the host, a different path space, not inside it.
+
+def test_pardir_at_a_share_root_stays_on_the_share(smb_share):
+    """A share root is a path root: '..' from it is clamped, not a step onto the host.
+
+    The lexical tests assert this of ``ntpath``; here the real redirector agrees, which
+    is why a share-root destination needs no escape case of its own -- there is nowhere
+    for an archive entry to climb to.
+    """
+    unc_root, _ = smb_share
+    share_root = os.path.realpath(unc_root)
+
+    climbed = os.path.realpath(os.path.join(unc_root, "..", "escaped.txt"))
+    assert climbed.lower() == os.path.join(share_root, "escaped.txt").lower(), climbed
+    assert is_path_contained(climbed, share_root)
+
+
+def test_archive_escaping_a_directory_on_a_share_is_rejected(smb_share):
+    """An entry climbing out of its destination must be rejected on a share too.
+
+    The destination is a subdirectory, the only place on a share where '..' resolves
+    anywhere else -- from the share root Windows clamps it.
+    """
+    unc_root, _ = smb_share
+
+    dest = Path(unc_root) / "escape_dest"
+    dest.mkdir(parents=True, exist_ok=True)
+
     escaping = Path(unc_root) / "escaping.ojd"
     with zipfile.ZipFile(str(escaping), "w") as zf:
         zf.writestr("../escaped.txt", "nope")
     with zipfile.ZipFile(str(escaping), "r") as zf:
         with pytest.raises(ValueError, match="outside target directory"):
-            _safe_zip_extract(zf, unc_root)
+            _safe_zip_extract(zf, str(dest))
+    assert not (Path(unc_root) / "escaped.txt").exists()
 
 
 def test_mapped_drive_resolves_and_compares(smb_share):
