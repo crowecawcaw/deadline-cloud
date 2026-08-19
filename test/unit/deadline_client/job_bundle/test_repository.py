@@ -18,6 +18,7 @@ import yaml
 from unittest.mock import MagicMock, patch
 from botocore.exceptions import ClientError
 
+from deadline.client._path_utils import is_path_contained
 from deadline.client.exceptions import DeadlineOperationError
 from deadline.client.job_bundle._repository import (
     LocalBundleRepository,
@@ -690,6 +691,18 @@ class TestSafeZipExtract:
         archive = tmp_path / "bad.zip"
         with zipfile.ZipFile(str(archive), "w") as zf:
             zf.writestr("../../etc/passwd", "malicious")
+
+        dest = tmp_path / "out"
+        dest.mkdir()
+        with zipfile.ZipFile(str(archive), "r") as zf:
+            with pytest.raises(ValueError, match="outside target directory"):
+                _safe_zip_extract(zf, str(dest))
+
+    def test_rejects_sibling_sharing_a_string_prefix(self, tmp_path):
+        """A string prefix is not a directory prefix: 'out-evil' is outside 'out'."""
+        archive = tmp_path / "bad.zip"
+        with zipfile.ZipFile(str(archive), "w") as zf:
+            zf.writestr("../out-evil/payload", "malicious")
 
         dest = tmp_path / "out"
         dest.mkdir()
@@ -1894,7 +1907,7 @@ class TestCacheKeyTraversal:
         # Must be a *strict* descendant of the cache root, never the root itself
         # (which is what "<hash>/.." used to normalize to).
         assert resolved != root
-        assert os.path.commonpath([resolved, root]) == root
+        assert is_path_contained(resolved, root)
         assert ".." not in key.replace("\\", "/").split("/")
 
     @pytest.mark.parametrize(

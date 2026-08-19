@@ -23,6 +23,7 @@ import socket
 import subprocess
 import sys
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Iterator, NoReturn
 
@@ -34,6 +35,7 @@ from deadline.client.api._submit_job_bundle import (
     _filter_redundant_known_paths,
     _is_known_path,
 )
+from deadline.client.job_bundle._repository import _safe_zip_extract
 from deadline.client.job_bundle.loader import validate_directory_symlink_containment
 from deadline.client.exceptions import DeadlineOperationError
 
@@ -219,6 +221,35 @@ def test_symlink_escaping_the_share_is_rejected(smb_share):
 
     with pytest.raises(DeadlineOperationError):
         validate_directory_symlink_containment(str(bundle))
+
+
+def test_archive_extracts_at_a_share_root_and_still_rejects_an_escape(smb_share):
+    """A bundle archive must extract onto a share root, and still not out of one.
+
+    ``\\\\server\\share`` against its own files is the pair ``commonpath`` answered with
+    ``ValueError``, which the extraction guard read as an escape -- so every entry of
+    every archive was rejected when the destination was a share root.
+    """
+    unc_root, _ = smb_share
+
+    archive = Path(unc_root) / "extract_probe.ojd"
+    with zipfile.ZipFile(str(archive), "w") as zf:
+        zf.writestr("extract_probe.yaml", "specificationVersion: jobtemplate-2023-09\n")
+        zf.writestr("extract_probe/scene.c4d", "scene")
+
+    # The destination is the share root itself, which is the spelling that raised.
+    with zipfile.ZipFile(str(archive), "r") as zf:
+        _safe_zip_extract(zf, unc_root)
+    assert (Path(unc_root) / "extract_probe.yaml").is_file()
+    assert (Path(unc_root) / "extract_probe" / "scene.c4d").is_file()
+
+    # '..' from a share root lands on the host, a different path space, not inside it.
+    escaping = Path(unc_root) / "escaping.ojd"
+    with zipfile.ZipFile(str(escaping), "w") as zf:
+        zf.writestr("../escaped.txt", "nope")
+    with zipfile.ZipFile(str(escaping), "r") as zf:
+        with pytest.raises(ValueError, match="outside target directory"):
+            _safe_zip_extract(zf, unc_root)
 
 
 def test_mapped_drive_resolves_and_compares(smb_share):
