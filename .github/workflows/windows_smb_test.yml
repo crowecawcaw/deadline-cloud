@@ -35,8 +35,8 @@ jobs:
           python-version: '3.12'
 
       - name: Confirm SMB prerequisites
-        # Fail with a clear message here rather than having every test skip itself,
-        # which would look like a pass.
+        # Fail with a clear message here rather than leaving the tests to diagnose the
+        # runner for us.
         shell: pwsh
         run: |
           $admin = ([Security.Principal.WindowsPrincipal] `
@@ -47,7 +47,7 @@ jobs:
           Start-Service LanmanServer
           Start-Service LanmanWorkstation
           # Developer Mode lets a non-elevated process create symlinks; the escape
-          # test needs one and skips itself otherwise.
+          # test needs one and fails below if it cannot get one.
           $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
           New-Item -Path $key -Force | Out-Null
           Set-ItemProperty -Path $key -Name AllowDevelopmentWithoutDevLicense -Value 1 -Type DWord
@@ -58,14 +58,13 @@ jobs:
 
       - name: Run the SMB path tests
         shell: pwsh
+        env:
+          # Turn the fixtures' environment skips into failures. pytest exits 0 when every
+          # test skips, so without this a runner that could not build the share reports a
+          # green job that asserted nothing about SMB -- and this workflow is the only
+          # place these tests run.
+          DEADLINE_SMB_TESTS_REQUIRED: '1'
         run: |
-          hatch run pytest test/integ/windows_smb -v --no-cov -p no:randomly
-
-      - name: Report skips
-        # A skipped SMB test is indistinguishable from a passing one in the summary,
-        # so surface the count explicitly.
-        if: always()
-        shell: pwsh
-        run: |
-          hatch run pytest test/integ/windows_smb --no-cov -q -rs 2>&1 |
-            Select-String -Pattern 'SKIPPED|passed|failed'
+          # numprocesses=0 overrides the auto in addopts: each xdist worker would build
+          # its own share and they would race for the one free drive letter.
+          hatch run pytest test/integ/windows_smb -v -rs --no-cov --numprocesses=0 -p no:randomly

@@ -10,6 +10,9 @@ whether a share walks like a directory. These run against a loopback share, so t
 verdicts are checked against a real redirector.
 
 Requires Windows and administrator rights; see .github/workflows/windows_smb_test.yml.
+Where the share is meant to exist, set ``DEADLINE_SMB_TESTS_REQUIRED=1`` so an
+environment that cannot host one fails instead of skipping.
+
 Regression coverage for https://github.com/aws-deadline/deadline-cloud/issues/1321.
 """
 
@@ -21,7 +24,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, NoReturn
 
 import pytest
 
@@ -34,6 +37,21 @@ from deadline.client.api._submit_job_bundle import (
 from deadline.client.job_bundle.loader import validate_directory_symlink_containment
 from deadline.client.exceptions import DeadlineOperationError
 
+
+def _smb_required() -> bool:
+    """Whether this environment promised a share. Read at call time, not cached, so the
+    tests can pin both branches."""
+    return os.environ.get("DEADLINE_SMB_TESTS_REQUIRED") == "1"
+
+
+if _smb_required() and sys.platform != "win32":
+    # A collection error, since a platform skip is a skip like any other here: every test
+    # would be marked skipped and pytest would still exit 0.
+    raise RuntimeError(
+        "DEADLINE_SMB_TESTS_REQUIRED is set, but SMB shares require Windows and this is "
+        f"{sys.platform}, so none of these tests can run."
+    )
+
 pytestmark = [
     pytest.mark.integ,
     pytest.mark.skipif(sys.platform != "win32", reason="SMB shares require Windows."),
@@ -42,6 +60,19 @@ pytestmark = [
 
 def _run(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, check=False)
+
+
+def _unavailable(reason: str) -> NoReturn:
+    """Skip where a share cannot be hosted; fail where one was promised.
+
+    pytest exits 0 when every test skips, so a module-scoped fixture skip would let a
+    run that built no share report success while asserting nothing about SMB. These are
+    the only tests that check the verdicts against a real redirector, so silence here
+    reads as coverage that does not exist.
+    """
+    if _smb_required():
+        pytest.fail(f"SMB coverage is required in this environment but unavailable: {reason}")
+    pytest.skip(reason)
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +87,7 @@ def smb_share(tmp_path_factory) -> Iterator[tuple[str, Path]]:
 
     created = _run("net", "share", f"{share_name}={local_path}", "/GRANT:Everyone,FULL")
     if created.returncode != 0:
-        pytest.skip(
+        _unavailable(
             f"could not create an SMB share: {created.stdout.strip()} {created.stderr.strip()}"
         )
 
@@ -67,10 +98,22 @@ def smb_share(tmp_path_factory) -> Iterator[tuple[str, Path]]:
         # Fail fast and clearly if the redirector cannot reach the new share, rather
         # than letting every assertion below fail with a confusing error.
         if not os.path.isdir(unc_root):
-            pytest.skip(f"SMB share {unc_root} is not reachable from this host")
+            _unavailable(f"SMB share {unc_root} is not reachable from this host")
         yield unc_root, local_path
     finally:
         _run("net", "share", share_name, "/DELETE", "/Y")
+
+
+def test_unavailable_fails_where_the_share_is_required(monkeypatch):
+    """Pin the enforcement, since a regression in it would be invisible: it turns the
+    whole file back into a skip, which is what a pass looks like."""
+    monkeypatch.delenv("DEADLINE_SMB_TESTS_REQUIRED", raising=False)
+    with pytest.raises(pytest.skip.Exception):
+        _unavailable("no share here")
+
+    monkeypatch.setenv("DEADLINE_SMB_TESTS_REQUIRED", "1")
+    with pytest.raises(pytest.fail.Exception):
+        _unavailable("no share here")
 
 
 def test_host_level_root_contains_share_contents(smb_share):
@@ -172,7 +215,7 @@ def test_symlink_escaping_the_share_is_rejected(smb_share):
     try:
         os.symlink(outside, link)
     except OSError as exc:  # pragma: no cover - depends on runner privileges
-        pytest.skip(f"cannot create a symlink on this share: {exc}")
+        _unavailable(f"cannot create a symlink on this share: {exc}")
 
     with pytest.raises(DeadlineOperationError):
         validate_directory_symlink_containment(str(bundle))
@@ -193,7 +236,7 @@ def test_mapped_drive_resolves_and_compares(smb_share):
             drive = letter
             break
     if drive is None:
-        pytest.skip("no free drive letter to map the share onto")
+        _unavailable("no free drive letter to map the share onto")
 
     try:
         asset = Path(drive + "\\") / "mapped_probe.txt"
