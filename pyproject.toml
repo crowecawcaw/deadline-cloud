@@ -145,9 +145,15 @@ ignore = ["E501"]
 # commonprefix compares strings, not path components, so it reports '\\host\share2' as
 # sharing a prefix with '\\host\share'. It is never the right containment primitive.
 "os.path.commonprefix".msg = "Use deadline.client._path_utils.is_path_contained or deadline.client._path_summary.common_ancestor; commonprefix is a string-prefix match, not a path-component match."
+"ntpath.commonprefix".msg = "Use deadline.client._path_utils.is_path_contained or deadline.client._path_summary.common_ancestor; commonprefix is a string-prefix match, not a path-component match."
+"posixpath.commonprefix".msg = "Use deadline.client._path_utils.is_path_contained or deadline.client._path_summary.common_ancestor; commonprefix is a string-prefix match, not a path-component match."
+# The rule resolves names statically, so it cannot see `path_module.commonpath(...)` -- the
+# spelling this codebase actually uses. It catches the direct calls; the helpers are what
+# keep the indirect ones honest.
 
 [tool.ruff.lint.per-file-ignores]
-# Builds an expected value with what the wrappers replace, to pin the difference.
+# Mirrors the root-path grouping done inside deadline.job_attachments, which is a separate
+# package and not ours to change, so the expected value has to be built the same way.
 "test/unit/deadline_client/api/test_job_bundle_submission_asset_refs.py" = ["TID251"]
 
 [tool.ruff.lint.isort]
