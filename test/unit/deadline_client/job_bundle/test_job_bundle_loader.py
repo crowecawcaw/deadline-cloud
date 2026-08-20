@@ -236,12 +236,16 @@ def test_validate_directory_symlink_containment_fail(tmpdir):
 
     symlink_dir = test_root.join("symlink_dir")
     os.symlink(target_dir, test_root.join("symlink_dir"), target_is_directory=True)
-    with pytest.raises(DeadlineOperationError):
+    with pytest.raises(
+        DeadlineOperationError, match="resolves outside of the resolved bundle directory"
+    ):
         validate_directory_symlink_containment(str(test_root))
     os.unlink(symlink_dir)
 
     os.symlink(target_file, test_root.join("symlink_file.txt"))
-    with pytest.raises(DeadlineOperationError):
+    with pytest.raises(
+        DeadlineOperationError, match="resolves outside of the resolved bundle directory"
+    ):
         validate_directory_symlink_containment(str(test_root))
 
 

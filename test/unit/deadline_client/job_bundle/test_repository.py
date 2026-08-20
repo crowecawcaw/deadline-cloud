@@ -9,7 +9,6 @@ import json
 import math
 import ntpath
 import os
-import sys
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -826,21 +825,36 @@ class TestSanitizeBundleName:
     def test_slashes_replaced(self):
         assert sanitize_bundle_name("path/to/bundle") == "path_to_bundle"
 
-    def test_backslashes_replaced_on_windows(self):
-        if sys.platform == "win32":
-            assert sanitize_bundle_name("path\\to\\bundle") == "path_to_bundle"
+    @pytest.mark.parametrize(
+        "platform, name, expected",
+        [
+            # Only what is illegal on the running OS is replaced, so each verdict holds on
+            # one platform and not the other. The function reads sys.platform at call time,
+            # so patching it pins both on every host -- written as a bare `if
+            # sys.platform ...` these asserted nothing on two of the three CI platforms.
+            ("win32", "path\\to\\bundle", "path_to_bundle"),
+            ("linux", "path\\to\\bundle", "path\\to\\bundle"),
+            ("win32", "file:name*with?bad<chars>", "file_name_with_bad_chars_"),
+            ("linux", "file:name*with?bad<chars>", "file:name*with?bad<chars>"),
+            ("win32", 'a"b|c', "a_b_c"),
+            ("linux", "my:bundle", "my:bundle"),
+            ("win32", "my:bundle", "my_bundle"),
+            # Traversal: a separator that is illegal here is replaced, which flattens the
+            # name to one component and leaves nothing to climb with.
+            ("win32", "..\\..\\evil", ".._.._evil"),
+            ("linux", "../../evil", ".._.._evil"),
+        ],
+    )
+    def test_platform_specific_sanitization(self, platform, name, expected):
+        with patch.object(_repository.sys, "platform", platform):
+            assert sanitize_bundle_name(name) == expected
 
-    def test_backslashes_preserved_on_posix(self):
-        if sys.platform != "win32":
-            assert sanitize_bundle_name("path\\to\\bundle") == "path\\to\\bundle"
-
-    def test_windows_illegal_chars_replaced_on_windows(self):
-        if sys.platform == "win32":
-            assert sanitize_bundle_name("file:name*with?bad<chars>") == "file_name_with_bad_chars_"
-
-    def test_colons_preserved_on_posix(self):
-        if sys.platform != "win32":
-            assert sanitize_bundle_name("my:bundle") == "my:bundle"
+    def test_traversal_components_are_rejected_where_the_separator_is_legal(self):
+        """A backslash is an ordinary filename character on POSIX, so it survives
+        sanitization and the '..' components it separates have to be rejected outright."""
+        with patch.object(_repository.sys, "platform", "linux"):
+            with pytest.raises(ValueError, match="empty or unsafe"):
+                sanitize_bundle_name("..\\..\\evil")
 
     def test_empty_after_sanitization_raises(self):
         with pytest.raises(ValueError, match="empty or unsafe"):
