@@ -9,6 +9,7 @@ import datetime
 import json
 import ntpath
 import os
+import posixpath
 from typing import Dict, List
 import pytest
 from pathlib import Path
@@ -1554,6 +1555,49 @@ You are about to download files which may come from multiple root directories. H
         assert "Download Summary:" in result.output
         assert result.exit_code == 0
         mock_expanduser.assert_any_call("~")
+
+
+class TestAssertValidPath:
+    """The download-root validation applied to paths arriving over the JSON protocol.
+
+    Not Path.is_absolute: PureWindowsPath(r"\\host").is_absolute() is False before 3.13
+    and True from 3.13, so a host-level UNC download root was rejected on four of the six
+    supported versions. Injecting the path module pins the verdict on every platform.
+    """
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            r"\\host\share\out",
+            r"\\host\share",
+            # A host-level root: the spelling Path.is_absolute disagrees with itself on.
+            r"\\host",
+            r"C:\out",
+            "C:\\",
+        ],
+    )
+    def test_absolute_windows_path_is_accepted(self, path):
+        job_group._assert_valid_path(path, path_module=ntpath)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            r"relative\out",
+            "out",
+            # Rooted but driveless, and drive-relative: both resolve against the cwd.
+            r"\out",
+            "C:out",
+            "",
+        ],
+    )
+    def test_non_absolute_windows_path_is_rejected(self, path):
+        with pytest.raises(ValueError, match="is not an absolute path"):
+            job_group._assert_valid_path(path, path_module=ntpath)
+
+    def test_posix_paths(self):
+        job_group._assert_valid_path("/mnt/share/out", path_module=posixpath)
+        with pytest.raises(ValueError, match="is not an absolute path"):
+            job_group._assert_valid_path("relative/out", path_module=posixpath)
 
 
 class TestJsonLineHelpers:
