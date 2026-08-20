@@ -8,18 +8,16 @@ name: Windows SMB Path Test
 # can reach test/integ. This workflow owns these tests, and it has to gate pull requests
 # to be worth anything -- a wrong assertion here is invisible to every other check, so
 # post-merge-only means it lands green and fails on mainline. GitHub-hosted windows
-# runners are already elevated, so `net share` works; the cost is the Windows env install
-# on each run, which is why the path filter keeps it off unrelated pull requests.
+# runners are already elevated, so `net share` works.
+#
+# It runs on every pull request, with no paths filter, because it is a required check:
+# GitHub reports a filtered-out required check as pending forever, which would block every
+# merge it skipped. The cost is the Windows env install (~2 min) per run. It also runs
+# before a release publishes, since a tag nobody validated is how UNC handling would ship
+# broken.
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - 'src/deadline/client/_path_utils.py'
-      - 'src/deadline/client/_path_summary.py'
-      - 'src/deadline/client/api/_submit_job_bundle.py'
-      - 'src/deadline/client/job_bundle/**'
-      - 'test/integ/windows_smb/**'
-      - '.github/workflows/windows_smb_test.yml'
   push:
     branches: [mainline]
   workflow_call:
