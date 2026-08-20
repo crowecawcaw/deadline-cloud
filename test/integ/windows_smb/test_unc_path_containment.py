@@ -200,17 +200,22 @@ def test_bundle_on_share_passes_symlink_containment(smb_share):
     validate_directory_symlink_containment(str(root_bundle))
 
 
-def test_symlink_escaping_the_share_is_rejected(smb_share):
+def test_symlink_escaping_the_bundle_on_a_share_is_rejected(smb_share):
     """A symlink out of a bundle on a share must still be caught.
 
     This is the security direction: the lexical tests assert it, but only a real
     filesystem exercises the ``realpath`` resolution the guard depends on.
+
+    The target is a sibling of the bundle spelled through the share, so the verdict
+    comes from leaving the bundle -- not from the local ``C:`` spelling of the same
+    file being a different path space, which would be caught by drive comparison
+    alone and would leave the climb itself untested.
     """
-    unc_root, local_path = smb_share
+    unc_root, _ = smb_share
 
     bundle = Path(unc_root) / "escape_bundle"
     bundle.mkdir(parents=True, exist_ok=True)
-    outside = local_path / "outside_secret.txt"
+    outside = Path(unc_root) / "outside_secret.txt"
     outside.write_text("secret", encoding="utf8")
 
     link = bundle / "escape.txt"
@@ -219,7 +224,12 @@ def test_symlink_escaping_the_share_is_rejected(smb_share):
     except OSError as exc:  # pragma: no cover - depends on runner privileges
         _unavailable(f"cannot create a symlink on this share: {exc}")
 
-    with pytest.raises(DeadlineOperationError):
+    # Pin the resolution the guard depends on: an unresolved link would be read as
+    # inside the bundle, and the escape would pass unnoticed.
+    assert os.path.realpath(link).lower() == os.path.realpath(outside).lower()
+    with pytest.raises(
+        DeadlineOperationError, match="resolves outside of the resolved bundle directory"
+    ):
         validate_directory_symlink_containment(str(bundle))
 
 
@@ -300,14 +310,23 @@ def test_mapped_drive_resolves_and_compares(smb_share):
         asset = Path(drive + "\\") / "mapped_probe.txt"
         asset.write_text("mapped", encoding="utf8")
 
+        # Pinned rather than branched on: the redirector rewrites the mapping back to
+        # UNC form, and every assertion below follows from that. Branching on it would
+        # let a containment regression steer the test into the case it does not check.
         resolved = os.path.realpath(asset)
-        # Whatever spelling realpath returns, it must be contained by the matching
-        # root and not by the other path space.
-        if resolved.startswith("\\\\"):
-            assert is_path_contained(resolved, host_root)
-        else:
-            assert is_path_contained(resolved, drive + "\\")
-            assert not is_path_contained(resolved, host_root)
+        assert resolved.startswith("\\\\"), (
+            f"realpath kept the drive-letter spelling ({resolved}); the assertions below "
+            "assume it resolves to UNC form"
+        )
+        assert is_path_contained(resolved, unc_root)
+        assert is_path_contained(resolved, host_root)
+
+        # The two spellings are separate path spaces, so a mapped-drive root does not
+        # cover the same files once they resolve to UNC form, and vice versa. That is a
+        # real limitation for a studio that configures 'Z:\proj' as a known asset root.
+        assert not is_path_contained(resolved, drive + "\\")
+        assert is_path_contained(str(asset), drive + "\\")
+        assert not is_path_contained(str(asset), host_root)
     finally:
         _run("net", "use", drive, "/DELETE", "/Y")
 
