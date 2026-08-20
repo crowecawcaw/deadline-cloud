@@ -14,7 +14,7 @@ import re
 import textwrap
 from configparser import ConfigParser
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from pathlib import Path
 import shlex
 from datetime import datetime
@@ -96,6 +96,42 @@ def _is_known_path(path: Path | str, known_roots: Iterable[Path | str]) -> bool:
     """
     # Passed explicitly, and read at call time, so tests can patch it for another platform.
     return is_any_path_contained(path, known_roots, path_module=os.path)
+
+
+def _reject_relative_hook_path_values(
+    hook_stdout_parameters: Mapping[str, Any],
+    job_bundle_parameters: Iterable[Mapping[str, Any]],
+    *,
+    path_module: Any = os.path,
+) -> None:
+    """Raise if a hook emitted a PATH value that is not absolute.
+
+    A hook's stdout parameters are layered as job_parameters overrides, which follow CLI
+    ``--parameter`` semantics: a relative PATH resolves against the current working
+    directory. A hook does not run from -- and does not control -- the submitting shell's
+    cwd, so a relative PATH from a hook is ambiguous (unlike an on-disk
+    parameter_values.yaml rewrite, which resolves against the bundle dir).
+
+    Not ``os.path.isabs``: before Python 3.11 it reads a UNC path naming a share as
+    relative, rejecting a valid value on the very setup #1321 reports.
+    """
+    bundle_parameter_types = {
+        p.get("name"): p.get("type") for p in job_bundle_parameters if "name" in p
+    }
+    for name, value in hook_stdout_parameters.items():
+        if (
+            bundle_parameter_types.get(name) == "PATH"
+            and isinstance(value, str)
+            and value != ""
+            and not is_absolute_path(value, path_module=path_module)
+        ):
+            raise DeadlineOperationError(
+                f"Pre-submission hook emitted a relative PATH value for parameter "
+                f"'{name}': '{value}'. Hooks must emit absolute paths for PATH "
+                f"parameters on stdout, since a hook does not run from the submitting "
+                f"working directory. Use an absolute path (e.g. join with "
+                f"DEADLINE_JOB_BUNDLE_DIR) or rewrite parameter_values.yaml on disk."
+            )
 
 
 def _summarize_asset_paths(
@@ -811,26 +847,9 @@ def create_job_from_job_bundle(
             # submitting shell's cwd, so a relative PATH from a hook is ambiguous (unlike an
             # on-disk parameter_values.yaml rewrite, which resolves against the bundle dir).
             # Reject relative PATH values here and require hooks to emit absolute paths.
-            bundle_parameter_types = {
-                p.get("name"): p.get("type") for p in job_bundle_parameters if "name" in p
-            }
-            for name, value in hook_stdout_parameters.items():
-                if (
-                    bundle_parameter_types.get(name) == "PATH"
-                    and isinstance(value, str)
-                    and value != ""
-                    # Not os.path.isabs: before Python 3.11 it reads a UNC path naming a
-                    # share as relative, rejecting a valid value on the very setup #1321
-                    # reports.
-                    and not is_absolute_path(value, path_module=os.path)
-                ):
-                    raise DeadlineOperationError(
-                        f"Pre-submission hook emitted a relative PATH value for parameter "
-                        f"'{name}': '{value}'. Hooks must emit absolute paths for PATH "
-                        f"parameters on stdout, since a hook does not run from the submitting "
-                        f"working directory. Use an absolute path (e.g. join with "
-                        f"DEADLINE_JOB_BUNDLE_DIR) or rewrite parameter_values.yaml on disk."
-                    )
+            _reject_relative_hook_path_values(
+                hook_stdout_parameters, job_bundle_parameters, path_module=os.path
+            )
             hook_parameter_overrides = [
                 {"name": name, "value": value}
                 for name, value in hook_stdout_parameters.items()
