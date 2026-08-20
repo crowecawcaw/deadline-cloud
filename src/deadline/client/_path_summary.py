@@ -37,7 +37,7 @@ def _leading_pardir_count(parts: list[str]) -> int:
     return count
 
 
-def common_ancestor(paths: Sequence[Any], *, path_module: Any = os.path) -> str:
+def common_ancestor(paths: Sequence[Any], *, path_module: Any = None) -> str:
     """Return the deepest directory containing every path in ``paths``.
 
     This is ``os.path.commonpath`` without the exceptions: paths in unrelated spaces return
@@ -45,6 +45,10 @@ def common_ancestor(paths: Sequence[Any], *, path_module: Any = os.path) -> str:
     shares of one server. The result keeps the first path's spelling and, like
     ``commonpath``, is purely lexical.
     """
+    # Resolved here, not in the signature: a default argument binds os.path when this
+    # module is imported, which would silently ignore a test's patch of it and make a
+    # caller that omits it untestable on another platform.
+    path_module = path_module or os.path
     if not paths:
         return ""
 

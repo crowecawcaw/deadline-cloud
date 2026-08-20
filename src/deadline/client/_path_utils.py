@@ -4,13 +4,17 @@
 Path containment helpers that understand Windows UNC paths.
 
 ``os.path.commonpath`` raises ``ValueError`` rather than comparing a host-level UNC path
-(``\\\\server``) with a path under one of its shares: ``splitdrive`` reports no drive for
-the former and ``\\\\server\\share`` for the latter. It raises the same way for two shares
-on one host. Callers that read that exception as "not contained" reject valid paths.
+(``\\\\server``) with a path under one of its shares, and raises the same way for two shares
+on one host. Which message it raises depends on the interpreter -- before 3.11
+``splitdrive`` reported no drive for ``\\\\server``, so the pair read as mixing absolute
+and relative; from 3.11 it reports one and they read as different drives -- but it raises
+on every supported version. Callers that read that exception as "not contained" reject
+valid paths.
 
 These helpers compare paths component by component instead, so a UNC host is an ordinary
-ancestor of its shares. Every function takes an explicit ``path_module``
-(``ntpath``/``posixpath``), so Windows semantics stay testable on non-Windows hosts.
+ancestor of its shares. Every function takes an optional ``path_module``
+(``ntpath``/``posixpath``), resolved to ``os.path`` at call time rather than in the
+signature, so Windows semantics stay testable on non-Windows hosts from any call site.
 
 Comparisons are lexical -- pass ``realpath`` output in if symlinks must be resolved -- and
 never raise. Anything unresolvable fails closed, since callers use containment to decide
@@ -146,7 +150,7 @@ def _split_anchored(path: Any, path_module: Any, normalize_case: bool) -> tuple[
 def path_components(
     path: Any,
     *,
-    path_module: Any = os.path,
+    path_module: Any = None,
     normalize_case: bool = True,
 ) -> list[str]:
     """Split ``path`` into the components used for ancestor comparisons.
@@ -162,11 +166,15 @@ def path_components(
 
     ``normalize_case`` lowercases components on Windows to match the filesystem.
     """
+    # Resolved here, not in the signature: a default argument binds os.path when this
+    # module is imported, which would silently ignore a test's patch of it and make a
+    # caller that omits it untestable on another platform.
+    path_module = path_module or os.path
     anchor, parts = _split_anchored(path, path_module, normalize_case)
     return ([anchor] if anchor else []) + parts
 
 
-def is_absolute_path(path: Any, *, path_module: Any = os.path) -> bool:
+def is_absolute_path(path: Any, *, path_module: Any = None) -> bool:
     """Return True iff ``path`` names a location without consulting the working directory.
 
     ``path_module.isabs`` cannot be used before Python 3.11: it tests what ``splitdrive``
@@ -185,6 +193,7 @@ def is_absolute_path(path: Any, *, path_module: Any = os.path) -> bool:
     the reference in either direction. Answering from the anchor keeps the verdict the same
     on every version.
     """
+    path_module = path_module or os.path
     anchor, _ = _split_anchored(path, path_module, normalize_case=True)
     if not anchor:
         return False
@@ -193,7 +202,7 @@ def is_absolute_path(path: Any, *, path_module: Any = os.path) -> bool:
     return not _denotes_drive(anchor) and anchor != path_module.sep
 
 
-def is_bare_unc_anchor(path: Any, *, path_module: Any = os.path) -> bool:
+def is_bare_unc_anchor(path: Any, *, path_module: Any = None) -> bool:
     """True iff ``path`` is the bare ``\\\\`` marker, which names no server.
 
     It is fully qualified yet identifies no location, so it contains nothing --
@@ -207,7 +216,7 @@ def is_bare_unc_anchor(path: Any, *, path_module: Any = os.path) -> bool:
     return path_components(path, path_module=path_module) == [_UNC_ANCHOR]
 
 
-def normalized_path(path: Any, *, path_module: Any = os.path) -> str:
+def normalized_path(path: Any, *, path_module: Any = None) -> str:
     """Return ``path`` with ``..``, ``.``, repeated separators and separator style resolved.
 
     ``path_module.normpath`` with the version differences handled: before Python 3.11 it
@@ -215,6 +224,7 @@ def normalized_path(path: Any, *, path_module: Any = os.path) -> str:
     moving a host-level root out of the UNC space so it matches none of its own shares.
     Case is preserved, unlike the components used for comparison.
     """
+    path_module = path_module or os.path
     anchor, parts = _split_anchored(path, path_module, normalize_case=False)
     return anchor + path_module.sep.join(parts)
 
@@ -223,7 +233,7 @@ def is_path_contained(
     path: Any,
     root: Any,
     *,
-    path_module: Any = os.path,
+    path_module: Any = None,
 ) -> bool:
     """Return True iff ``path`` equals or is a descendant of ``root``.
 
@@ -248,7 +258,7 @@ def is_any_path_contained(
     path: Any,
     roots: Iterable[Any],
     *,
-    path_module: Any = os.path,
+    path_module: Any = None,
 ) -> bool:
     """Return True iff ``path`` is contained by any root in ``roots``."""
     return any(is_path_contained(path, root, path_module=path_module) for root in roots)

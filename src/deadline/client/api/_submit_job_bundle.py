@@ -330,7 +330,7 @@ def _filter_redundant_known_paths(known_asset_paths: Iterable[str]) -> list[str]
         1. Sort the paths from fewest to most components, so any prefix of a path has
            to happen before that path.
         2. For each path, split it into parts (i.e. '/mnt/prod/project' becomes
-           ['', 'mnt', 'prod', 'project']), and then insert it part by part into
+           ['/', 'mnt', 'prod', 'project']), and then insert it part by part into
            a nested dict called dir_tree organized as a TRIE. The value True in the
            TRIE indicates that a path with that as its final part is in the list.
         3. While inserting a path into the TRIE, detect whether another path already
