@@ -3,13 +3,23 @@ name: Windows SMB Path Test
 # Validates UNC path containment against a real SMB share, which lexical ntpath modeling
 # cannot do. Regression coverage for issue #1321.
 #
-# Not part of Code Quality: creating a share needs administrator rights, and the loopback
-# share is slower and more environment-dependent than a unit test. It runs post-merge
-# instead, matching dcm_integration_tests.yml -- if it only ran on manual dispatch a
-# regression in UNC handling would ship, since test/integ is outside testpaths and so no
-# other job reaches it, and the unit tests are lexical by their own docstring.
+# Not part of Code Quality, which runs the reusable Python build: that invokes
+# `hatch run test`, whose script hard-codes test/unit and test/cli_e2e, so no job it runs
+# can reach test/integ. This workflow owns these tests, and it has to gate pull requests
+# to be worth anything -- a wrong assertion here is invisible to every other check, so
+# post-merge-only means it lands green and fails on mainline. GitHub-hosted windows
+# runners are already elevated, so `net share` works; the cost is the Windows env install
+# on each run, which is why the path filter keeps it off unrelated pull requests.
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/deadline/client/_path_utils.py'
+      - 'src/deadline/client/_path_summary.py'
+      - 'src/deadline/client/api/_submit_job_bundle.py'
+      - 'src/deadline/client/job_bundle/**'
+      - 'test/integ/windows_smb/**'
+      - '.github/workflows/windows_smb_test.yml'
   push:
     branches: [mainline]
   workflow_call:
@@ -46,11 +56,13 @@ jobs:
           Get-Service LanmanServer, LanmanWorkstation | Format-Table -AutoSize
           Start-Service LanmanServer
           Start-Service LanmanWorkstation
-          # Developer Mode lets a non-elevated process create symlinks; the escape
-          # test needs one and fails below if it cannot get one.
-          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
-          New-Item -Path $key -Force | Out-Null
-          Set-ItemProperty -Path $key -Name AllowDevelopmentWithoutDevLicense -Value 1 -Type DWord
+          # The symlink the escape test needs comes from the runner being elevated:
+          # CreateSymbolicLinkW needs SeCreateSymbolicLinkPrivilege, and CPython does not
+          # pass the flag that would let Developer Mode substitute for it. The test fails
+          # loudly (not skips) if the privilege is ever missing.
+          # Remote-to-local symlink evaluation must be on, or realpath leaves the link
+          # unresolved and the escape reads as contained.
+          fsutil behavior set SymlinkEvaluation R2L:1 R2R:1
 
       - name: Install
         run: |
