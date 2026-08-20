@@ -302,7 +302,9 @@ class TestSymlinkContainmentWindowsPaths:
             ["escape.yaml"],
             {r"\\host\share\escape.yaml": r"\\host\other\secret.yaml"},
         ):
-            with pytest.raises(DeadlineOperationError):
+            with pytest.raises(
+                DeadlineOperationError, match="resolves outside of the resolved bundle directory"
+            ):
                 validate_directory_symlink_containment(bundle_dir)
 
     def test_symlink_from_drive_bundle_onto_unc_share_is_rejected(self):
@@ -312,7 +314,9 @@ class TestSymlinkContainmentWindowsPaths:
             ["escape.yaml"],
             {r"C:\bundle\escape.yaml": r"\\host\share\secret.yaml"},
         ):
-            with pytest.raises(DeadlineOperationError):
+            with pytest.raises(
+                DeadlineOperationError, match="resolves outside of the resolved bundle directory"
+            ):
                 validate_directory_symlink_containment(bundle_dir)
 
     def test_symlink_to_sibling_prefix_directory_is_rejected(self):
@@ -322,7 +326,9 @@ class TestSymlinkContainmentWindowsPaths:
             ["escape.yaml"],
             {r"C:\bundle\escape.yaml": r"C:\bundle-secret\secret.yaml"},
         ):
-            with pytest.raises(DeadlineOperationError):
+            with pytest.raises(
+                DeadlineOperationError, match="resolves outside of the resolved bundle directory"
+            ):
                 validate_directory_symlink_containment(bundle_dir)
 
 

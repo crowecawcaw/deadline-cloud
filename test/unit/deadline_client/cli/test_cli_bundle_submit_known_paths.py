@@ -15,6 +15,7 @@ import click
 from click.testing import CliRunner
 import pytest
 
+from .._legacy_ntpath import PreThreeElevenNtpath
 from deadline.client import config
 from deadline.client.cli import main
 from deadline.client.api import _submit_job_bundle as sjb
@@ -211,12 +212,35 @@ def test_is_known_path_windows_semantics(path, roots, expected):
         ([r"C:\proj", r"c:\PROJ\sub"], [r"C:\proj"]),
         # Drive-letter roots stay separate from UNC roots.
         ([r"C:\proj", r"\\host\share"], [r"C:\proj", r"\\host\share"]),
+        # Ties keep input order, so of two spellings of one location the caller's first --
+        # highest precedence -- is the one retained. Every case above differs in depth, so
+        # this is what pins the documented tie-break.
+        ([r"C:\Proj", r"c:\proj"], [r"C:\Proj"]),
+        ([r"c:\proj", r"C:\Proj"], [r"c:\proj"]),
+        # The retained entry is the *normalized* spelling of the first input, so a
+        # trailing separator on it does not survive.
+        (["\\\\host\\", r"\\host"], [r"\\host"]),
     ],
 )
 def test_filter_redundant_known_paths_windows_semantics(input, expected):
-    # abspath is left native so the already-absolute inputs pass through unchanged.
-    with patch.object(sjb.os.path, "abspath", lambda p: p), patch.object(sjb.os, "path", ntpath):
+    with patch.object(sjb.os, "path", ntpath):
         assert _filter_redundant_known_paths(input) == expected
+
+
+def test_filter_redundant_known_paths_survives_pre_3_11_normpath():
+    """A host-level UNC root must still subsume its shares on the interpreters where
+    ``normpath`` collapses the leading pair.
+
+    ``os.path.normpath(r"\\host")`` returned ``\host`` before 3.11, moving the root out
+    of the UNC space so it matched none of its own shares. The filter normalizes with the
+    UNC-aware helper instead; injected here so the 3.9 and 3.10 behavior is asserted on
+    every interpreter rather than only on those matrix legs.
+    """
+    legacy = PreThreeElevenNtpath()
+    assert legacy.normpath(r"\\host") == r"\host", "proxy no longer reproduces the old behavior"
+    with patch.object(sjb.os, "path", legacy):
+        assert _filter_redundant_known_paths([r"\\host", r"\\host\share"]) == [r"\\host"]
+        assert _filter_redundant_known_paths([r"\\host\share", r"\\host"]) == [r"\\host"]
 
 
 def test_filter_redundant_known_paths_expands_user_paths():

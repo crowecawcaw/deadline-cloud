@@ -147,11 +147,7 @@ ignore = ["E501"]
 "os.path.commonprefix".msg = "Use deadline.client._path_utils.is_path_contained or deadline.client._path_summary.common_ancestor; commonprefix is a string-prefix match, not a path-component match."
 
 [tool.ruff.lint.per-file-ignores]
-# The sanctioned wrappers, and the one place allowed to reach for what they replace.
-"src/deadline/client/_path_utils.py" = ["TID251"]
-# These compare the wrappers against the stdlib behavior they replace.
-"test/unit/deadline_client/test_path_utils.py" = ["TID251"]
-"test/unit/deadline_client/test_path_summary.py" = ["TID251"]
+# Builds an expected value with what the wrappers replace, to pin the difference.
 "test/unit/deadline_client/api/test_job_bundle_submission_asset_refs.py" = ["TID251"]
 
 [tool.ruff.lint.isort]

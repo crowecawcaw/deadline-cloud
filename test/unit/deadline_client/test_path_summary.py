@@ -38,13 +38,19 @@ def test_common_ancestor_contains_its_inputs(path_module):
         if path_module is ntpath
         else ["/a/b", "/a/c", "//a/d", "../a/b", "../a/c", "../../a/b", "rel/f", "rel/g"]
     )
+    asserted = 0
     for first in paths:
         for second in paths:
             ancestor = common_ancestor([first, second], path_module=path_module)
             if not ancestor:
                 continue
+            asserted += 1
             assert is_path_contained(first, ancestor, path_module=path_module), (first, ancestor)
             assert is_path_contained(second, ancestor, path_module=path_module), (second, ancestor)
+
+    # Most pairs here share no ancestor, and an empty answer is skipped above, so without a
+    # floor a regression that returned nothing for everything would pass this vacuously.
+    assert asserted >= len(paths), asserted
 
 
 @pytest.mark.parametrize(

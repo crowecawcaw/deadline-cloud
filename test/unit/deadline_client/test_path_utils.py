@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from ._legacy_ntpath import PreThreeElevenNtpath
 from deadline.client._path_utils import (
     _splitroot,
     is_absolute_path,
@@ -76,6 +77,13 @@ from deadline.client._path_utils import (
         # A '..' that normpath cannot resolve (there is no share to clamp against)
         # fails closed rather than being read as a component named '..'.
         (r"\\host\..\other\share\f", r"\\host", False),
+        # An unresolvable '..' in the *root* belongs to the root, so a candidate is
+        # contained only if it repeats it. A known-asset root reaches here spelled as the
+        # config file gave it -- normalized, not resolved -- so this pair is reachable.
+        (r"\\host\..\other\f", r"\\host\..", True),
+        (r"\\host\other\f", r"\\host\..", False),
+        # A '..' the root *can* resolve is resolved, as anywhere else.
+        (r"C:\etc\f", r"C:\t\..\etc", True),
         # Mismatched drives are simply not contained; no exception.
         (r"D:\trusted\project\file", r"C:\trusted\project", False),
         (r"\\host\share\file", r"C:\trusted\project", False),
@@ -114,9 +122,9 @@ from deadline.client._path_utils import (
         (r"\\host\share\file", "//", False),
         (r"\\host\share\file", "\\\\?\\UNC\\", False),
         (r"\\host", "\\\\", False),
-        # The anchor is still reflexive, and a root naming an actual server still works.
+        # The anchor is still reflexive. A root naming an actual server still works; that
+        # is the first case in this table.
         ("\\\\", "\\\\", True),
-        (r"\\host\share\file", r"\\host", True),
         # 'C:' means the cwd on drive C:, so it contains drive-relative paths but not
         # the drive root's absolute contents.
         (r"C:\Windows", "C:", False),
@@ -128,6 +136,17 @@ from deadline.client._path_utils import (
         (r"C:\secret", r"\\.\C:", False),
         (r"\\?\Volume{abc}\trusted\f", r"Volume{abc}\trusted", False),
         (r"\\?\Volume{abc}\trusted\f", r"\\?\Volume{abc}\trusted", True),
+        # Two prefixes of one volume are still separate spaces where neither folds to a
+        # plain spelling. Unlike the relative-root case above, both sides are absolute
+        # here, so the verdict comes from the prefix and not from that mismatch.
+        (r"\\?\Volume{abc}\t\f", r"\\.\Volume{abc}\t", False),
+        # A '..' that survives normalization must not be read as a component named '..'.
+        # Which inputs those are depends on the interpreter -- before 3.11 normpath
+        # returned an extended-length path untouched, so its '..' reached the comparison
+        # (verified on 3.9: components are [..., 't', '..', 'evil', 'f']) -- and the
+        # anti-climb backstop is what makes the verdict the same on every version.
+        (r"\\?\Volume{abc}\t\..\evil\f", r"\\?\Volume{abc}\t", False),
+        (r"\\.\C:\a\..\evil", r"\\.\C:\a", False),
         # '\\?\C:' folds to the drive-relative 'C:' space and '\\?\C:\' to the drive root,
         # so each behaves as the plain spelling it denotes -- including keeping those two
         # spaces apart, which is why the last two disagree.
@@ -239,41 +258,9 @@ def test_host_level_unc_root_containment_is_version_independent(root, contained)
     assert is_path_contained(r"\\host\share\f", root, path_module=ntpath) is contained
 
 
-class _PreThreeElevenNtpath:
-    """``ntpath`` as it behaved before Python 3.11 for a UNC path that names no share.
-
-    Both ``normpath`` and ``splitdrive`` stripped such a path down to a rooted, driveless
-    one. Injecting this exercises that branch on any interpreter, rather than only on the
-    3.9 and 3.10 jobs -- the same reason the rest of this file injects ``ntpath``.
-    """
-
-    # Forces the _splitroot backport, which is what those versions had.
-    splitroot = None
-
-    @staticmethod
-    def _is_shareless_unc(text: str) -> bool:
-        return text.startswith("\\\\") and "\\" not in text[2:]
-
-    @staticmethod
-    def normpath(text: str) -> str:
-        result = ntpath.normpath(text)
-        if _PreThreeElevenNtpath._is_shareless_unc(result):
-            return result[1:]
-        return result
-
-    @staticmethod
-    def splitdrive(text: str):
-        if _PreThreeElevenNtpath._is_shareless_unc(text):
-            return "", text
-        return ntpath.splitdrive(text)
-
-    def __getattr__(self, name):
-        return getattr(ntpath, name)
-
-
 def test_host_level_unc_root_survives_pre_3_11_normpath():
     """A host-level root stays in the UNC space even when normpath collapses its anchor."""
-    legacy: Any = _PreThreeElevenNtpath()
+    legacy: Any = PreThreeElevenNtpath()
     # Confirm the proxy actually reproduces the old behavior, so this cannot pass vacuously.
     assert legacy.normpath("\\\\host") == "\\host"
     assert legacy.splitdrive("\\\\host") == ("", "\\\\host")
@@ -327,7 +314,7 @@ def _prefixed_form(path: str) -> str:
 
 
 def test_extended_length_prefix_resolves_dot_segments_uniformly():
-    """normpath leaves '..' alone inside a '\\\\?\\' path before 3.10 and collapses it after.
+    """normpath leaves '..' alone inside a '\\\\?\\' path before 3.11 and collapses it after.
 
     Folding to the plain spelling first makes the components the same on every supported
     interpreter, so containment does not depend on the running Python.
@@ -348,6 +335,14 @@ def test_splitroot_backport_matches_stdlib(path_module):
     Python 3.12 added ``splitroot``; this project supports 3.9, so on older
     interpreters the shim is what distinguishes one path space from another. Hiding
     ``splitroot`` exercises the shim on any interpreter.
+
+    The comparison only runs where the stdlib has an oracle. It is deliberately not
+    replaced by frozen triples for the older interpreters: the shim reads the running
+    ``splitdrive``, which itself changed in 3.11, so the correct pre-3.11 triples differ
+    from these (measured on 3.9: ``\\\\srv`` splits as ``("", "\\", "\\srv")``, not
+    ``("\\\\srv", "", "")``). What must hold on those versions is the downstream verdict,
+    which :func:`test_host_level_unc_root_survives_pre_3_11_normpath` and the filter's
+    legacy-proxy test assert directly.
     """
     if not hasattr(path_module, "splitroot"):
         pytest.skip("stdlib splitroot unavailable, nothing to compare against")
@@ -397,11 +392,14 @@ def test_splitroot_backport_matches_stdlib(path_module):
 def test_agrees_with_pathlib_except_for_unc_hosts(path_module):
     """Differential check against ``PurePath.is_relative_to`` as an independent oracle.
 
-    pathlib folds a UNC server and share into one atom, so it cannot see a host-level root
-    as an ancestor of its shares -- that gap is issue #1321 and the only sanctioned
-    disagreement. Elsewhere pathlib is the reference. It does not resolve '..', so the
-    corpus avoids inputs needing normalization; this supplements the explicit cases above
-    rather than replacing them.
+    Two disagreements are sanctioned, and in one direction only -- we may be more
+    permissive than pathlib, never the reverse. First, pathlib folds a UNC server and share
+    into one atom, so it cannot see a host-level root as an ancestor of its shares: that
+    gap is issue #1321. Second, pathlib keeps an extended-length prefix as part of the
+    drive, so it cannot see that '\\\\?\\C:\\a' denotes the same location as 'C:\\a'.
+    Elsewhere pathlib is the reference. It does not resolve '..', so the corpus avoids
+    inputs needing normalization; this supplements the explicit cases above rather than
+    replacing them.
     """
     if path_module is ntpath:
         flavour: Any = PureWindowsPath
@@ -428,6 +426,9 @@ def test_agrees_with_pathlib_except_for_unc_hosts(path_module):
             "C:foo",
             r"\\.\C:\a",
             r"\\?\Volume{abc}\a",
+            r"\\?\C:\a",
+            r"\\?\C:\a\b",
+            r"\\?\UNC\srv\sh\a",
         ]
     else:
         flavour = PurePosixPath
@@ -443,12 +444,59 @@ def test_agrees_with_pathlib_except_for_unc_hosts(path_module):
         # more permissive than pathlib here, never elsewhere and never in reverse.
         assert path_module is ntpath, (candidate, root, ours, pathlibs)
         assert ours is True and pathlibs is False, (candidate, root, ours, pathlibs)
+        if candidate.startswith("\\\\?\\") or root.startswith("\\\\?\\"):
+            # Folding. The explicit table above pins which prefixed spellings fold to
+            # what; pathlib cannot be the oracle for it, so all this can check is the
+            # direction asserted above.
+            continue
         # The root must name an actual server. The bare '\\\\' anchor names none, so it
         # is not a sanctioned disagreement -- pathlib is right to contain nothing there.
         assert flavour(root).drive.startswith("\\\\"), (candidate, root)
         assert str(root) != "\\\\", (candidate, root)
         assert flavour(candidate).drive.startswith("\\\\"), (candidate, root)
         assert not flavour(root).parts[1:], (candidate, root)
+
+
+def test_is_absolute_path_does_not_delegate_to_the_stdlib():
+    """``isabs`` cannot be the reference, so the helper must not consult it.
+
+    ``ntpath.isabs`` disagrees with itself across the supported range -- it read
+    ``\\\\host\\share`` as relative before 3.11 and accepted ``\\x`` through 3.12 -- so a
+    delegating implementation would answer differently depending on the interpreter. On
+    3.13+ the stdlib happens to agree with the helper, which is why this injects a path
+    module whose ``isabs`` is deliberately wrong in both directions rather than relying on
+    the version matrix to notice.
+    """
+
+    class _WrongIsabs:
+        @staticmethod
+        def isabs(path):
+            return not path.startswith("\\\\")
+
+        def __getattr__(self, name):
+            return getattr(ntpath, name)
+
+    wrong: Any = _WrongIsabs()
+    assert wrong.isabs(r"\\host\share") is False, "proxy no longer disagrees with the helper"
+    assert is_absolute_path(r"\\host\share", path_module=wrong) is True
+    assert is_absolute_path(r"\x", path_module=wrong) is False
+    assert is_absolute_path("C:foo", path_module=wrong) is False
+    assert is_absolute_path(r"C:\a", path_module=wrong) is True
+
+
+def test_containment_of_degenerate_paths():
+    """The empty string normalizes to the current directory, so it is its own space.
+
+    It is a real input -- ``--known-asset-path ""``, MCP JSON, and a PATH parameter whose
+    allowedValues suppressed absolutization all produce one -- and the callers drop it on
+    truthiness before it reaches here. This pins the verdict for any that do not, so an
+    empty root can never be read as an ancestor of an absolute path.
+    """
+    for module in (ntpath, posixpath):
+        assert path_components("", path_module=module) == ["."]
+        assert is_path_contained("", "", path_module=module) is True
+        assert is_path_contained("/a", "", path_module=module) is False
+        assert is_path_contained("", "/", path_module=module) is False
 
 
 def test_is_any_path_contained():
