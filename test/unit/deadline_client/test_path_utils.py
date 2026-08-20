@@ -434,12 +434,14 @@ def test_agrees_with_pathlib_except_for_unc_hosts(path_module):
         flavour = PurePosixPath
         corpus = ["/", "/a", "/a/b", "/a-secret", "rel", "rel/f"]
 
+    unc_disagreements = 0
+    fold_disagreements = 0
     for candidate, root in itertools.permutations(corpus, 2):
         ours = is_path_contained(candidate, root, path_module=path_module)
         pathlibs = flavour(candidate).is_relative_to(flavour(root))
         if ours == pathlibs:
             continue
-        # The only sanctioned disagreement: a UNC root that pathlib cannot see as an
+        # The first sanctioned disagreement: a UNC root that pathlib cannot see as an
         # ancestor because it folds the server and share into one atom. We may only be
         # more permissive than pathlib here, never elsewhere and never in reverse.
         assert path_module is ntpath, (candidate, root, ours, pathlibs)
@@ -448,13 +450,26 @@ def test_agrees_with_pathlib_except_for_unc_hosts(path_module):
             # Folding. The explicit table above pins which prefixed spellings fold to
             # what; pathlib cannot be the oracle for it, so all this can check is the
             # direction asserted above.
+            fold_disagreements += 1
             continue
+        unc_disagreements += 1
         # The root must name an actual server. The bare '\\\\' anchor names none, so it
         # is not a sanctioned disagreement -- pathlib is right to contain nothing there.
         assert flavour(root).drive.startswith("\\\\"), (candidate, root)
         assert str(root) != "\\\\", (candidate, root)
         assert flavour(candidate).drive.startswith("\\\\"), (candidate, root)
         assert not flavour(root).parts[1:], (candidate, root)
+
+    # Every agreeing pair takes a `continue`, so without a floor this passes having
+    # asserted nothing -- including if the module regressed to pathlib's own semantics,
+    # which is the bug being fixed. The counts are what the corpus produces today.
+    if path_module is ntpath:
+        assert unc_disagreements >= 3, unc_disagreements
+        assert fold_disagreements >= 9, fold_disagreements
+    else:
+        # pathlib and these helpers agree everywhere on POSIX; the value of this leg is
+        # that it stays that way.
+        assert (unc_disagreements, fold_disagreements) == (0, 0)
 
 
 def test_is_absolute_path_does_not_delegate_to_the_stdlib():
