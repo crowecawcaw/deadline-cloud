@@ -7,10 +7,13 @@ from __future__ import annotations
 import io
 import json
 import math
+import ntpath
 import os
 import sys
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -20,6 +23,7 @@ from botocore.exceptions import ClientError
 
 from deadline.client._path_utils import is_path_contained
 from deadline.client.exceptions import DeadlineOperationError
+from deadline.client.job_bundle import _repository
 from deadline.client.job_bundle._repository import (
     LocalBundleRepository,
     MAX_ARCHIVE_ENTRIES,
@@ -723,6 +727,99 @@ class TestSafeZipExtract:
 
         assert (dest / "template.yaml").exists()
         assert (dest / "subdir" / "file.txt").exists()
+
+
+class TestSafeZipExtractWindowsPaths:
+    """
+    Windows path semantics for the extraction guard, exercised through a simulated
+    ntpath filesystem so the cases run on every platform.
+
+    A destination at a UNC share root is the pair os.path.commonpath rejected outright
+    ('\\\\host\\share' vs '\\\\host\\share\\template.yaml' -> "Can't mix absolute and
+    relative paths"), which the guard read as an escape -- so every entry of every
+    archive was rejected there.
+    """
+
+    @contextmanager
+    def _simulated_windows_extract(self, zf):
+        """Run the guard against ntpath, with the extraction itself stubbed out.
+
+        The destinations here do not exist on the host running the test, so the archive
+        is never written; only the containment verdict is under test.
+        """
+
+        class _WindowsPath:
+            def __getattr__(self, name):
+                return getattr(ntpath, name)
+
+            @staticmethod
+            def realpath(path):
+                return ntpath.normpath(path)
+
+        with (
+            patch.object(_repository.os, "path", _WindowsPath()),
+            patch.object(
+                _repository.shutil, "disk_usage", lambda path: SimpleNamespace(free=1 << 40)
+            ),
+            patch.object(zf, "extractall"),
+        ):
+            yield
+
+    def test_allows_a_unc_share_root_destination(self, tmp_path):
+        """The reported bug: entries of a bundle archive extracted onto a share root."""
+        archive = tmp_path / "good.zip"
+        with zipfile.ZipFile(str(archive), "w") as zf:
+            zf.writestr("template.yaml", "name: Test\n")
+            zf.writestr("subdir/file.txt", "hello")
+
+        with zipfile.ZipFile(str(archive), "r") as zf:
+            with self._simulated_windows_extract(zf):
+                _safe_zip_extract(zf, r"\\host\share")
+
+    def test_pardir_at_a_share_root_is_clamped_not_an_escape(self, tmp_path):
+        """A share root is a path root, so '..' from it is clamped and stays inside.
+
+        The entry lands on the share root rather than climbing to the host, so the guard
+        has nothing to reject. Pinned because the opposite is the intuitive reading.
+        """
+        archive = tmp_path / "pardir.zip"
+        with zipfile.ZipFile(str(archive), "w") as zf:
+            zf.writestr("../escaped.txt", "nope")
+
+        assert ntpath.normpath(ntpath.join(r"\\host\share", "../escaped.txt")) == (
+            r"\\host\share\escaped.txt"
+        )
+        with zipfile.ZipFile(str(archive), "r") as zf:
+            with self._simulated_windows_extract(zf):
+                _safe_zip_extract(zf, r"\\host\share")
+
+    def test_rejects_an_escape_from_a_directory_on_a_share(self, tmp_path):
+        """A subdirectory of a share is the destination '..' can leave."""
+        archive = tmp_path / "escape.zip"
+        with zipfile.ZipFile(str(archive), "w") as zf:
+            zf.writestr("../escaped.txt", "nope")
+
+        with zipfile.ZipFile(str(archive), "r") as zf:
+            with self._simulated_windows_extract(zf):
+                with pytest.raises(ValueError, match="outside target directory"):
+                    _safe_zip_extract(zf, r"\\host\share\bundle")
+
+    def test_rejects_a_drive_relative_entry(self, tmp_path):
+        """'D:evil' is neither absolute nor rooted, yet it discards the destination.
+
+        ntpath.join('\\\\host\\share', 'D:evil') is 'D:evil', so the entry lands in a
+        different path space entirely -- the containment check is the only thing between
+        it and a write outside the destination.
+        """
+        archive = tmp_path / "drive.zip"
+        with zipfile.ZipFile(str(archive), "w") as zf:
+            zf.writestr("D:evil", "nope")
+
+        assert not ntpath.isabs("D:evil"), "would be caught by the absolute-path check"
+        with zipfile.ZipFile(str(archive), "r") as zf:
+            with self._simulated_windows_extract(zf):
+                with pytest.raises(ValueError, match="outside target directory"):
+                    _safe_zip_extract(zf, r"\\host\share")
 
 
 class TestSanitizeBundleName:

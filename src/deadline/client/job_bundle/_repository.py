@@ -165,7 +165,9 @@ def _safe_zip_extract(
         target = os.path.realpath(os.path.join(dest, member))
         # Unrelated path spaces -- a different drive, a different UNC host -- are not
         # contained, so they are rejected here rather than raising from the comparison.
-        if not is_path_contained(target, dest):
+        # path_module is passed explicitly, and read at call time, so tests can patch it
+        # for another platform.
+        if not is_path_contained(target, dest, path_module=os.path):
             raise ValueError(f"Archive entry would extract outside target directory: {member}")
 
     _check_archive_extraction_safety(zf, dest)
