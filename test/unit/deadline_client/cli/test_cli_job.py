@@ -933,6 +933,13 @@ def test_get_summary_of_files_to_download_message_windows(
             {r"\\host\share": ["only.png"]},
             "\nSummary of files to download:\n    \\\\host\\share\\only.png (1 file)\n",
         ),
+        # Two shares of one host share only the host. This is the pair os.path.commonpath
+        # answers with ValueError("Paths don't have the same drive"), which nothing here
+        # caught -- so summarizing a download spanning two shares aborted the command.
+        (
+            {r"\\host": ["s1/a.png", "s2/b.png"]},
+            "\nSummary of files to download:\n    \\\\host (2 files)\n",
+        ),
     ],
 )
 def test_get_summary_of_files_to_download_message_unc_paths(
@@ -1598,6 +1605,55 @@ class TestAssertValidPath:
         job_group._assert_valid_path("/mnt/share/out", path_module=posixpath)
         with pytest.raises(ValueError, match="is not an absolute path"):
             job_group._assert_valid_path("relative/out", path_module=posixpath)
+
+
+class TestPromptForOsMismatchRoots:
+    """The JSON-protocol branch of the OS-mismatch remap.
+
+    This is where a root arrives from a machine rather than a person -- the GUI and any
+    automation driving the CLI -- so it is the branch that most needs the download root it
+    is handed to be validated. Only the interactive branch's sibling was covered.
+    """
+
+    @staticmethod
+    def _remap(new_root, host_format="posix", root_format="windows"):
+        downloader = MagicMock()
+        downloader.get_paths_by_root.return_value = {new_root: ["a.png"]}
+        root = "/renders" if host_format == "posix" else r"C:\renders"
+        json_line = json.dumps({"messageType": "pathconfirm", "value": [new_root]})
+        with (
+            patch.object(
+                job_group.PathFormat, "get_host_path_format_string", return_value=host_format
+            ),
+            patch.object(job_group.click, "prompt", return_value=json_line),
+            patch.object(job_group.click, "echo"),
+        ):
+            result = job_group._prompt_for_os_mismatch_roots(
+                downloader,
+                {root: ["a.png"]},
+                {root: root_format},
+                is_json_format=True,
+            )
+        return downloader, result
+
+    def test_absolute_root_is_accepted_and_set(self):
+        downloader, result = self._remap("/mnt/share/renders")
+        downloader.set_root_path.assert_called_once_with("/renders", "/mnt/share/renders")
+        assert result == {"/mnt/share/renders": ["a.png"]}
+
+    @pytest.mark.parametrize("new_root", ["relative/renders", "renders"])
+    def test_relative_root_is_rejected(self, new_root):
+        """A relative root would resolve against the CLI's working directory, which the
+        caller on the other end of the protocol does not control."""
+        with pytest.raises(ValueError, match="is not an absolute path"):
+            self._remap(new_root)
+
+    def test_a_root_with_no_format_is_an_error(self):
+        downloader = MagicMock()
+        with pytest.raises(DeadlineOperationError, match="No root path format found"):
+            job_group._prompt_for_os_mismatch_roots(
+                downloader, {"/renders": ["a.png"]}, {}, is_json_format=True
+            )
 
 
 class TestJsonLineHelpers:

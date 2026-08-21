@@ -787,6 +787,21 @@ class TestPathDefaultContainmentWindowsPaths:
             ):
                 parameters.read_job_bundle_parameters(bundle_dir)
 
+    def test_default_resolving_into_sibling_prefix_directory_is_rejected(self):
+        """A string prefix is not a directory prefix: 'C:\\bundle-secret' is outside
+        'C:\\bundle'. Its two sibling guards -- the symlink check and the archive guard --
+        each have this case; without it a naive startswith passes here."""
+        bundle_dir = r"C:\bundle"
+        with self._simulated_windows_bundle(
+            bundle_dir,
+            {r"C:\bundle\output": r"C:\bundle-secret\output"},
+        ):
+            with pytest.raises(
+                exceptions.DeadlineOperationError,
+                match="specifies files outside of Job Bundle directory",
+            ):
+                parameters.read_job_bundle_parameters(bundle_dir)
+
     @pytest.mark.parametrize(
         "default",
         [

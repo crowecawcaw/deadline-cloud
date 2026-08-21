@@ -10,11 +10,13 @@ name: Windows SMB Path Test
 # post-merge-only means it lands green and fails on mainline. GitHub-hosted windows
 # runners are already elevated, so `net share` works.
 #
-# It runs on every pull request, with no paths filter, because it is a required check:
-# GitHub reports a filtered-out required check as pending forever, which would block every
-# merge it skipped. The cost is the Windows env install (~2 min) per run. It also runs
-# before a release publishes, since a tag nobody validated is how UNC handling would ship
-# broken.
+# It runs on every pull request with no paths filter, so the check always reports and can
+# be made a required one: GitHub leaves a filtered-out required check pending forever, so
+# the filter would have to go first. It is not in mainline's required checks yet -- adding
+# it there before this workflow reaches mainline would block every open pull request, since
+# their merge refs would not contain it. The cost is the Windows env install, about two
+# minutes per run. It also runs before a release publishes, since a tag nobody validated
+# against a real redirector is how broken UNC handling would ship.
 on:
   workflow_dispatch:
   pull_request:

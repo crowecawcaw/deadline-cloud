@@ -3,6 +3,7 @@
 """Tests for the path picker widgets' home-directory collapsing."""
 
 import ntpath
+import os
 import posixpath
 
 import pytest
@@ -12,6 +13,8 @@ import pytest
 # would fail with NameError instead.
 _path_widgets = pytest.importorskip("deadline.client.ui.widgets.path_widgets")
 _collapse_user_dir = _path_widgets._collapse_user_dir
+DirectoryPickerWidget = _path_widgets.DirectoryPickerWidget
+InputFilePickerWidget = _path_widgets.InputFilePickerWidget
 
 
 def _home_module(module, home):
@@ -86,3 +89,52 @@ class TestCollapseUserDir:
         for path in ("/home/bob/projects/scene.ma", "/home/bobby/projects/scene.ma"):
             collapsed = _collapse_user_dir(path, path_module=module)
             assert posixpath.expanduser(collapsed.replace("~", "/home/bob", 1)) == path
+
+
+class TestWidgetsCollapseOnSetText:
+    """
+    The helper being right is not enough: the widgets have to call it. Both of these pass
+    with the calls deleted if only the helper is tested, and the collapsed text is what the
+    config dialog persists.
+    """
+
+    def test_directory_picker_collapses_a_path_in_the_home_directory(self, qtbot):
+        home = os.path.expanduser("~")
+        widget = DirectoryPickerWidget(
+            initial_directory="", directory_label="Test Dir", collapse_user_dir=True
+        )
+        qtbot.addWidget(widget)
+
+        widget.setText(os.path.join(home, "projects"))
+        assert widget.text() == os.path.join("~", "projects")
+
+        # A sibling that merely shares the prefix must survive untouched.
+        widget.setText(os.path.join(home + "2", "projects"))
+        assert widget.text() == os.path.join(home + "2", "projects")
+
+    def test_file_picker_collapses_a_path_in_the_home_directory(self, qtbot):
+        home = os.path.expanduser("~")
+        widget = InputFilePickerWidget(
+            initial_filename="",
+            file_label="Test File",
+            filter="All Files (*)",
+            selected_filter="All Files (*)",
+            collapse_user_dir=True,
+        )
+        qtbot.addWidget(widget)
+
+        widget.setText(os.path.join(home, "scene.ma"))
+        assert widget.text() == os.path.join("~", "scene.ma")
+
+        widget.setText(os.path.join(home + "2", "scene.ma"))
+        assert widget.text() == os.path.join(home + "2", "scene.ma")
+
+    def test_collapsing_is_opt_in(self, qtbot):
+        """The default leaves the path alone, which is what the pickers that store an
+        absolute path depend on."""
+        home = os.path.expanduser("~")
+        widget = DirectoryPickerWidget(initial_directory="", directory_label="Test Dir")
+        qtbot.addWidget(widget)
+
+        widget.setText(os.path.join(home, "projects"))
+        assert widget.text() == os.path.join(home, "projects")

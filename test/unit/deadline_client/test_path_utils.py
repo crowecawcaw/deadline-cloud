@@ -10,6 +10,7 @@ native path module silently skip them on POSIX.
 
 import itertools
 import ntpath
+import os
 import posixpath
 import sys
 from pathlib import PurePosixPath, PureWindowsPath
@@ -17,7 +18,10 @@ from typing import Any
 
 import pytest
 
+from unittest.mock import patch
+
 from ._legacy_ntpath import PreThreeElevenNtpath
+from deadline.client._path_summary import common_ancestor
 from deadline.client._path_utils import (
     _splitroot,
     is_absolute_path,
@@ -497,6 +501,23 @@ def test_is_absolute_path_does_not_delegate_to_the_stdlib():
     assert is_absolute_path(r"\x", path_module=wrong) is False
     assert is_absolute_path("C:foo", path_module=wrong) is False
     assert is_absolute_path(r"C:\a", path_module=wrong) is True
+
+
+def test_path_module_is_resolved_at_call_time():
+    """A caller that omits ``path_module`` must still follow the running platform.
+
+    A signature default would bind ``os.path`` when this module is imported, so patching
+    it here would have no effect -- which is how the archive extraction guard came to have
+    no Windows coverage at all. Every assertion below omits the argument, so it fails if
+    the resolution moves back into a signature.
+    """
+    with patch.object(os, "path", ntpath):
+        assert path_components(r"\\host\share") == ["\\\\", "host", "share"]
+        assert is_absolute_path(r"\\host\share") is True
+        assert normalized_path("\\\\host\\") == r"\\host"
+        assert is_path_contained(r"\\host\share\f", r"\\host") is True
+        assert is_bare_unc_anchor("\\\\") is True
+        assert common_ancestor([r"\\host\s1\a", r"\\host\s2\b"]) == r"\\host"
 
 
 def test_containment_of_degenerate_paths():
