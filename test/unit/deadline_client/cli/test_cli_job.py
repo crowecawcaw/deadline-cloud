@@ -1615,6 +1615,12 @@ class TestPromptForOsMismatchRoots:
     is handed to be validated. Only the interactive branch's sibling was covered.
     """
 
+    # The root is validated against the host's own path module, so it has to be spelled for
+    # the platform the test runs on: '/mnt/share/renders' is rooted but driveless on
+    # Windows, which resolves against the current drive and so is not absolute there.
+    # TestAssertValidPath covers both spellings on every platform by injecting the module.
+    HOST_ABSOLUTE_ROOT = r"C:\mnt\share\renders" if os.name == "nt" else "/mnt/share/renders"
+
     @staticmethod
     def _remap(new_root, host_format="posix", root_format="windows"):
         downloader = MagicMock()
@@ -1637,9 +1643,9 @@ class TestPromptForOsMismatchRoots:
         return downloader, result
 
     def test_absolute_root_is_accepted_and_set(self):
-        downloader, result = self._remap("/mnt/share/renders")
-        downloader.set_root_path.assert_called_once_with("/renders", "/mnt/share/renders")
-        assert result == {"/mnt/share/renders": ["a.png"]}
+        downloader, result = self._remap(self.HOST_ABSOLUTE_ROOT)
+        downloader.set_root_path.assert_called_once_with("/renders", self.HOST_ABSOLUTE_ROOT)
+        assert result == {self.HOST_ABSOLUTE_ROOT: ["a.png"]}
 
     @pytest.mark.parametrize("new_root", ["relative/renders", "renders"])
     def test_relative_root_is_rejected(self, new_root):
