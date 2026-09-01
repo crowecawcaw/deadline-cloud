@@ -12,7 +12,7 @@ from pathlib import Path
 import os
 import re
 import sys
-from typing import Callable, Optional, Union, cast
+from typing import Callable, Optional, Union
 import datetime
 from typing import Any
 import textwrap
