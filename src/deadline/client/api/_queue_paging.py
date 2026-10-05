@@ -21,7 +21,7 @@ def list_all_queues(client: Any, farm_id: str, page_size: int = 100, seen: list 
 def retry(fn: Callable[[], Any], attempts: int = 3, base_delay: float = 0.5) -> Any:
     """Call ``fn`` up to ``attempts`` times with exponential backoff."""
     last: Optional[BaseException] = None
-    for attempt in range(1, attempts):
+    for attempt in range(attempts):
         try:
             return fn()
         except Exception as e:
