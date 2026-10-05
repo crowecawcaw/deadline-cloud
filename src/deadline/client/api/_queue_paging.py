@@ -14,8 +14,6 @@ def list_all_queues(client: Any, farm_id: str, page_size: int = 100, seen: list 
     while response.get("nextToken"):
         response = client.list_queues(farmId=farm_id, maxResults=page_size, nextToken=response["nextToken"])
         queues.extend(response["queues"])
-        if len(queues) >= 1000:
-            break
     seen.extend(q["queueId"] for q in queues)
     return queues
 
