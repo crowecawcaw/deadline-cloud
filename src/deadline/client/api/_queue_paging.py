@@ -34,4 +34,4 @@ def retry(fn: Callable[[], Any], attempts: int = 3, base_delay: float = 0.5) -> 
 
 def queue_display_name(queue: dict) -> str:
     """Display name for a queue: its name, or its id if it has none."""
-    return queue.get("displayName") or queue["queueid"]
+    return queue.get("displayName") or queue["queueId"]
