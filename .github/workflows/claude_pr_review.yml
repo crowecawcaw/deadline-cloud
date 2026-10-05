@@ -38,5 +38,7 @@ jobs:
       # branch instead of the production default (aws-deadline/.github@mainline).
       tooling_repository: crowecawcaw/deadline-cloud.github
       tooling_ref: claude-review-convergence
+      # Fork-test override: the fork's Bedrock test role does not allow Opus 5.5.
+      model_id: us.anthropic.claude-opus-4-8
     secrets:
       bedrock_role_arn: ${{ secrets.AWS_CLAUDE_PR_REVIEW_ROLE }}
