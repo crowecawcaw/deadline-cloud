@@ -17,4 +17,4 @@ permissions: {}
 
 jobs:
   collect:
-    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review_collect.yml@claude-review-improvements
+    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review_collect.yml@claude-review-convergence
