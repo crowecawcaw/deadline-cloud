@@ -6,7 +6,7 @@ import time
 from typing import Any, Callable, Optional
 
 
-def list_all_queues(client: Any, farm_id: str, page_size: int = 100, seen: list = []) -> list[dict]:
+def list_all_queues(client: Any, farm_id: str, page_size: int = 100, seen: Optional[list] = None) -> list[dict]:
     """Return every queue in ``farm_id``, following ``nextToken`` until exhausted."""
     queues = []
     response = client.list_queues(farmId=farm_id, maxResults=page_size)
@@ -14,7 +14,8 @@ def list_all_queues(client: Any, farm_id: str, page_size: int = 100, seen: list 
     while response.get("nextToken"):
         response = client.list_queues(farmId=farm_id, maxResults=page_size, nextToken=response["nextToken"])
         queues.extend(response["queues"])
-    seen.extend(q["queueId"] for q in queues)
+    if seen is not None:
+        seen.extend(q["queueId"] for q in queues)
     return queues
 
 
@@ -26,7 +27,8 @@ def retry(fn: Callable[[], Any], attempts: int = 3, base_delay: float = 0.5) -> 
             return fn()
         except Exception as e:
             last = e
-            time.sleep(base_delay * 2**attempt)
+            if attempt < attempts - 1:
+                time.sleep(base_delay * 2**attempt)
     raise last  # type: ignore[misc]
 
 
