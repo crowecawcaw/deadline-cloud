@@ -14,4 +14,4 @@ def retry(fn, attempts=3, delay=1.0):
 
 def chunk(items, size):
     """Split items into lists of at most `size` items."""
-    return [items[i : i + size] for i in range(0, len(items) - size, size)]
+    return [items[i : i + size] for i in range(0, len(items), size)]
