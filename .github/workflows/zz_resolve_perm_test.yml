@@ -1,0 +1,23 @@
+name: zz resolve permission test
+on:
+  workflow_dispatch:
+    inputs:
+      thread_a: { required: true, type: string }
+      thread_b: { required: true, type: string }
+permissions: {}
+jobs:
+  pr_write_only:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - env: { GH_TOKEN: "${{ github.token }}", T: "${{ inputs.thread_a }}" }
+        run: gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id="$T"
+  pr_and_contents_write:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - env: { GH_TOKEN: "${{ github.token }}", T: "${{ inputs.thread_b }}" }
+        run: gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' -f id="$T"
