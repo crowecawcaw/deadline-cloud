@@ -26,7 +26,7 @@ permissions:
 jobs:
   review:
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
-    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review.yml@fix/claude-review-feedback
+    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_claude_pr_review.yml@test/pr100-opus55
     permissions:
       contents: write
       pull-requests: write
@@ -39,8 +39,8 @@ jobs:
       # Fork-test override: pull the pinned requirements file from the fork's fix
       # branch instead of the production default (aws-deadline/.github@mainline).
       tooling_repository: crowecawcaw/deadline-cloud.github
-      tooling_ref: fix/claude-review-feedback
+      tooling_ref: test/pr100-opus55
       # Fork-test override: the fork's Bedrock test role does not allow Opus 5.5.
-      model_id: us.anthropic.claude-opus-4-8
+      model_id: us.anthropic.claude-opus-5-5
     secrets:
       bedrock_role_arn: ${{ secrets.AWS_CLAUDE_PR_REVIEW_ROLE }}
