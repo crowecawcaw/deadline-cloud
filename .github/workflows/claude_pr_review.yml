@@ -39,7 +39,7 @@ jobs:
       # Fork-test override: pull the pinned requirements file from the fork's fix
       # branch instead of the production default (aws-deadline/.github@mainline).
       tooling_repository: crowecawcaw/deadline-cloud.github
-      tooling_ref: claude-review-pending-status
+      tooling_ref: does-not-exist-e2e
       # Fork-test override: the fork's Bedrock test role does not allow Opus 5.5.
       model_id: us.anthropic.claude-opus-5-5
     secrets:
