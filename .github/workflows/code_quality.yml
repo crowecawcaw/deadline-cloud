@@ -46,7 +46,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             python-version: '3.9'
-    uses: aws-deadline/.github/.github/workflows/reusable_python_build.yml@mainline
+    uses: crowecawcaw/deadline-cloud.github/.github/workflows/reusable_python_build.yml@ci-qt-libs-all-ubuntu
     with:
       os: ${{ matrix.os }}
       python-version: ${{ matrix.python-version }}
